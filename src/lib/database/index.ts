@@ -1,0 +1,63 @@
+import { SupabaseAdapter } from './supabase-adapter';
+import { MySQLAdapter } from './mysql-adapter';
+import type { DatabaseConfig, DatabaseProvider, DatabaseService } from './types';
+
+export type { DatabaseConfig, DatabaseProvider, DatabaseService, QueryBuilder, QueryResult } from './types';
+
+const DB_CONFIG_KEY = 'ai_platform_db_config';
+
+let currentService: DatabaseService | null = null;
+let currentConfig: DatabaseConfig = { provider: 'supabase' };
+
+export function getStoredConfig(): DatabaseConfig {
+  try {
+    const stored = localStorage.getItem(DB_CONFIG_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch {
+    console.error('Failed to load database config from storage');
+  }
+  return { provider: 'supabase' };
+}
+
+export function saveConfig(config: DatabaseConfig): void {
+  try {
+    localStorage.setItem(DB_CONFIG_KEY, JSON.stringify(config));
+    currentConfig = config;
+  } catch {
+    console.error('Failed to save database config to storage');
+  }
+}
+
+export function getCurrentProvider(): DatabaseProvider {
+  return currentConfig.provider;
+}
+
+export function initializeDatabase(config?: DatabaseConfig): DatabaseService {
+  if (config) {
+    currentConfig = config;
+  } else {
+    currentConfig = getStoredConfig();
+  }
+
+  if (currentConfig.provider === 'mysql' && currentConfig.mysql) {
+    currentService = new MySQLAdapter(currentConfig.mysql);
+  } else {
+    currentService = new SupabaseAdapter();
+  }
+
+  return currentService;
+}
+
+export function getDatabase(): DatabaseService {
+  if (!currentService) {
+    return initializeDatabase();
+  }
+  return currentService;
+}
+
+export function getSupabaseClient() {
+  const adapter = new SupabaseAdapter();
+  return adapter.getClient();
+}
