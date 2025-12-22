@@ -84,7 +84,7 @@ export async function handleInsert(
 
   for (const row of rows) {
     const id = row.id || crypto.randomUUID();
-    const rowWithId = { ...row, id };
+    const rowWithId: Record<string, unknown> = { ...row, id };
 
     const columns = Object.keys(rowWithId).filter(k => rowWithId[k] !== undefined);
     const values = columns.map(k => processValueForMySQL(rowWithId[k]));
