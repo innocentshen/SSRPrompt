@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Server, CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react';
+import { Database, Server, CheckCircle2, XCircle, Loader2, RefreshCw, Cloud, TableProperties } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import {
   getStoredConfig,
@@ -8,6 +8,7 @@ import {
   type DatabaseConfig,
   type DatabaseProvider,
 } from '../../lib/database';
+import { SupabaseInitModal } from './SupabaseInitModal';
 
 export function DatabaseSettings() {
   const { showToast } = useToast();
@@ -15,12 +16,18 @@ export function DatabaseSettings() {
   const [testing, setTesting] = useState(false);
   const [initializing, setInitializing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [showInitModal, setShowInitModal] = useState(false);
 
+  // MySQL 配置状态
   const [mysqlHost, setMysqlHost] = useState(config.mysql?.host || '');
   const [mysqlPort, setMysqlPort] = useState(config.mysql?.port?.toString() || '3306');
   const [mysqlDatabase, setMysqlDatabase] = useState(config.mysql?.database || '');
   const [mysqlUser, setMysqlUser] = useState(config.mysql?.user || '');
   const [mysqlPassword, setMysqlPassword] = useState(config.mysql?.password || '');
+
+  // Supabase 配置状态
+  const [supabaseUrl, setSupabaseUrl] = useState(config.supabase?.url || '');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(config.supabase?.anonKey || '');
 
   useEffect(() => {
     const stored = getStoredConfig();
@@ -31,6 +38,10 @@ export function DatabaseSettings() {
       setMysqlDatabase(stored.mysql.database);
       setMysqlUser(stored.mysql.user);
       setMysqlPassword(stored.mysql.password);
+    }
+    if (stored.supabase) {
+      setSupabaseUrl(stored.supabase.url);
+      setSupabaseAnonKey(stored.supabase.anonKey);
     }
   }, []);
 
@@ -50,12 +61,26 @@ export function DatabaseSettings() {
     },
   });
 
+  const buildSupabaseConfig = (): DatabaseConfig => ({
+    provider: 'supabase',
+    supabase: {
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
+    },
+  });
+
   const handleTestConnection = async () => {
     setTesting(true);
     setConnectionStatus('idle');
 
     try {
-      const testConfig = config.provider === 'mysql' ? buildMySQLConfig() : { provider: 'supabase' as const };
+      let testConfig: DatabaseConfig;
+      if (config.provider === 'mysql') {
+        testConfig = buildMySQLConfig();
+      } else {
+        testConfig = buildSupabaseConfig();
+      }
+
       const db = initializeDatabase(testConfig);
       const result = await db.testConnection();
 
@@ -100,9 +125,23 @@ export function DatabaseSettings() {
   };
 
   const handleSave = () => {
-    const newConfig = config.provider === 'mysql' ? buildMySQLConfig() : { provider: 'supabase' as const };
-    const currentConfig = getStoredConfig();
+    // 同时保存两种数据库的配置，这样切换时不会丢失
+    const newConfig: DatabaseConfig = {
+      provider: config.provider,
+      mysql: {
+        host: mysqlHost,
+        port: parseInt(mysqlPort) || 3306,
+        database: mysqlDatabase,
+        user: mysqlUser,
+        password: mysqlPassword,
+      },
+      supabase: {
+        url: supabaseUrl,
+        anonKey: supabaseAnonKey,
+      },
+    };
 
+    const currentConfig = getStoredConfig();
     const hasChanged = JSON.stringify(currentConfig) !== JSON.stringify(newConfig);
 
     saveConfig(newConfig);
@@ -117,6 +156,9 @@ export function DatabaseSettings() {
       showToast('success', '数据库配置已保存');
     }
   };
+
+  // 检查 Supabase 配置是否完整
+  const isSupabaseConfigValid = supabaseUrl.trim() !== '' && supabaseAnonKey.trim() !== '';
 
   return (
     <div className="space-y-6">
@@ -148,13 +190,13 @@ export function DatabaseSettings() {
           >
             <div className="flex items-center gap-3">
               <div className={`p-2 rounded-lg ${config.provider === 'supabase' ? 'bg-cyan-500/20 light:bg-cyan-100' : 'bg-slate-700 light:bg-slate-100'}`}>
-                <Database className={`w-5 h-5 ${config.provider === 'supabase' ? 'text-cyan-400 light:text-cyan-600' : 'text-slate-400 light:text-slate-500'}`} />
+                <Cloud className={`w-5 h-5 ${config.provider === 'supabase' ? 'text-cyan-400 light:text-cyan-600' : 'text-slate-400 light:text-slate-500'}`} />
               </div>
               <div>
                 <p className={`font-medium ${config.provider === 'supabase' ? 'text-cyan-400 light:text-cyan-600' : 'text-slate-300 light:text-slate-700'}`}>
                   Supabase
                 </p>
-                <p className="text-xs text-slate-500 light:text-slate-600">推荐 - 已配置就绪</p>
+                <p className="text-xs text-slate-500 light:text-slate-600">云端数据库</p>
               </div>
             </div>
           </button>
@@ -183,15 +225,72 @@ export function DatabaseSettings() {
       </div>
 
       {config.provider === 'supabase' && (
-        <div className="p-4 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 light:text-emerald-600 mt-0.5 flex-shrink-0" />
+        <div className="space-y-4 p-4 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
+          <div className="flex items-start gap-3 pb-4 border-b border-slate-700 light:border-slate-200">
+            <Cloud className="w-5 h-5 text-cyan-500 light:text-cyan-600 mt-0.5 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-slate-200 light:text-slate-800">Supabase 已自动配置</p>
+              <p className="text-sm font-medium text-slate-200 light:text-slate-800">Supabase 连接配置</p>
               <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                当前项目已连接到 Supabase 数据库,表结构通过迁移自动管理。无需额外配置。
+                在 <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">supabase.com</a> 创建项目后，从 Settings &gt; API 获取连接信息
               </p>
             </div>
+          </div>
+
+          <Input
+            label="Project URL"
+            value={supabaseUrl}
+            onChange={(e) => setSupabaseUrl(e.target.value)}
+            placeholder="https://xxxxx.supabase.co"
+          />
+          <Input
+            label="Anon Key (公开密钥)"
+            type="password"
+            value={supabaseAnonKey}
+            onChange={(e) => setSupabaseAnonKey(e.target.value)}
+            placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+          />
+
+          <div className="pt-4 border-t border-slate-700 light:border-slate-200 space-y-3">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={handleTestConnection}
+                disabled={testing || !isSupabaseConfigValid}
+              >
+                {testing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
+                <span>测试连接</span>
+              </Button>
+
+              <Button
+                variant="secondary"
+                onClick={() => setShowInitModal(true)}
+                disabled={!isSupabaseConfigValid}
+              >
+                <TableProperties className="w-4 h-4" />
+                <span>初始化表结构</span>
+              </Button>
+
+              {connectionStatus === 'success' && (
+                <span className="flex items-center gap-1 text-sm text-emerald-500 light:text-emerald-600">
+                  <CheckCircle2 className="w-4 h-4" />
+                  连接成功
+                </span>
+              )}
+              {connectionStatus === 'error' && (
+                <span className="flex items-center gap-1 text-sm text-rose-500 light:text-rose-600">
+                  <XCircle className="w-4 h-4" />
+                  连接失败
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-500 light:text-slate-600">
+              首次使用 Supabase 时，请点击"初始化表结构"按钮获取建表 SQL
+            </p>
           </div>
         </div>
       )}
@@ -287,6 +386,13 @@ export function DatabaseSettings() {
           保存配置
         </Button>
       </div>
+
+      {/* Supabase 初始化模态框 */}
+      <SupabaseInitModal
+        isOpen={showInitModal}
+        onClose={() => setShowInitModal(false)}
+        supabaseUrl={supabaseUrl}
+      />
     </div>
   );
 }

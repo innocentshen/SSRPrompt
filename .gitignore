@@ -20,4 +20,26 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 环境变量和敏感配置
 .env
+.env.local
+.env.production
+.env.backup
+.env.*.local
+
+# 数据库备份
+backups/
+*.sql
+!init.sql
+!supabase/migrations/*.sql
+*.dump
+
+# SSL 证书
+ssl/
+*.pem
+*.key
+*.crt
+
+# Docker volumes
+mysql_data/

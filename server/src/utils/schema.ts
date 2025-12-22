@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS evaluation_criteria (
   name VARCHAR(255) NOT NULL,
   description TEXT,
   prompt TEXT,
-  weight DECIMAL(3,2) DEFAULT 1.0,
+  weight DECIMAL(5,2) DEFAULT 1.0,
   enabled BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_evaluation_criteria_evaluation_id (evaluation_id),

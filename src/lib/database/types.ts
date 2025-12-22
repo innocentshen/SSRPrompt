@@ -1,14 +1,22 @@
 export type DatabaseProvider = 'supabase' | 'mysql';
 
+export interface SupabaseConfig {
+  url: string;
+  anonKey: string;
+}
+
+export interface MySQLConfig {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+}
+
 export interface DatabaseConfig {
   provider: DatabaseProvider;
-  mysql?: {
-    host: string;
-    port: number;
-    database: string;
-    user: string;
-    password: string;
-  };
+  supabase?: SupabaseConfig;
+  mysql?: MySQLConfig;
 }
 
 export interface QueryResult<T> {

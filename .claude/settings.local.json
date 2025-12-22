@@ -14,7 +14,16 @@
       "Bash(timeout:*)",
       "Bash(taskkill:*)",
       "Bash(npm run dev:*)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(if [ -d \"node_modules\" ])",
+      "Bash(then echo \"Dependencies installed\")",
+      "Bash(else echo \"Dependencies not installed\")",
+      "Bash(fi)",
+      "Bash(if [ -f \"server/package.json\" ])",
+      "Bash(then echo \"Server has package.json\")",
+      "Bash(else echo \"No server package.json\")",
+      "Bash(npm run dev:all:*)",
+      "Bash(chmod:*)"
     ]
   }
 }

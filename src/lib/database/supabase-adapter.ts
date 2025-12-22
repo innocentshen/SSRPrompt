@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { DatabaseService, QueryBuilder, QueryResult } from './types';
+import type { DatabaseService, QueryBuilder, QueryResult, SupabaseConfig } from './types';
 
 type FilterMethod = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in';
 type FilterDef = { method: FilterMethod; column: string; value: unknown };
@@ -14,6 +14,7 @@ class SupabaseQueryBuilder<T> implements QueryBuilder<T> {
   private _filters: FilterDef[] = [];
   private _orders: OrderDef[] = [];
   private _limit: number | null = null;
+  private _returnData: boolean = false; // 标记是否在 insert/update 后返回数据
 
   constructor(client: SupabaseClient, table: string) {
     this.client = client;
@@ -21,8 +22,15 @@ class SupabaseQueryBuilder<T> implements QueryBuilder<T> {
   }
 
   select(columns: string = '*'): QueryBuilder<T> {
-    this._operation = 'select';
-    this._columns = columns;
+    // 如果已经是 insert 或 update 操作，不覆盖 _operation
+    // 只设置 _returnData 标志和 columns
+    if (this._operation === 'insert' || this._operation === 'update') {
+      this._returnData = true;
+      this._columns = columns;
+    } else {
+      this._operation = 'select';
+      this._columns = columns;
+    }
     return this;
   }
 
@@ -211,10 +219,18 @@ class SupabaseQueryBuilder<T> implements QueryBuilder<T> {
 
 export class SupabaseAdapter implements DatabaseService {
   private client: SupabaseClient;
+  private config: SupabaseConfig;
 
-  constructor() {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  constructor(config?: SupabaseConfig) {
+    // 优先使用传入的配置，否则从环境变量读取
+    const supabaseUrl = config?.url || import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = config?.anonKey || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase 配置缺失，请提供 URL 和 Anon Key');
+    }
+
+    this.config = { url: supabaseUrl, anonKey: supabaseAnonKey };
     this.client = createClient(supabaseUrl, supabaseAnonKey);
   }
 
@@ -223,7 +239,8 @@ export class SupabaseAdapter implements DatabaseService {
   }
 
   async initialize(): Promise<{ success: boolean; error?: string }> {
-    return { success: true };
+    // Supabase 表结构通过 migration 管理，这里只验证连接
+    return this.testConnection();
   }
 
   async testConnection(): Promise<{ success: boolean; error?: string }> {
@@ -240,5 +257,9 @@ export class SupabaseAdapter implements DatabaseService {
 
   getClient(): SupabaseClient {
     return this.client;
+  }
+
+  getConfig(): SupabaseConfig {
+    return this.config;
   }
 }

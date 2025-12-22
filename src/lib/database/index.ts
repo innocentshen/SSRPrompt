@@ -2,7 +2,7 @@ import { SupabaseAdapter } from './supabase-adapter';
 import { MySQLAdapter } from './mysql-adapter';
 import type { DatabaseConfig, DatabaseProvider, DatabaseService } from './types';
 
-export type { DatabaseConfig, DatabaseProvider, DatabaseService, QueryBuilder, QueryResult } from './types';
+export type { DatabaseConfig, DatabaseProvider, DatabaseService, QueryBuilder, QueryResult, SupabaseConfig, MySQLConfig } from './types';
 
 const DB_CONFIG_KEY = 'ai_platform_db_config';
 
@@ -43,7 +43,11 @@ export function initializeDatabase(config?: DatabaseConfig): DatabaseService {
 
   if (currentConfig.provider === 'mysql' && currentConfig.mysql) {
     currentService = new MySQLAdapter(currentConfig.mysql);
+  } else if (currentConfig.provider === 'supabase') {
+    // 使用存储的 Supabase 配置或环境变量
+    currentService = new SupabaseAdapter(currentConfig.supabase);
   } else {
+    // 默认使用 Supabase
     currentService = new SupabaseAdapter();
   }
 
@@ -58,6 +62,7 @@ export function getDatabase(): DatabaseService {
 }
 
 export function getSupabaseClient() {
-  const adapter = new SupabaseAdapter();
+  const config = getStoredConfig();
+  const adapter = new SupabaseAdapter(config.supabase);
   return adapter.getClient();
 }

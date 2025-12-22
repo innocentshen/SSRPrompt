@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: promptgo-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password_change_me}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-promptgo}
+      MYSQL_USER: ${MYSQL_USER:-promptgo_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-user_password_change_me}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - promptgo-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # 后端服务
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: promptgo-backend
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-promptgo_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-user_password_change_me}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-promptgo}
+      API_KEY: ${API_KEY:-your_secure_api_key_here}
+    ports:
+      - "3001:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - promptgo-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 前端服务
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_APP_PASSWORD: ${VITE_APP_PASSWORD:-admin123}
+        VITE_MYSQL_PROXY_URL: http://backend:3001/api/mysql-proxy
+        VITE_MYSQL_PROXY_API_KEY: ${API_KEY:-your_secure_api_key_here}
+    container_name: promptgo-frontend
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    networks:
+      - promptgo-network
+    volumes:
+      # 如果需要 HTTPS，挂载 SSL 证书
+      - ./ssl:/etc/nginx/ssl:ro
+
+networks:
+  promptgo-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
