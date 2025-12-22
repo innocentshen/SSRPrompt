@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Lock, AlertCircle } from 'lucide-react';
+import { Lock, AlertCircle, Github, Star } from 'lucide-react';
 import { Button, Input } from '../components/ui';
 
 interface LoginPageProps {
@@ -29,6 +29,21 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      {/* GitHub Link - Top Right */}
+      <a
+        href="https://github.com/innocentshen/ssrprompt"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed top-6 right-6 flex items-center gap-2 px-4 py-2 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600 rounded-lg transition-all duration-200 hover:scale-105 group backdrop-blur-sm"
+        title="Star on GitHub"
+      >
+        <Github className="w-5 h-5 text-slate-300 group-hover:text-white" />
+        <span className="text-sm font-medium text-slate-300 group-hover:text-white hidden sm:inline">
+          Star on GitHub
+        </span>
+        <Star className="w-4 h-4 text-yellow-400 group-hover:text-yellow-300" />
+      </a>
+
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-cyan-500/10 rounded-2xl mb-4">
@@ -76,6 +91,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         <p className="text-center text-xs text-slate-500 mt-6">
           请妥善保管您的访问密码
         </p>
+
+        {/* GitHub Link - Bottom */}
+        <div className="mt-6 text-center">
+          <a
+            href="https://github.com/innocentshen/ssrprompt"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-cyan-400 transition-colors duration-200"
+          >
+            <Github className="w-4 h-4" />
+            <span>如果觉得不错，请给我一个 Star</span>
+            <Star className="w-4 h-4 text-yellow-500" />
+          </a>
+        </div>
       </div>
     </div>
   );
