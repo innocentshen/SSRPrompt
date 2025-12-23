@@ -69,6 +69,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 autoFocus
                 disabled={isLoading}
               />
+              <p className="mt-2 text-xs text-slate-500">
+                默认密码为 admin123，可在环境变量 VITE_APP_PASSWORD 中修改
+              </p>
             </div>
 
             {error && (

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Copy, Check, ExternalLink, Database } from 'lucide-react';
 import { Button } from '../ui';
 import { SUPABASE_INIT_SQL } from '../../lib/database/supabase-init-sql';
@@ -34,7 +35,7 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
     return 'https://supabase.com/dashboard';
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-800 light:bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -168,6 +169,7 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
