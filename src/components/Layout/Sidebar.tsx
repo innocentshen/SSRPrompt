@@ -38,7 +38,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             <Compass className="w-5 h-5 text-white" />
           </div>
           {!collapsed && (
-            <span className="font-semibold text-white light:text-slate-900 whitespace-nowrap">AI 罗盘</span>
+            <span className="font-semibold text-white light:text-slate-900 whitespace-nowrap">SSRPrompt</span>
           )}
         </div>
         <div className="flex-1" />

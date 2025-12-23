@@ -1,7 +1,7 @@
 // Supabase 数据库初始化 SQL
 // 合并了所有迁移文件，为用户提供一键初始化
 
-export const SUPABASE_INIT_SQL = `-- PromptGo Supabase 数据库初始化脚本
+export const SUPABASE_INIT_SQL = `-- SSRPrompt Supabase 数据库初始化脚本
 -- 请在 Supabase Dashboard > SQL Editor 中执行此脚本
 
 -- =====================================================

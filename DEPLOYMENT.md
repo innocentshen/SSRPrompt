@@ -1,6 +1,6 @@
-# PromptGo 服务器部署指南
+# SSRPrompt 服务器部署指南
 
-本指南将帮助你在 Ubuntu/Debian 服务器上使用 Docker 部署 PromptGo 项目。
+本指南将帮助你在 Ubuntu/Debian 服务器上使用 Docker 部署 SSRPrompt 项目。
 
 ## 目录
 

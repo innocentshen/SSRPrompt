@@ -1,7 +1,7 @@
 {
-  "name": "promptgo-server",
+  "name": "ssrprompt-server",
   "version": "1.0.0",
-  "description": "MySQL proxy server for PromptGo",
+  "description": "MySQL proxy server for SSRPrompt",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

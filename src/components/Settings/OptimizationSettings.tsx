@@ -40,7 +40,7 @@ const DEFAULT_ANALYSIS_PROMPT = `你是一个专业的 Prompt 工程师，擅长
 - 建议数量控制在 3-6 条，按重要性排序
 - 如果 Prompt 已经很好，可以只返回 1-2 条低优先级建议或空数组`;
 
-const STORAGE_KEY = 'promptgo_optimization_settings';
+const STORAGE_KEY = 'ssrprompt_optimization_settings';
 
 export interface OptimizationSettingsData {
   analysisPrompt: string;

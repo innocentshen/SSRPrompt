@@ -1,6 +1,6 @@
-# PromptGo Supabase 配置指南
+# SSRPrompt Supabase 配置指南
 
-本指南将帮助你快速配置和测试 Supabase 作为 PromptGo 的数据库后端。
+本指南将帮助你快速配置和测试 Supabase 作为 SSRPrompt 的数据库后端。
 
 ## 目录
 
