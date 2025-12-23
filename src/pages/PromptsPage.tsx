@@ -178,6 +178,7 @@ export function PromptsPage() {
         cancelAutoSaveRef.current();
       }
 
+      // Reset prompt content and configuration
       setPromptContent(selectedPrompt.content);
       setPromptName(selectedPrompt.name);
       setPromptMessages(selectedPrompt.messages || []);
@@ -188,6 +189,17 @@ export function PromptsPage() {
       }
       loadVersions(selectedPrompt.id);
       setAutoSaveStatus('saved');
+
+      // Reset test & output states - each prompt should have independent test data
+      setVariableValues({});
+      setTestInput('');
+      setTestOutput('');
+      setAttachedFiles([]);
+      setDebugRuns([]);
+      setSelectedDebugRun(null);
+      setShowDebugDetail(null);
+      setThinkingContent('');
+      setIsThinking(false);
 
       // Use setTimeout to ensure state updates are processed before allowing auto-save
       // This runs after React has batched and applied all the setState calls above

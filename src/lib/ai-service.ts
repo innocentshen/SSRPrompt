@@ -26,8 +26,12 @@ export interface ThinkingContent {
 const THINKING_PATTERNS = [
   /<thinking>([\s\S]*?)<\/thinking>/gi,
   /<think>([\s\S]*?)<\/think>/gi,
+  /<thought>([\s\S]*?)<\/thought>/gi,
   /<reasoning>([\s\S]*?)<\/reasoning>/gi,
   /\[THINKING\]([\s\S]*?)\[\/THINKING\]/gi,
+  /◁think▷([\s\S]*?)◁\/think▷/gi,
+  /<seed:think>([\s\S]*?)<\/seed:think>/gi,
+  /###\s*Thinking\s*\n([\s\S]*?)(?=###\s*Response|$)/gi,
 ];
 
 /**
@@ -51,6 +55,9 @@ export function extractThinking(response: string): ThinkingContent {
     // Remove thinking blocks from content
     content = content.replace(pattern, '');
   }
+
+  // Clean up ###Response header if it exists (from ###Thinking format)
+  content = content.replace(/^###\s*Response\s*\n?/gim, '');
 
   return {
     thinking: thinking.trim(),
