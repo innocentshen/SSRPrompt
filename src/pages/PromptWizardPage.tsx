@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, useToast, MarkdownRenderer } from '../components/ui';
 import { ThinkingBlock } from '../components/Prompt';
-import { getDatabase } from '../lib/database';
+import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import { streamAIModelWithMessages, fileToBase64, extractThinking, type ChatMessage as AIChatMessage, type FileAttachment } from '../lib/ai-service';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import type { Model, Provider } from '../types';
@@ -124,23 +124,32 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
   }, []);
 
   const loadModels = async () => {
-    const db = getDatabase();
-    const [modelsRes, providersRes] = await Promise.all([
-      db.from('models').select('*'),
-      db.from('providers').select('*').eq('enabled', true),
-    ]);
+    // 检查数据库是否已配置
+    if (!isDatabaseConfigured()) {
+      return;
+    }
 
-    if (modelsRes.data) setModels(modelsRes.data);
-    if (providersRes.data) {
-      setProviders(providersRes.data);
-      // Select first available model
-      if (modelsRes.data && modelsRes.data.length > 0) {
-        const enabledProviderIds = providersRes.data.map((p) => p.id);
-        const availableModel = modelsRes.data.find((m) => enabledProviderIds.includes(m.provider_id));
-        if (availableModel) {
-          setSelectedModelId(availableModel.id);
+    try {
+      const db = getDatabase();
+      const [modelsRes, providersRes] = await Promise.all([
+        db.from('models').select('*'),
+        db.from('providers').select('*').eq('enabled', true),
+      ]);
+
+      if (modelsRes.data) setModels(modelsRes.data);
+      if (providersRes.data) {
+        setProviders(providersRes.data);
+        // Select first available model
+        if (modelsRes.data && modelsRes.data.length > 0) {
+          const enabledProviderIds = providersRes.data.map((p) => p.id);
+          const availableModel = modelsRes.data.find((m) => enabledProviderIds.includes(m.provider_id));
+          if (availableModel) {
+            setSelectedModelId(availableModel.id);
+          }
         }
       }
+    } catch {
+      showToast('error', '请先在设置中配置数据库连接');
     }
   };
 

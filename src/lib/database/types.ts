@@ -49,4 +49,31 @@ export interface DatabaseService {
   from<T>(table: string): QueryBuilder<T>;
   initialize(): Promise<{ success: boolean; error?: string }>;
   testConnection(): Promise<{ success: boolean; error?: string }>;
+  // 迁移相关方法
+  getSchemaVersion(): Promise<number>;
+  runMigrations(migrations: Migration[]): Promise<MigrationResult>;
+  executeSql(sql: string): Promise<{ success: boolean; error?: string }>;
+}
+
+// 迁移系统类型
+export interface Migration {
+  version: number;
+  name: string;
+  description: string;
+  mysql: string;
+  postgresql: string;
+}
+
+export interface MigrationResult {
+  success: boolean;
+  executedMigrations: number[];
+  currentVersion: number;
+  error?: string;
+}
+
+export interface MigrationStatus {
+  currentVersion: number;
+  latestVersion: number;
+  pendingMigrations: Migration[];
+  isUpToDate: boolean;
 }

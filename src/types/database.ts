@@ -200,6 +200,7 @@ export interface Trace {
   status: TraceStatus;
   error_message: string | null;
   metadata: Record<string, unknown>;
+  attachments?: FileAttachmentData[] | null;
   created_at: string;
 }
 

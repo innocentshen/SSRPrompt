@@ -34,6 +34,23 @@ export function getCurrentProvider(): DatabaseProvider {
   return currentConfig.provider;
 }
 
+/**
+ * 检查数据库是否已配置
+ */
+export function isDatabaseConfigured(): boolean {
+  const config = getStoredConfig();
+
+  if (config.provider === 'mysql') {
+    return !!(config.mysql?.host && config.mysql?.database && config.mysql?.user);
+  }
+
+  if (config.provider === 'supabase') {
+    return !!(config.supabase?.url && config.supabase?.anonKey);
+  }
+
+  return false;
+}
+
 export function initializeDatabase(config?: DatabaseConfig): DatabaseService {
   if (config) {
     currentConfig = config;

@@ -76,10 +76,15 @@ export interface AICallOptions {
   parameters?: ModelParameters;
 }
 
+export interface StreamUsage {
+  tokensInput: number;
+  tokensOutput: number;
+}
+
 export interface StreamCallbacks {
   onToken: (token: string) => void;
   onThinkingToken?: (token: string) => void;
-  onComplete?: (fullContent: string, thinking?: string) => void;
+  onComplete?: (fullContent: string, thinking?: string, usage?: StreamUsage) => void;
   onError?: (error: string) => void;
 }
 
@@ -231,6 +236,7 @@ export async function callAIModelWithMessages(
             'Content-Type': 'application/json',
             'x-api-key': provider.api_key!,
             'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'pdfs-2024-09-25',
           },
           body: JSON.stringify(requestBody),
         });
@@ -417,7 +423,7 @@ export async function streamAIModelWithMessages(
               }
             }
 
-            const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
+            const content: Array<{ type: string; text?: string; image_url?: { url: string }; file?: { filename: string; file_data: string } }> = [
               { type: 'text', text: enhancedContent },
             ];
             for (const file of files) {
@@ -425,6 +431,14 @@ export async function streamAIModelWithMessages(
                 content.push({
                   type: 'image_url',
                   image_url: { url: `data:${file.type};base64,${file.base64}` },
+                });
+              } else if (isPdfFile(file)) {
+                content.push({
+                  type: 'file',
+                  file: {
+                    filename: file.name,
+                    file_data: `data:application/pdf;base64,${file.base64}`,
+                  },
                 });
               }
             }
@@ -439,6 +453,7 @@ export async function streamAIModelWithMessages(
           temperature: params.temperature ?? 0.7,
           max_tokens: params.max_tokens ?? 4096,
           stream: true,
+          stream_options: { include_usage: true },
         };
 
         if (params.top_p !== undefined) requestBody.top_p = params.top_p;
@@ -466,6 +481,7 @@ export async function streamAIModelWithMessages(
 
         const decoder = new TextDecoder();
         let fullContent = '';
+        let usage: StreamUsage = { tokensInput: 0, tokensOutput: 0 };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -485,6 +501,13 @@ export async function streamAIModelWithMessages(
                   fullContent += content;
                   callbacks.onToken(content);
                 }
+                // Extract usage from the final chunk
+                if (parsed.usage) {
+                  usage = {
+                    tokensInput: parsed.usage.prompt_tokens || 0,
+                    tokensOutput: parsed.usage.completion_tokens || 0,
+                  };
+                }
               } catch {
                 // Ignore JSON parse errors for incomplete chunks
               }
@@ -492,7 +515,7 @@ export async function streamAIModelWithMessages(
           }
         }
 
-        callbacks.onComplete?.(fullContent);
+        callbacks.onComplete?.(fullContent, undefined, usage);
         break;
       }
 
@@ -520,6 +543,11 @@ export async function streamAIModelWithMessages(
                   type: 'image',
                   source: { type: 'base64', media_type: file.type, data: file.base64 },
                 });
+              } else if (isPdfFile(file)) {
+                content.push({
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: file.base64 },
+                });
               }
             }
             content.push({ type: 'text', text: enhancedContent });
@@ -544,6 +572,7 @@ export async function streamAIModelWithMessages(
             'Content-Type': 'application/json',
             'x-api-key': provider.api_key!,
             'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'pdfs-2024-09-25',
           },
           body: JSON.stringify(requestBody),
         });
@@ -562,6 +591,7 @@ export async function streamAIModelWithMessages(
 
         const decoder = new TextDecoder();
         let fullContent = '';
+        let usage: StreamUsage = { tokensInput: 0, tokensOutput: 0 };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -575,9 +605,18 @@ export async function streamAIModelWithMessages(
               const data = line.slice(6);
               try {
                 const parsed = JSON.parse(data);
+                // Extract content from content_block_delta
                 if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
                   fullContent += parsed.delta.text;
                   callbacks.onToken(parsed.delta.text);
+                }
+                // Extract input_tokens from message_start
+                if (parsed.type === 'message_start' && parsed.message?.usage) {
+                  usage.tokensInput = parsed.message.usage.input_tokens || 0;
+                }
+                // Extract output_tokens from message_delta
+                if (parsed.type === 'message_delta' && parsed.usage) {
+                  usage.tokensOutput = parsed.usage.output_tokens || 0;
                 }
               } catch {
                 // Ignore JSON parse errors
@@ -586,7 +625,7 @@ export async function streamAIModelWithMessages(
           }
         }
 
-        callbacks.onComplete?.(fullContent);
+        callbacks.onComplete?.(fullContent, undefined, usage);
         break;
       }
 
@@ -653,6 +692,7 @@ export async function streamAIModelWithMessages(
 
         const decoder = new TextDecoder();
         let fullContent = '';
+        let usage: StreamUsage = { tokensInput: 0, tokensOutput: 0 };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -671,6 +711,13 @@ export async function streamAIModelWithMessages(
                   fullContent += text;
                   callbacks.onToken(text);
                 }
+                // Extract usage from usageMetadata
+                if (parsed.usageMetadata) {
+                  usage = {
+                    tokensInput: parsed.usageMetadata.promptTokenCount || 0,
+                    tokensOutput: parsed.usageMetadata.candidatesTokenCount || 0,
+                  };
+                }
               } catch {
                 // Ignore JSON parse errors
               }
@@ -678,7 +725,7 @@ export async function streamAIModelWithMessages(
           }
         }
 
-        callbacks.onComplete?.(fullContent);
+        callbacks.onComplete?.(fullContent, undefined, usage);
         break;
       }
 
@@ -693,6 +740,7 @@ export async function streamAIModelWithMessages(
           temperature: params.temperature ?? 0.7,
           max_tokens: params.max_tokens ?? 4096,
           stream: true,
+          stream_options: { include_usage: true },
         };
 
         const response = await fetch(
@@ -721,6 +769,7 @@ export async function streamAIModelWithMessages(
 
         const decoder = new TextDecoder();
         let fullContent = '';
+        let usage: StreamUsage = { tokensInput: 0, tokensOutput: 0 };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -740,6 +789,13 @@ export async function streamAIModelWithMessages(
                   fullContent += content;
                   callbacks.onToken(content);
                 }
+                // Extract usage from the final chunk
+                if (parsed.usage) {
+                  usage = {
+                    tokensInput: parsed.usage.prompt_tokens || 0,
+                    tokensOutput: parsed.usage.completion_tokens || 0,
+                  };
+                }
               } catch {
                 // Ignore JSON parse errors
               }
@@ -747,7 +803,7 @@ export async function streamAIModelWithMessages(
           }
         }
 
-        callbacks.onComplete?.(fullContent);
+        callbacks.onComplete?.(fullContent, undefined, usage);
         break;
       }
 
@@ -902,7 +958,7 @@ function buildAnthropicContent(prompt: string, files?: FileAttachment[]): unknow
     }
   }
 
-  // 处理图片文件
+  // 处理图片和 PDF 文件
   for (const file of files) {
     if (isImageFile(file)) {
       content.push({
@@ -910,6 +966,15 @@ function buildAnthropicContent(prompt: string, files?: FileAttachment[]): unknow
         source: {
           type: 'base64',
           media_type: file.type,
+          data: file.base64,
+        },
+      });
+    } else if (isPdfFile(file)) {
+      content.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
           data: file.base64,
         },
       });
@@ -956,6 +1021,7 @@ async function callAnthropic(
       'Content-Type': 'application/json',
       'x-api-key': provider.api_key!,
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'pdfs-2024-09-25',
     },
     body: JSON.stringify(requestBody),
   });

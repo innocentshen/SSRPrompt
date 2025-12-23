@@ -30,27 +30,21 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     <aside
       className={`${
         collapsed ? 'w-16' : 'w-60'
-      } bg-slate-900 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col transition-all duration-300`}
+      } bg-slate-900 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col transition-all duration-300 overflow-hidden flex-shrink-0`}
     >
-      <div className="h-14 flex items-center justify-between px-4 border-b border-slate-700 light:border-slate-200 relative">
-        {!collapsed && (
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center">
-              <Compass className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-semibold text-white light:text-slate-900">AI 罗盘</span>
-          </div>
-        )}
-        {collapsed && (
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mx-auto">
+      <div className="h-14 flex items-center px-4 border-b border-slate-700 light:border-slate-200">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center flex-shrink-0">
             <Compass className="w-5 h-5 text-white" />
           </div>
-        )}
+          {!collapsed && (
+            <span className="font-semibold text-white light:text-slate-900 whitespace-nowrap">AI 罗盘</span>
+          )}
+        </div>
+        <div className="flex-1" />
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`p-1 rounded hover:bg-slate-800 light:hover:bg-slate-100 text-slate-400 light:text-slate-500 hover:text-white light:hover:text-slate-900 transition-colors ${
-            collapsed ? 'absolute right-2 top-4' : ''
-          }`}
+          className="p-1 rounded hover:bg-slate-800 light:hover:bg-slate-100 text-slate-400 light:text-slate-500 hover:text-white light:hover:text-slate-900 transition-colors flex-shrink-0"
         >
           {collapsed ? (
             <ChevronRight className="w-4 h-4" />
@@ -75,7 +69,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               }`}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
-              {!collapsed && <span>{item.name}</span>}
+              {!collapsed && <span className="whitespace-nowrap">{item.name}</span>}
             </button>
           );
         })}

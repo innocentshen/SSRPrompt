@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Trash2, Paperclip, X, FileText, Image, Check, Loader2, Eye, EyeOff, Maximize2, Code, File } from 'lucide-react';
 import { Button, Modal, MarkdownRenderer } from '../ui';
 import type { TestCase, FileAttachmentData } from '../../types';
-import { getFileInputAccept, isSupportedFileType, getFileIconType } from '../../lib/file-utils';
+import { getFileInputAccept, isSupportedFileType, getFileIconType, isImageFile, isPdfFile, isTextFile, readTextContent, getSyntaxLanguage } from '../../lib/file-utils';
 
 interface TestCaseEditorProps {
   testCase: TestCase;
@@ -83,6 +83,7 @@ export function TestCaseEditor({
   const [expandedField, setExpandedField] = useState<'input' | 'expected' | null>(null);
   const [expandedValue, setExpandedValue] = useState('');
   const [expandedPreview, setExpandedPreview] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState<FileAttachmentData | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpdate = async (updates: Partial<TestCase>) => {
@@ -166,6 +167,45 @@ export function TestCaseEditor({
     setExpandedField(field);
     setExpandedValue(field === 'input' ? testCase.input_text : (testCase.expected_output || ''));
     setExpandedPreview(false);
+  };
+
+  const renderAttachmentPreview = (attachment: FileAttachmentData) => {
+    if (isImageFile(attachment)) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <img
+            src={`data:${attachment.type};base64,${attachment.base64}`}
+            alt={attachment.name}
+            className="max-w-full max-h-[70vh] object-contain"
+          />
+        </div>
+      );
+    }
+    if (isPdfFile(attachment)) {
+      return (
+        <iframe
+          src={`data:application/pdf;base64,${attachment.base64}`}
+          className="w-full h-[70vh]"
+          title={attachment.name}
+        />
+      );
+    }
+    if (isTextFile(attachment)) {
+      const textContent = readTextContent(attachment.base64);
+      const language = getSyntaxLanguage(attachment);
+      return (
+        <div className="h-[70vh] overflow-auto">
+          <pre className="p-4 bg-slate-900 light:bg-slate-100 rounded-lg text-sm font-mono text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
+            <code className={`language-${language}`}>{textContent}</code>
+          </pre>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center justify-center h-[200px] text-slate-500 light:text-slate-600">
+        无法预览此文件类型
+      </div>
+    );
   };
 
   const closeExpandModal = async () => {
@@ -325,8 +365,16 @@ export function TestCaseEditor({
                       {attachment.name}
                     </span>
                     <button
+                      onClick={() => setPreviewAttachment(attachment)}
+                      className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
+                      title="预览附件"
+                    >
+                      <Eye className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-cyan-400 light:hover:text-cyan-600" />
+                    </button>
+                    <button
                       onClick={() => removeAttachment(i)}
                       className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
+                      title="删除附件"
                     >
                       <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
                     </button>
@@ -471,6 +519,16 @@ export function TestCaseEditor({
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Attachment Preview Modal */}
+      <Modal
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        title={previewAttachment?.name || '附件预览'}
+        size="xl"
+      >
+        {previewAttachment && renderAttachmentPreview(previewAttachment)}
       </Modal>
     </div>
   );

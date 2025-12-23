@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, Server, CheckCircle2, XCircle, Loader2, RefreshCw, Cloud, TableProperties } from 'lucide-react';
+import { Database, Server, CheckCircle2, XCircle, Loader2, RefreshCw, Cloud, TableProperties, ArrowUpCircle, AlertCircle } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import {
   getStoredConfig,
@@ -8,15 +8,22 @@ import {
   type DatabaseConfig,
   type DatabaseProvider,
 } from '../../lib/database';
+import type { MigrationStatus } from '../../lib/database/types';
+import { getMigrationStatus, runPendingMigrations, getLatestVersion } from '../../lib/database/migrations';
 import { SupabaseInitModal } from './SupabaseInitModal';
+import { SupabaseUpgradeModal } from './SupabaseUpgradeModal';
 
 export function DatabaseSettings() {
   const { showToast } = useToast();
   const [config, setConfig] = useState<DatabaseConfig>(getStoredConfig());
   const [testing, setTesting] = useState(false);
   const [initializing, setInitializing] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [showInitModal, setShowInitModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
+  const [checkingMigration, setCheckingMigration] = useState(false);
 
   // MySQL 配置状态
   const [mysqlHost, setMysqlHost] = useState(config.mysql?.host || '');
@@ -72,6 +79,7 @@ export function DatabaseSettings() {
   const handleTestConnection = async () => {
     setTesting(true);
     setConnectionStatus('idle');
+    setMigrationStatus(null);
 
     try {
       let testConfig: DatabaseConfig;
@@ -87,6 +95,9 @@ export function DatabaseSettings() {
       if (result.success) {
         setConnectionStatus('success');
         showToast('success', '数据库连接测试成功');
+
+        // 连接成功后检查迁移状态
+        await checkMigrationStatus(db);
       } else {
         setConnectionStatus('error');
         showToast('error', `连接失败: ${result.error}`);
@@ -97,6 +108,45 @@ export function DatabaseSettings() {
     }
 
     setTesting(false);
+  };
+
+  const checkMigrationStatus = async (db: ReturnType<typeof initializeDatabase>) => {
+    setCheckingMigration(true);
+    try {
+      const status = await getMigrationStatus(db);
+      setMigrationStatus(status);
+    } catch (e) {
+      console.error('Failed to check migration status:', e);
+    }
+    setCheckingMigration(false);
+  };
+
+  const handleUpgrade = async () => {
+    if (config.provider !== 'mysql') {
+      showToast('info', 'Supabase 需要在 Dashboard 中手动执行迁移脚本');
+      setShowInitModal(true);
+      return;
+    }
+
+    setUpgrading(true);
+
+    try {
+      const mysqlConfig = buildMySQLConfig();
+      const db = initializeDatabase(mysqlConfig);
+      const result = await runPendingMigrations(db);
+
+      if (result.success) {
+        showToast('success', `升级成功！执行了 ${result.executedMigrations.length} 个迁移，当前版本: v${result.currentVersion}`);
+        // 重新检查迁移状态
+        await checkMigrationStatus(db);
+      } else {
+        showToast('error', `升级失败: ${result.error}`);
+      }
+    } catch (e) {
+      showToast('error', `升级异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+
+    setUpgrading(false);
   };
 
   const handleInitializeTables = async () => {
@@ -251,7 +301,7 @@ export function DatabaseSettings() {
           />
 
           <div className="pt-4 border-t border-slate-700 light:border-slate-200 space-y-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button
                 variant="secondary"
                 onClick={handleTestConnection}
@@ -274,6 +324,17 @@ export function DatabaseSettings() {
                 <span>初始化表结构</span>
               </Button>
 
+              {/* 升级按钮 - 当有待执行的迁移时显示 */}
+              {migrationStatus && !migrationStatus.isUpToDate && config.provider === 'supabase' && (
+                <Button
+                  variant="primary"
+                  onClick={() => setShowUpgradeModal(true)}
+                >
+                  <ArrowUpCircle className="w-4 h-4" />
+                  <span>升级表结构</span>
+                </Button>
+              )}
+
               {connectionStatus === 'success' && (
                 <span className="flex items-center gap-1 text-sm text-emerald-500 light:text-emerald-600">
                   <CheckCircle2 className="w-4 h-4" />
@@ -287,6 +348,45 @@ export function DatabaseSettings() {
                 </span>
               )}
             </div>
+
+            {/* 迁移状态显示 */}
+            {checkingMigration && config.provider === 'supabase' && (
+              <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>检查数据库版本...</span>
+              </div>
+            )}
+
+            {migrationStatus && config.provider === 'supabase' && (
+              <div className={`p-3 rounded-lg border ${
+                migrationStatus.isUpToDate
+                  ? 'bg-emerald-500/10 light:bg-emerald-50 border-emerald-500/20 light:border-emerald-200'
+                  : 'bg-amber-500/10 light:bg-amber-50 border-amber-500/20 light:border-amber-200'
+              }`}>
+                <div className="flex items-start gap-2">
+                  {migrationStatus.isUpToDate ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 light:text-emerald-600 mt-0.5 flex-shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500 light:text-amber-600 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="text-sm">
+                    <p className={migrationStatus.isUpToDate ? 'text-emerald-400 light:text-emerald-700' : 'text-amber-400 light:text-amber-700'}>
+                      当前版本: v{migrationStatus.currentVersion} / 最新版本: v{migrationStatus.latestVersion}
+                    </p>
+                    {!migrationStatus.isUpToDate && (
+                      <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
+                        有 {migrationStatus.pendingMigrations.length} 个待执行的迁移。点击"升级表结构"按钮获取升级脚本。
+                      </p>
+                    )}
+                    {migrationStatus.isUpToDate && (
+                      <p className="text-xs text-emerald-400/80 light:text-emerald-600 mt-1">
+                        数据库结构已是最新版本。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <p className="text-xs text-slate-500 light:text-slate-600">
               首次使用 Supabase 时，请点击"初始化表结构"按钮获取建表 SQL
@@ -344,7 +444,7 @@ export function DatabaseSettings() {
           </div>
 
           <div className="pt-4 border-t border-slate-700 light:border-slate-200 space-y-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button
                 variant="secondary"
                 onClick={handleTestConnection}
@@ -357,6 +457,35 @@ export function DatabaseSettings() {
                 )}
                 <span>测试连接</span>
               </Button>
+
+              <Button
+                variant="secondary"
+                onClick={handleInitializeTables}
+                disabled={initializing || connectionStatus !== 'success'}
+              >
+                {initializing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Database className="w-4 h-4" />
+                )}
+                <span>初始化表结构</span>
+              </Button>
+
+              {/* 升级按钮 - 当有待执行的迁移时显示 */}
+              {migrationStatus && !migrationStatus.isUpToDate && (
+                <Button
+                  variant="primary"
+                  onClick={handleUpgrade}
+                  disabled={upgrading}
+                >
+                  {upgrading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ArrowUpCircle className="w-4 h-4" />
+                  )}
+                  <span>升级表结构</span>
+                </Button>
+              )}
 
               {connectionStatus === 'success' && (
                 <span className="flex items-center gap-1 text-sm text-emerald-500 light:text-emerald-600">
@@ -372,18 +501,45 @@ export function DatabaseSettings() {
               )}
             </div>
 
-            <Button
-              variant="secondary"
-              onClick={handleInitializeTables}
-              disabled={initializing || connectionStatus !== 'success'}
-            >
-              {initializing ? (
+            {/* 迁移状态显示 */}
+            {checkingMigration && (
+              <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Database className="w-4 h-4" />
-              )}
-              <span>初始化表结构</span>
-            </Button>
+                <span>检查数据库版本...</span>
+              </div>
+            )}
+
+            {migrationStatus && (
+              <div className={`p-3 rounded-lg border ${
+                migrationStatus.isUpToDate
+                  ? 'bg-emerald-500/10 light:bg-emerald-50 border-emerald-500/20 light:border-emerald-200'
+                  : 'bg-amber-500/10 light:bg-amber-50 border-amber-500/20 light:border-amber-200'
+              }`}>
+                <div className="flex items-start gap-2">
+                  {migrationStatus.isUpToDate ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 light:text-emerald-600 mt-0.5 flex-shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-500 light:text-amber-600 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="text-sm">
+                    <p className={migrationStatus.isUpToDate ? 'text-emerald-400 light:text-emerald-700' : 'text-amber-400 light:text-amber-700'}>
+                      当前版本: v{migrationStatus.currentVersion} / 最新版本: v{migrationStatus.latestVersion}
+                    </p>
+                    {!migrationStatus.isUpToDate && (
+                      <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
+                        有 {migrationStatus.pendingMigrations.length} 个待执行的迁移。点击"升级表结构"按钮进行升级。
+                      </p>
+                    )}
+                    {migrationStatus.isUpToDate && (
+                      <p className="text-xs text-emerald-400/80 light:text-emerald-600 mt-1">
+                        数据库结构已是最新版本。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-slate-500 light:text-slate-600">
               首次使用 MySQL 时需要初始化表结构。如果表已存在,此操作不会影响现有数据。
             </p>
@@ -403,6 +559,18 @@ export function DatabaseSettings() {
         onClose={() => setShowInitModal(false)}
         supabaseUrl={supabaseUrl}
       />
+
+      {/* Supabase 升级模态框 */}
+      {migrationStatus && (
+        <SupabaseUpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          supabaseUrl={supabaseUrl}
+          currentVersion={migrationStatus.currentVersion}
+          latestVersion={migrationStatus.latestVersion}
+          pendingMigrations={migrationStatus.pendingMigrations}
+        />
+      )}
     </div>
   );
 }

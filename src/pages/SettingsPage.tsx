@@ -6,7 +6,7 @@ import { AddProviderModal } from '../components/Settings/AddProviderModal';
 import { DatabaseSettings } from '../components/Settings/DatabaseSettings';
 import { OptimizationSettings } from '../components/Settings/OptimizationSettings';
 import { useToast } from '../components/ui';
-import { getDatabase } from '../lib/database';
+import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import type { Provider, Model, ProviderType } from '../types';
 
 type SettingsTab = 'providers' | 'database' | 'optimization';
@@ -28,6 +28,12 @@ export function SettingsPage() {
   }, []);
 
   const loadProviders = async () => {
+    // 检查数据库是否已配置
+    if (!isDatabaseConfigured()) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: providersData, error: providersError } = await getDatabase()
@@ -41,7 +47,7 @@ export function SettingsPage() {
         .order('created_at', { ascending: true });
 
       if (providersError) {
-        showToast('error', '加载服务商失败');
+        showToast('error', '请先在"数据库"页签中配置数据库连接');
       } else if (providersData) {
         setProviders(providersData);
         if (providersData.length > 0 && !selectedProviderId) {
@@ -52,7 +58,7 @@ export function SettingsPage() {
         setModels(modelsData);
       }
     } catch {
-      showToast('error', '加载数据失败');
+      showToast('error', '请先在"数据库"页签中配置数据库连接');
     }
     setLoading(false);
   };

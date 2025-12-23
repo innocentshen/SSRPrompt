@@ -28,8 +28,8 @@ import {
 import { Button, Input, Modal, Badge, Select, useToast, MarkdownRenderer, Tabs, Collapsible } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentModal } from '../components/Prompt';
 import type { DebugRun } from '../components/Prompt';
-import { getDatabase } from '../lib/database';
-import { callAIModel, streamAIModel, fileToBase64, extractThinking, type FileAttachment } from '../lib/ai-service';
+import { getDatabase, isDatabaseConfigured } from '../lib/database';
+import { callAIModel, streamAIModel, fileToBase64, extractThinking, type FileAttachment, type StreamUsage } from '../lib/ai-service';
 import { analyzePrompt, type PromptAnalysisResult } from '../lib/prompt-analyzer';
 import { toResponseFormat } from '../lib/schema-utils';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
@@ -238,25 +238,34 @@ export function PromptsPage() {
   }, [promptContent, promptName, promptMessages, promptConfig, promptVariables, selectedPrompt, debouncedAutoSave, autoSaveStatus]);
 
   const loadData = async () => {
-    const [promptsRes, providersRes, modelsRes] = await Promise.all([
-      getDatabase().from('prompts').select('*').order('order_index').order('updated_at', { ascending: false }),
-      getDatabase().from('providers').select('*').eq('enabled', true),
-      getDatabase().from('models').select('*'),
-    ]);
-
-    if (promptsRes.data) {
-      setPrompts(promptsRes.data);
-      if (promptsRes.data.length > 0) {
-        setSelectedPrompt(promptsRes.data[0]);
-      }
+    // 检查数据库是否已配置
+    if (!isDatabaseConfigured()) {
+      return;
     }
-    if (providersRes.data) setProviders(providersRes.data);
-    if (modelsRes.data) {
-      setModels(modelsRes.data);
-      if (modelsRes.data.length > 0) {
-        setSelectedModel(modelsRes.data[0].id);
-        setOptimizeModelId(modelsRes.data[0].id);
+
+    try {
+      const [promptsRes, providersRes, modelsRes] = await Promise.all([
+        getDatabase().from('prompts').select('*').order('order_index').order('updated_at', { ascending: false }),
+        getDatabase().from('providers').select('*').eq('enabled', true),
+        getDatabase().from('models').select('*'),
+      ]);
+
+      if (promptsRes.data) {
+        setPrompts(promptsRes.data);
+        if (promptsRes.data.length > 0) {
+          setSelectedPrompt(promptsRes.data[0]);
+        }
       }
+      if (providersRes.data) setProviders(providersRes.data);
+      if (modelsRes.data) {
+        setModels(modelsRes.data);
+        if (modelsRes.data.length > 0) {
+          setSelectedModel(modelsRes.data[0].id);
+          setOptimizeModelId(modelsRes.data[0].id);
+        }
+      }
+    } catch {
+      showToast('error', '请先在设置中配置数据库连接');
     }
   };
 
@@ -429,8 +438,6 @@ export function PromptsPage() {
       }
 
       let fullContent = '';
-      let tokensInput = 0;
-      let tokensOutput = 0;
       let accumulatedThinking = '';
 
       await streamAIModel(
@@ -455,9 +462,12 @@ export function PromptsPage() {
             // 显示去除思考标签后的内容
             setTestOutput(content);
           },
-          onComplete: async (finalContent) => {
+          onComplete: async (finalContent, _thinking, usage) => {
             const latencyMs = Date.now() - startTime;
-            const thinkingDuration = thinkingStartTime > 0 ? Date.now() - thinkingStartTime : 0;
+
+            // Get token counts from usage
+            const tokensInput = usage?.tokensInput || 0;
+            const tokensOutput = usage?.tokensOutput || 0;
 
             // 提取最终的思考内容
             const { thinking, content } = extractThinking(finalContent);
@@ -483,23 +493,30 @@ export function PromptsPage() {
             };
             setDebugRuns((prev) => [newRun, ...prev.slice(0, 19)]);
 
-            await getDatabase().from('traces').insert({
-              prompt_id: selectedPrompt?.id,
-              model_id: model.id,
-              input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
-              output: finalContent,
-              tokens_input: tokensInput,
-              tokens_output: tokensOutput,
-              latency_ms: latencyMs,
-              status: 'success',
-              metadata: {
-                test_input: testInput,
-                files: attachedFiles.map((f) => ({ name: f.name, type: f.type })),
-              },
-            });
-
+            // Ensure setRunning(false) is always called
             setRunning(false);
             showToast('success', '运行完成');
+
+            // Save to database (non-blocking)
+            try {
+              await getDatabase().from('traces').insert({
+                prompt_id: selectedPrompt?.id,
+                model_id: model.id,
+                input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
+                output: finalContent,
+                tokens_input: tokensInput,
+                tokens_output: tokensOutput,
+                latency_ms: latencyMs,
+                status: 'success',
+                metadata: {
+                  test_input: testInput,
+                  files: attachedFiles.map((f) => ({ name: f.name, type: f.type })),
+                },
+                attachments: attachedFiles,
+              });
+            } catch (e) {
+              console.error('Failed to save trace:', e);
+            }
           },
           onError: async (error) => {
             setTestOutput(`**[错误]**\n\n${error}\n\n请检查:\n1. API Key 是否正确配置\n2. 模型名称是否正确\n3. Base URL 是否可访问\n4. 网络连接是否正常`);
@@ -519,20 +536,27 @@ export function PromptsPage() {
             };
             setDebugRuns((prev) => [newRun, ...prev.slice(0, 19)]);
 
-            await getDatabase().from('traces').insert({
-              prompt_id: selectedPrompt?.id,
-              model_id: model.id,
-              input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
-              output: error,
-              tokens_input: 0,
-              tokens_output: 0,
-              latency_ms: 0,
-              status: 'error',
-              metadata: { test_input: testInput, error },
-            });
-
+            // Ensure setRunning(false) is always called
             setRunning(false);
             showToast('error', '运行失败: ' + error);
+
+            // Save to database (non-blocking)
+            try {
+              await getDatabase().from('traces').insert({
+                prompt_id: selectedPrompt?.id,
+                model_id: model.id,
+                input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
+                output: error,
+                tokens_input: 0,
+                tokens_output: 0,
+                latency_ms: 0,
+                status: 'error',
+                metadata: { test_input: testInput, error },
+                attachments: attachedFiles,
+              });
+            } catch (e) {
+              console.error('Failed to save trace:', e);
+            }
           },
         },
         testInput,

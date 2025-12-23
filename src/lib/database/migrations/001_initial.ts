@@ -1,14 +1,188 @@
-// Supabase 数据库初始化 SQL
-// 合并了所有迁移文件，为用户提供一键初始化
+import type { Migration } from '../types';
 
-export const SUPABASE_INIT_SQL = `-- PromptGo Supabase 数据库初始化脚本
--- 请在 Supabase Dashboard > SQL Editor 中执行此脚本
+// 初始化迁移 - 创建所有基础表
+// 注意：此迁移需要同时创建 schema_migrations 表
 
--- =====================================================
--- 1. 创建基础表结构
--- =====================================================
+export const migration: Migration = {
+  version: 1,
+  name: 'initial',
+  description: '创建所有基础表结构',
 
--- 迁移版本记录表
+  mysql: `
+-- schema_migrations 表用于记录迁移版本
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI 服务商表
+CREATE TABLE IF NOT EXISTS providers (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL DEFAULT 'demo',
+  name VARCHAR(255) NOT NULL,
+  type ENUM('openai', 'anthropic', 'gemini', 'azure', 'custom') NOT NULL,
+  api_key TEXT NOT NULL,
+  base_url TEXT,
+  enabled BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_providers_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 模型表
+CREATE TABLE IF NOT EXISTS models (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  provider_id VARCHAR(36) NOT NULL,
+  model_id VARCHAR(255) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  capabilities JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_models_provider_id (provider_id),
+  FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Prompt 表
+CREATE TABLE IF NOT EXISTS prompts (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL DEFAULT 'demo',
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  content TEXT,
+  variables JSON,
+  messages JSON,
+  config JSON,
+  current_version INT DEFAULT 1,
+  default_model_id VARCHAR(36),
+  order_index INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_prompts_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Prompt 版本历史表
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  prompt_id VARCHAR(36) NOT NULL,
+  version INT NOT NULL,
+  content TEXT NOT NULL,
+  commit_message TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_prompt_versions_prompt_id (prompt_id),
+  FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 评测表
+CREATE TABLE IF NOT EXISTS evaluations (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL DEFAULT 'demo',
+  name VARCHAR(255) NOT NULL,
+  prompt_id VARCHAR(36),
+  model_id VARCHAR(36),
+  judge_model_id VARCHAR(36),
+  status ENUM('pending', 'running', 'completed', 'failed') DEFAULT 'pending',
+  config JSON,
+  results JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP,
+  INDEX idx_evaluations_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 评测运行记录表
+CREATE TABLE IF NOT EXISTS evaluation_runs (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  evaluation_id VARCHAR(36) NOT NULL,
+  status ENUM('pending', 'running', 'completed', 'failed') DEFAULT 'pending',
+  results JSON,
+  error_message TEXT,
+  total_tokens_input INT DEFAULT 0,
+  total_tokens_output INT DEFAULT 0,
+  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_evaluation_runs_evaluation_id (evaluation_id),
+  INDEX idx_evaluation_runs_status (status),
+  INDEX idx_evaluation_runs_created_at (created_at DESC),
+  FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 测试用例表
+CREATE TABLE IF NOT EXISTS test_cases (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  evaluation_id VARCHAR(36) NOT NULL,
+  name VARCHAR(255) DEFAULT '',
+  input_text TEXT NOT NULL,
+  input_variables JSON,
+  attachments JSON,
+  expected_output TEXT,
+  notes TEXT,
+  order_index INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_test_cases_evaluation_id (evaluation_id),
+  INDEX idx_test_cases_order (evaluation_id, order_index),
+  FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 评价标准表
+CREATE TABLE IF NOT EXISTS evaluation_criteria (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  evaluation_id VARCHAR(36) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  prompt TEXT,
+  weight DECIMAL(5,2) DEFAULT 1.0,
+  enabled BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_evaluation_criteria_evaluation_id (evaluation_id),
+  FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 测试用例结果表
+CREATE TABLE IF NOT EXISTS test_case_results (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  evaluation_id VARCHAR(36) NOT NULL,
+  test_case_id VARCHAR(36) NOT NULL,
+  run_id VARCHAR(36),
+  model_output TEXT,
+  scores JSON,
+  ai_feedback JSON,
+  latency_ms INT DEFAULT 0,
+  tokens_input INT DEFAULT 0,
+  tokens_output INT DEFAULT 0,
+  passed BOOLEAN DEFAULT FALSE,
+  error_message TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_test_case_results_evaluation_id (evaluation_id),
+  INDEX idx_test_case_results_test_case_id (test_case_id),
+  INDEX idx_test_case_results_run_id (run_id),
+  FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE,
+  FOREIGN KEY (test_case_id) REFERENCES test_cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (run_id) REFERENCES evaluation_runs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 调用追踪表
+CREATE TABLE IF NOT EXISTS traces (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL DEFAULT 'demo',
+  prompt_id VARCHAR(36),
+  model_id VARCHAR(36),
+  input TEXT NOT NULL,
+  output TEXT,
+  tokens_input INT DEFAULT 0,
+  tokens_output INT DEFAULT 0,
+  latency_ms INT DEFAULT 0,
+  status ENUM('success', 'error') DEFAULT 'success',
+  error_message TEXT,
+  metadata JSON,
+  attachments JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_traces_user_id (user_id),
+  INDEX idx_traces_created_at (created_at DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`,
+
+  postgresql: `
+-- schema_migrations 表用于记录迁移版本
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
@@ -155,11 +329,7 @@ CREATE TABLE IF NOT EXISTS traces (
   created_at timestamptz DEFAULT now()
 );
 
--- =====================================================
--- 2. 启用行级安全策略 (RLS)
--- =====================================================
-
-ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
+-- 启用行级安全策略 (RLS)
 ALTER TABLE providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE models ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prompts ENABLE ROW LEVEL SECURITY;
@@ -170,12 +340,9 @@ ALTER TABLE evaluation_criteria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evaluation_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_case_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE traces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
 
--- =====================================================
--- 3. 创建访问策略 (允许匿名访问，用于演示)
--- =====================================================
-
-CREATE POLICY "Allow all access to schema_migrations" ON schema_migrations FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+-- 创建访问策略
 CREATE POLICY "Allow all access to providers" ON providers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to models" ON models FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to prompts" ON prompts FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
@@ -186,11 +353,9 @@ CREATE POLICY "Allow all access to evaluation_criteria" ON evaluation_criteria F
 CREATE POLICY "Allow all access to evaluation_runs" ON evaluation_runs FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to test_case_results" ON test_case_results FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to traces" ON traces FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to schema_migrations" ON schema_migrations FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- =====================================================
--- 4. 创建索引优化查询性能
--- =====================================================
-
+-- 创建索引
 CREATE INDEX IF NOT EXISTS idx_providers_user_id ON providers(user_id);
 CREATE INDEX IF NOT EXISTS idx_models_provider_id ON models(provider_id);
 CREATE INDEX IF NOT EXISTS idx_prompts_user_id ON prompts(user_id);
@@ -207,14 +372,5 @@ CREATE INDEX IF NOT EXISTS idx_test_case_results_test_case_id ON test_case_resul
 CREATE INDEX IF NOT EXISTS idx_test_case_results_run_id ON test_case_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_traces_user_id ON traces(user_id);
 CREATE INDEX IF NOT EXISTS idx_traces_created_at ON traces(created_at DESC);
-
--- =====================================================
--- 5. 记录初始迁移版本
--- =====================================================
-
-INSERT INTO schema_migrations (version, name) VALUES (1, 'initial') ON CONFLICT (version) DO NOTHING;
-
--- =====================================================
--- 初始化完成！
--- =====================================================
-`;
+`
+};

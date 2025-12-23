@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap } from 'lucide-react';
-import { Badge, MarkdownRenderer } from '../ui';
-import type { TestCase, TestCaseResult, EvaluationCriterion } from '../../types';
+import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File } from 'lucide-react';
+import { Badge, MarkdownRenderer, Modal } from '../ui';
+import type { TestCase, TestCaseResult, EvaluationCriterion, FileAttachmentData } from '../../types';
+import { isImageFile, isPdfFile, isTextFile, readTextContent, getSyntaxLanguage, getFileIconType } from '../../lib/file-utils';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
@@ -20,6 +21,7 @@ export function EvaluationResultsView({
 }: EvaluationResultsViewProps) {
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
+  const [previewAttachment, setPreviewAttachment] = useState<FileAttachmentData | null>(null);
 
   const getTestCaseName = (testCaseId: string, index: number) => {
     const testCase = testCases.find((tc) => tc.id === testCaseId);
@@ -34,6 +36,66 @@ export function EvaluationResultsView({
   const getTestCaseNotes = (testCaseId: string) => {
     const testCase = testCases.find((tc) => tc.id === testCaseId);
     return testCase?.notes || null;
+  };
+
+  const getTestCaseAttachments = (testCaseId: string) => {
+    const testCase = testCases.find((tc) => tc.id === testCaseId);
+    return testCase?.attachments || [];
+  };
+
+  const getFileIcon = (attachment: { type: string; name?: string }) => {
+    const iconType = getFileIconType(attachment);
+    switch (iconType) {
+      case 'image':
+        return Image;
+      case 'pdf':
+        return FileText;
+      case 'code':
+        return Code;
+      case 'text':
+        return FileText;
+      default:
+        return File;
+    }
+  };
+
+  const renderAttachmentPreview = (attachment: FileAttachmentData) => {
+    if (isImageFile(attachment)) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <img
+            src={`data:${attachment.type};base64,${attachment.base64}`}
+            alt={attachment.name}
+            className="max-w-full max-h-[70vh] object-contain"
+          />
+        </div>
+      );
+    }
+    if (isPdfFile(attachment)) {
+      return (
+        <iframe
+          src={`data:application/pdf;base64,${attachment.base64}`}
+          className="w-full h-[70vh]"
+          title={attachment.name}
+        />
+      );
+    }
+    if (isTextFile(attachment)) {
+      const textContent = readTextContent(attachment.base64);
+      const language = getSyntaxLanguage(attachment);
+      return (
+        <div className="h-[70vh] overflow-auto">
+          <pre className="p-4 bg-slate-900 light:bg-slate-100 rounded-lg text-sm font-mono text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
+            <code className={`language-${language}`}>{textContent}</code>
+          </pre>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center justify-center h-[200px] text-slate-500 light:text-slate-600">
+        无法预览此文件类型
+      </div>
+    );
   };
 
   const toggleOutputExpanded = (resultId: string) => {
@@ -146,6 +208,12 @@ export function EvaluationResultsView({
                   <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
                     {getTestCaseName(result.test_case_id, index)}
                   </span>
+                  {getTestCaseAttachments(result.test_case_id).length > 0 && (
+                    <span className="flex items-center gap-1 text-xs text-slate-500 light:text-slate-600">
+                      <Paperclip className="w-3 h-3" />
+                      {getTestCaseAttachments(result.test_case_id).length}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-500 light:text-slate-600">
                   <span className="flex items-center gap-1">
@@ -263,12 +331,50 @@ export function EvaluationResultsView({
                       </div>
                     </div>
                   )}
+
+                  {getTestCaseAttachments(result.test_case_id).length > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2 flex items-center gap-1">
+                        <Paperclip className="w-3 h-3" />
+                        附件 ({getTestCaseAttachments(result.test_case_id).length})
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {getTestCaseAttachments(result.test_case_id).map((attachment, i) => {
+                          const Icon = getFileIcon(attachment);
+                          return (
+                            <button
+                              key={i}
+                              onClick={() => setPreviewAttachment(attachment)}
+                              className="flex items-center gap-2 px-3 py-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200 hover:border-cyan-500 light:hover:border-cyan-400 transition-colors"
+                              title="点击预览"
+                            >
+                              <Icon className="w-4 h-4 text-slate-400 light:text-slate-500" />
+                              <span className="text-sm text-slate-300 light:text-slate-700 max-w-[150px] truncate">
+                                {attachment.name}
+                              </span>
+                              <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           ))}
         </div>
       </div>
+
+      {/* Attachment Preview Modal */}
+      <Modal
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        title={previewAttachment?.name || '附件预览'}
+        size="xl"
+      >
+        {previewAttachment && renderAttachmentPreview(previewAttachment)}
+      </Modal>
     </div>
   );
 }

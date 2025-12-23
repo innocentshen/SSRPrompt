@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { DatabaseService, QueryBuilder, QueryResult, SupabaseConfig } from './types';
+import type { DatabaseService, QueryBuilder, QueryResult, SupabaseConfig, Migration, MigrationResult } from './types';
 
 type FilterMethod = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in';
 type FilterDef = { method: FilterMethod; column: string; value: unknown };
@@ -261,5 +261,88 @@ export class SupabaseAdapter implements DatabaseService {
 
   getConfig(): SupabaseConfig {
     return this.config;
+  }
+
+  async getSchemaVersion(): Promise<number> {
+    try {
+      // 尝试查询 schema_migrations 表获取最高版本
+      const { data, error } = await this.client
+        .from('schema_migrations')
+        .select('version')
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        // 表可能不存在，返回 0
+        console.log('schema_migrations table may not exist:', error.message);
+        return 0;
+      }
+
+      return data?.version || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async runMigrations(migrations: Migration[]): Promise<MigrationResult> {
+    const executedMigrations: number[] = [];
+    let currentVersion = await this.getSchemaVersion();
+
+    try {
+      for (const migration of migrations) {
+        // 对于 Supabase，由于无法直接执行 DDL，我们需要用户手动执行
+        // 这里只记录版本号
+        const result = await this.executeSql(migration.postgresql);
+        if (!result.success) {
+          return {
+            success: false,
+            executedMigrations,
+            currentVersion,
+            error: `Migration v${migration.version} failed: ${result.error}`
+          };
+        }
+
+        // 记录迁移版本
+        const { error: insertError } = await this.client
+          .from('schema_migrations')
+          .upsert({ version: migration.version, name: migration.name });
+
+        if (insertError) {
+          return {
+            success: false,
+            executedMigrations,
+            currentVersion,
+            error: `Failed to record migration v${migration.version}: ${insertError.message}`
+          };
+        }
+
+        executedMigrations.push(migration.version);
+        currentVersion = migration.version;
+      }
+
+      return {
+        success: true,
+        executedMigrations,
+        currentVersion
+      };
+    } catch (e) {
+      return {
+        success: false,
+        executedMigrations,
+        currentVersion,
+        error: e instanceof Error ? e.message : 'Unknown error'
+      };
+    }
+  }
+
+  async executeSql(_sql: string): Promise<{ success: boolean; error?: string }> {
+    // Supabase 客户端不支持直接执行原生 SQL (DDL)
+    // 用户需要在 Supabase Dashboard 的 SQL Editor 中手动执行
+    // 这里我们返回一个特殊的提示
+    return {
+      success: false,
+      error: 'Supabase 不支持通过客户端执行 DDL 语句。请在 Supabase Dashboard 的 SQL Editor 中手动执行迁移脚本。'
+    };
   }
 }

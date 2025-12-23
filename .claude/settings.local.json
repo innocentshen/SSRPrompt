@@ -23,7 +23,9 @@
       "Bash(then echo \"Server has package.json\")",
       "Bash(else echo \"No server package.json\")",
       "Bash(npm run dev:all:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(grep:*)",
+      "Bash(sort:*)"
     ]
   }
 }

@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS traces (
   status ENUM('success', 'error') DEFAULT 'success',
   error_message TEXT,
   metadata JSON,
+  attachments JSON,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_traces_user_id (user_id),
   INDEX idx_traces_created_at (created_at DESC)

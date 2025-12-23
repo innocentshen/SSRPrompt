@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Database, Cloud, Server, ArrowRight, CheckCircle2, AlertCircle, Loader2, ExternalLink, Copy, Check, FileText } from 'lucide-react';
+import { Database, Cloud, Server, ArrowRight, CheckCircle2, AlertCircle, Loader2, Copy, Check, FileText, TableProperties } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import { saveConfig, initializeDatabase, type DatabaseConfig } from '../../lib/database';
 import { SUPABASE_INIT_SQL } from '../../lib/database/supabase-init-sql';
+import { runPendingMigrations, getLatestVersion } from '../../lib/database/migrations';
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -14,6 +15,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
   const [testing, setTesting] = useState(false);
   const [testSuccess, setTestSuccess] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
+  const [initializing, setInitializing] = useState(false);
 
   // Supabase config
   const [supabaseUrl, setSupabaseUrl] = useState('');
@@ -110,6 +112,46 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     setTesting(false);
   };
 
+  const handleInitializeMySQLTables = async () => {
+    if (!testSuccess) {
+      showToast('error', '请先测试连接成功后再初始化表结构');
+      return;
+    }
+
+    setInitializing(true);
+
+    try {
+      const config: DatabaseConfig = {
+        provider: 'mysql',
+        mysql: {
+          host: mysqlHost,
+          port: parseInt(mysqlPort) || 3306,
+          database: mysqlDatabase,
+          user: mysqlUser,
+          password: mysqlPassword,
+        },
+      };
+
+      const db = initializeDatabase(config);
+      // 使用迁移系统初始化表结构
+      const result = await runPendingMigrations(db);
+
+      if (result.success) {
+        if (result.executedMigrations.length > 0) {
+          showToast('success', `表结构初始化成功，当前版本: v${result.currentVersion}`);
+        } else {
+          showToast('success', '表结构已是最新版本');
+        }
+      } else {
+        showToast('error', `初始化失败: ${result.error}`);
+      }
+    } catch (e) {
+      showToast('error', `初始化异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+
+    setInitializing(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 light:bg-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
@@ -170,6 +212,16 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   <span>开始配置</span>
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </div>
+              </button>
+            </div>
+
+            {/* 跳过按钮 */}
+            <div className="text-center pt-4">
+              <button
+                onClick={onComplete}
+                className="text-sm text-slate-500 light:text-slate-400 hover:text-slate-300 light:hover:text-slate-600 transition-colors"
+              >
+                跳过，稍后在设置中配置 →
               </button>
             </div>
           </div>
@@ -345,27 +397,46 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <Button
-                onClick={handleTestMySQL}
-                disabled={testing || !mysqlHost || !mysqlDatabase || !mysqlUser}
-              >
-                {testing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : testSuccess ? (
-                  <CheckCircle2 className="w-4 h-4" />
-                ) : (
-                  <Database className="w-4 h-4" />
-                )}
-                <span>{testing ? '测试中...' : testSuccess ? '连接成功' : '测试连接'}</span>
-              </Button>
-
-              {testSuccess && (
-                <Button variant="secondary" onClick={onComplete}>
-                  <span>进入应用</span>
-                  <ArrowRight className="w-4 h-4" />
+            <div className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Button
+                  onClick={handleTestMySQL}
+                  disabled={testing || !mysqlHost || !mysqlDatabase || !mysqlUser}
+                >
+                  {testing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : testSuccess ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <Database className="w-4 h-4" />
+                  )}
+                  <span>{testing ? '测试中...' : testSuccess ? '连接成功' : '测试连接'}</span>
                 </Button>
-              )}
+
+                <Button
+                  variant="secondary"
+                  onClick={handleInitializeMySQLTables}
+                  disabled={initializing || !testSuccess}
+                >
+                  {initializing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <TableProperties className="w-4 h-4" />
+                  )}
+                  <span>{initializing ? '初始化中...' : '初始化表结构'}</span>
+                </Button>
+
+                {testSuccess && (
+                  <Button variant="secondary" onClick={onComplete}>
+                    <span>进入应用</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+
+              <p className="text-xs text-slate-500 light:text-slate-400">
+                首次使用 MySQL 时需要初始化表结构。如果表已存在，此操作不会影响现有数据。
+              </p>
             </div>
 
             {testSuccess && (

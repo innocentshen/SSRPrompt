@@ -69,8 +69,26 @@ export async function handleSelect(
   const limitClause = limit ? ` LIMIT ${limit}` : '';
 
   const query = `SELECT ${columns} FROM ${safeTable}${whereClause}${orderClause}${limitClause}`;
-  const [rows] = await pool.query(query, values);
-  return (rows as Record<string, unknown>[]).map(processRow);
+  console.log('[MySQL Select] Query:', query);
+
+  try {
+    const [rows] = await pool.query(query, values);
+    console.log('[MySQL Select] Raw rows count:', (rows as unknown[]).length);
+
+    const processedRows = (rows as Record<string, unknown>[]).map((row, index) => {
+      try {
+        return processRow(row);
+      } catch (err) {
+        console.error(`[MySQL Select] Error processing row ${index}:`, err, 'Row data:', row);
+        throw err;
+      }
+    });
+
+    return processedRows;
+  } catch (err) {
+    console.error('[MySQL Select] Query error:', err);
+    throw err;
+  }
 }
 
 export async function handleInsert(
@@ -147,4 +165,43 @@ export async function initializeSchema(pool: mysql.Pool): Promise<void> {
 
 export async function testConnection(pool: mysql.Pool): Promise<void> {
   await pool.query('SELECT 1');
+}
+
+export async function getSchemaVersion(pool: mysql.Pool): Promise<number> {
+  try {
+    // 检查 schema_migrations 表是否存在
+    const [tables] = await pool.query(
+      "SHOW TABLES LIKE 'schema_migrations'"
+    );
+
+    if ((tables as unknown[]).length === 0) {
+      return 0;
+    }
+
+    // 获取最高版本号
+    const [rows] = await pool.query(
+      'SELECT MAX(version) as version FROM schema_migrations'
+    );
+
+    const result = rows as { version: number | null }[];
+    return result[0]?.version || 0;
+  } catch (err) {
+    console.error('[MySQL] Error getting schema version:', err);
+    return 0;
+  }
+}
+
+export async function executeSql(pool: mysql.Pool, sql: string): Promise<void> {
+  // 将 SQL 按分号分割成多条语句执行
+  const statements = sql.split(';').filter(s => s.trim());
+  for (const statement of statements) {
+    if (statement.trim()) {
+      try {
+        await pool.query(statement.trim() + ';');
+      } catch (err) {
+        console.error('[MySQL] Error executing SQL statement:', statement.substring(0, 100), err);
+        throw err;
+      }
+    }
+  }
 }

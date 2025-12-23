@@ -8,6 +8,8 @@ import {
   handleDelete,
   initializeSchema,
   testConnection,
+  getSchemaVersion,
+  executeSql,
 } from '../services/mysql-service.js';
 
 const router = Router();
@@ -32,6 +34,22 @@ router.post('/mysql-proxy', async (req: Request, res: Response) => {
     // Initialize schema
     if (operation === 'initialize') {
       await initializeSchema(pool);
+      return res.json({ success: true });
+    }
+
+    // Get schema version
+    if (operation === 'get_schema_version') {
+      const version = await getSchemaVersion(pool);
+      return res.json({ success: true, version });
+    }
+
+    // Execute raw SQL (for migrations)
+    if (operation === 'execute_sql') {
+      const { sql } = body as QueryRequest & { sql: string };
+      if (!sql) {
+        return res.status(400).json({ error: 'SQL is required for execute_sql operation' });
+      }
+      await executeSql(pool, sql);
       return res.json({ success: true });
     }
 

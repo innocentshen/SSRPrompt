@@ -16,10 +16,15 @@ import {
   Copy,
   Check,
   Maximize2,
+  Paperclip,
+  Loader2,
 } from 'lucide-react';
 import { Button, Badge, Select, Modal, Input, useToast, MarkdownRenderer } from '../components/ui';
-import { getDatabase } from '../lib/database';
+import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import type { Trace, Prompt, Model } from '../types';
+import type { FileAttachment } from '../lib/ai-service';
+import { AttachmentList } from '../components/Prompt/AttachmentPreview';
+import { AttachmentModal } from '../components/Prompt/AttachmentModal';
 
 interface PromptStats {
   promptId: string | null;
@@ -45,16 +50,25 @@ export function TracesPage() {
   const [copiedField, setCopiedField] = useState<'input' | 'output' | null>(null);
   const [expandedField, setExpandedField] = useState<'input' | 'output' | null>(null);
   const [expandedContent, setExpandedContent] = useState('');
+  const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
+    // 检查数据库是否已配置
+    if (!isDatabaseConfigured()) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
+      // 查询列表时不加载 attachments 字段，避免内存问题
       const [tracesRes, promptsRes, modelsRes] = await Promise.all([
-        getDatabase().from('traces').select('*').order('created_at', { ascending: false }).limit(500),
+        getDatabase().from('traces').select('id,user_id,prompt_id,model_id,input,output,tokens_input,tokens_output,latency_ms,status,error_message,metadata,created_at').order('created_at', { ascending: false }).limit(500),
         getDatabase().from('prompts').select('*'),
         getDatabase().from('models').select('*'),
       ]);
@@ -63,7 +77,7 @@ export function TracesPage() {
       if (promptsRes.data) setPrompts(promptsRes.data);
       if (modelsRes.data) setModels(modelsRes.data);
     } catch {
-      showToast('error', '加载数据失败');
+      showToast('error', '请先在设置中配置数据库连接');
     }
     setLoading(false);
   };
@@ -127,6 +141,45 @@ export function TracesPage() {
   const handleExpand = (content: string, field: 'input' | 'output') => {
     setExpandedContent(content);
     setExpandedField(field);
+  };
+
+  // 检查 trace 是否有附件（通过 metadata.files 判断）
+  const hasAttachments = (trace: Trace): boolean => {
+    const metadata = trace.metadata as { files?: { name: string; type: string }[] } | null;
+    return !!(metadata?.files && metadata.files.length > 0);
+  };
+
+  // 获取附件数量
+  const getAttachmentCount = (trace: Trace): number => {
+    const metadata = trace.metadata as { files?: { name: string; type: string }[] } | null;
+    return metadata?.files?.length || 0;
+  };
+
+  // 点击查看详情时加载完整数据（包括 attachments）
+  const handleSelectTrace = async (trace: Trace) => {
+    // 先显示基本信息
+    setSelectedTrace(trace);
+    setAttachmentsLoading(false);
+
+    // 检查是否有附件，如果有则异步加载
+    if (hasAttachments(trace)) {
+      setAttachmentsLoading(true);
+      try {
+        const { data } = await getDatabase()
+          .from('traces')
+          .select('attachments')
+          .eq('id', trace.id)
+          .single();
+
+        if (data?.attachments) {
+          setSelectedTrace(prev => prev ? { ...prev, attachments: data.attachments } : null);
+        }
+      } catch (e) {
+        console.error('Failed to load attachments:', e);
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    }
   };
 
   // Group traces by prompt and calculate stats
@@ -393,7 +446,7 @@ export function TracesPage() {
                   <tr
                     key={trace.id}
                     className="hover:bg-slate-800/30 light:hover:bg-slate-50 cursor-pointer transition-colors"
-                    onClick={() => setSelectedTrace(trace)}
+                    onClick={() => handleSelectTrace(trace)}
                   >
                     <td className="px-6 py-4">
                       {trace.status === 'success' ? (
@@ -543,6 +596,36 @@ export function TracesPage() {
               </div>
             </div>
 
+            {hasAttachments(selectedTrace) && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4 text-slate-400" />
+                  <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
+                    附件 ({getAttachmentCount(selectedTrace)})
+                  </h4>
+                </div>
+                <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
+                  {attachmentsLoading ? (
+                    <div className="flex items-center gap-2 text-slate-400 light:text-slate-500">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-sm">正在加载附件...</span>
+                    </div>
+                  ) : selectedTrace.attachments && selectedTrace.attachments.length > 0 ? (
+                    <AttachmentList
+                      attachments={selectedTrace.attachments as FileAttachment[]}
+                      size="md"
+                      maxVisible={10}
+                      onPreview={setPreviewAttachment}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 text-slate-500 light:text-slate-400">
+                      <span className="text-sm">附件加载失败</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {selectedTrace.error_message && (
               <div>
                 <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">错误信息</h4>
@@ -627,6 +710,13 @@ export function TracesPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Attachment preview modal */}
+      <AttachmentModal
+        attachment={previewAttachment}
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+      />
     </div>
   );
 }

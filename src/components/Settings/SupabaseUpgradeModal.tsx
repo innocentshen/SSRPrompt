@@ -1,22 +1,35 @@
 import { useState } from 'react';
-import { X, Copy, Check, ExternalLink, Database } from 'lucide-react';
+import { X, Copy, Check, ExternalLink, ArrowUpCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui';
-import { SUPABASE_INIT_SQL } from '../../lib/database/supabase-init-sql';
+import type { Migration } from '../../lib/database/types';
+import { generatePendingMigrationSQL } from '../../lib/database/migrations';
 
-interface SupabaseInitModalProps {
+interface SupabaseUpgradeModalProps {
   isOpen: boolean;
   onClose: () => void;
   supabaseUrl: string;
+  currentVersion: number;
+  latestVersion: number;
+  pendingMigrations: Migration[];
 }
 
-export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInitModalProps) {
+export function SupabaseUpgradeModal({
+  isOpen,
+  onClose,
+  supabaseUrl,
+  currentVersion,
+  latestVersion,
+  pendingMigrations
+}: SupabaseUpgradeModalProps) {
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
 
+  const upgradeSql = generatePendingMigrationSQL(pendingMigrations, 'postgresql');
+
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(SUPABASE_INIT_SQL);
+      await navigator.clipboard.writeText(upgradeSql);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
@@ -40,15 +53,15 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-700 light:border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-cyan-500/10 light:bg-cyan-100 rounded-lg">
-              <Database className="w-5 h-5 text-cyan-500 light:text-cyan-600" />
+            <div className="p-2 bg-amber-500/10 light:bg-amber-100 rounded-lg">
+              <ArrowUpCircle className="w-5 h-5 text-amber-500 light:text-amber-600" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-slate-200 light:text-slate-800">
-                初始化 Supabase 数据库
+                升级 Supabase 数据库
               </h2>
               <p className="text-sm text-slate-500 light:text-slate-600">
-                请按照以下步骤创建表结构
+                发现新版本，请手动执行升级脚本
               </p>
             </div>
           </div>
@@ -60,6 +73,27 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
           </button>
         </div>
 
+        {/* Version Info */}
+        <div className="p-4 border-b border-slate-700 light:border-slate-200">
+          <div className="p-4 bg-amber-500/10 light:bg-amber-50 border border-amber-500/20 light:border-amber-200 rounded-lg">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 light:text-amber-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-amber-400 light:text-amber-700">
+                  数据库结构需要升级
+                </p>
+                <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
+                  当前版本: <span className="font-mono font-semibold">v{currentVersion}</span> →
+                  最新版本: <span className="font-mono font-semibold">v{latestVersion}</span>
+                </p>
+                <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
+                  待执行迁移: {pendingMigrations.length} 个
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Steps */}
         <div className="p-4 border-b border-slate-700 light:border-slate-200 space-y-3">
           <div className="flex items-start gap-3">
@@ -68,7 +102,7 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                点击下方按钮复制 SQL 脚本
+                点击下方按钮复制升级 SQL 脚本
               </p>
             </div>
           </div>
@@ -107,7 +141,7 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                返回此页面，点击"测试连接"验证
+                返回此页面，重新"测试连接"验证升级结果
               </p>
             </div>
           </div>
@@ -117,7 +151,7 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
         <div className="p-4 flex-shrink min-h-0 overflow-hidden">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-slate-400 light:text-slate-600">
-              SQL 脚本预览
+              升级 SQL 脚本预览
             </span>
             <Button
               variant="secondary"
@@ -138,34 +172,44 @@ export function SupabaseInitModal({ isOpen, onClose, supabaseUrl }: SupabaseInit
               )}
             </Button>
           </div>
-          <pre className="max-h-72 overflow-auto bg-slate-900 light:bg-slate-100 rounded-lg p-4 text-xs text-slate-300 light:text-slate-700 font-mono whitespace-pre-wrap break-all">
-            {SUPABASE_INIT_SQL}
+          <pre className="max-h-48 overflow-auto bg-slate-900 light:bg-slate-100 rounded-lg p-4 text-xs text-slate-300 light:text-slate-700 font-mono whitespace-pre-wrap break-all">
+            {upgradeSql}
           </pre>
         </div>
 
+        {/* Migration List */}
+        <div className="px-4 pb-4">
+          <p className="text-xs text-slate-500 light:text-slate-600 mb-2">本次升级包含的变更：</p>
+          <ul className="text-xs text-slate-400 light:text-slate-600 space-y-1">
+            {pendingMigrations.map(m => (
+              <li key={m.version} className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
+                <span className="font-mono">v{m.version}</span>
+                <span>-</span>
+                <span>{m.description}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
         {/* Footer */}
-        <div className="p-4 border-t border-slate-700 light:border-slate-200 flex items-center justify-between">
-          <div className="text-xs text-slate-500 light:text-slate-600">
-            此脚本会创建 11 个表和相应的索引、策略
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="secondary" onClick={onClose}>
-              关闭
-            </Button>
-            <Button onClick={handleCopy}>
-              {copied ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>已复制</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>复制 SQL</span>
-                </>
-              )}
-            </Button>
-          </div>
+        <div className="p-4 border-t border-slate-700 light:border-slate-200 flex items-center justify-end gap-3">
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+          <Button onClick={handleCopy}>
+            {copied ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span>已复制</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span>复制升级脚本</span>
+              </>
+            )}
+          </Button>
         </div>
       </div>
     </div>

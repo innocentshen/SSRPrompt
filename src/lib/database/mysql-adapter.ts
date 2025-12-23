@@ -1,4 +1,4 @@
-import type { DatabaseService, QueryBuilder, QueryResult } from './types';
+import type { DatabaseService, QueryBuilder, QueryResult, Migration, MigrationResult } from './types';
 
 interface MySQLConfig {
   host: string;
@@ -270,6 +270,101 @@ export class MySQLAdapter implements DatabaseService {
         body: JSON.stringify({
           config: this.config,
           operation: 'test',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, error: errorText };
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
+    }
+  }
+
+  async getSchemaVersion(): Promise<number> {
+    try {
+      const response = await fetch(this.edgeFunctionUrl, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          config: this.config,
+          operation: 'get_schema_version',
+        }),
+      });
+
+      if (!response.ok) {
+        // 表可能不存在，返回 0
+        return 0;
+      }
+
+      const result = await response.json();
+      return result.version || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async runMigrations(migrations: Migration[]): Promise<MigrationResult> {
+    const executedMigrations: number[] = [];
+    let currentVersion = await this.getSchemaVersion();
+
+    try {
+      for (const migration of migrations) {
+        const result = await this.executeSql(migration.mysql);
+        if (!result.success) {
+          return {
+            success: false,
+            executedMigrations,
+            currentVersion,
+            error: `Migration v${migration.version} failed: ${result.error}`
+          };
+        }
+
+        // 记录迁移版本
+        const recordResult = await this.executeSql(
+          `INSERT INTO schema_migrations (version, name) VALUES (${migration.version}, '${migration.name}') ON DUPLICATE KEY UPDATE name = '${migration.name}'`
+        );
+        if (!recordResult.success) {
+          return {
+            success: false,
+            executedMigrations,
+            currentVersion,
+            error: `Failed to record migration v${migration.version}: ${recordResult.error}`
+          };
+        }
+
+        executedMigrations.push(migration.version);
+        currentVersion = migration.version;
+      }
+
+      return {
+        success: true,
+        executedMigrations,
+        currentVersion
+      };
+    } catch (e) {
+      return {
+        success: false,
+        executedMigrations,
+        currentVersion,
+        error: e instanceof Error ? e.message : 'Unknown error'
+      };
+    }
+  }
+
+  async executeSql(sql: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(this.edgeFunctionUrl, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          config: this.config,
+          operation: 'execute_sql',
+          sql,
         }),
       });
 

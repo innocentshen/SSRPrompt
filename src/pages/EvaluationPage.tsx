@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, useToast } from '../components/ui';
 import { TestCaseList, CriteriaEditor, EvaluationResultsView, RunHistory } from '../components/Evaluation';
-import { getDatabase } from '../lib/database';
+import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import { callAIModel, type FileAttachment } from '../lib/ai-service';
 import type {
   Evaluation,
@@ -132,6 +132,12 @@ export function EvaluationPage() {
   }, [selectedEvaluation, loadEvaluationDetails]);
 
   const loadData = async () => {
+    // 检查数据库是否已配置
+    if (!isDatabaseConfigured()) {
+      setListLoading(false);
+      return;
+    }
+
     setListLoading(true);
     try {
       const db = getDatabase();

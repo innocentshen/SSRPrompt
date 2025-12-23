@@ -39,25 +39,27 @@ export function buildOrderByClause(orderBy: { column: string; ascending: boolean
 
 export function processRow(row: Record<string, unknown>): Record<string, unknown> {
   const processed: Record<string, unknown> = {};
+  const jsonFields = [
+    'variables', 'config', 'results', 'metadata', 'scores',
+    'ai_feedback', 'attachments', 'capabilities', 'input_variables', 'messages'
+  ];
+
   for (const [key, value] of Object.entries(row)) {
     if (value instanceof Date) {
       processed[key] = value.toISOString();
-    } else if (typeof value === 'string' && (
-      key.includes('variables') ||
-      key.includes('config') ||
-      key.includes('results') ||
-      key.includes('metadata') ||
-      key.includes('scores') ||
-      key.includes('ai_feedback') ||
-      key.includes('attachments') ||
-      key === 'capabilities' ||
-      key === 'input_variables'
-    )) {
+    } else if (value === null) {
+      // 保持 null 值
+      processed[key] = value;
+    } else if (typeof value === 'string' && jsonFields.some(field => key.includes(field) || key === field)) {
+      // 字符串类型的 JSON 字段需要解析
       try {
         processed[key] = JSON.parse(value);
       } catch {
         processed[key] = value;
       }
+    } else if (typeof value === 'object' && jsonFields.some(field => key.includes(field) || key === field)) {
+      // MySQL 可能直接返回对象类型的 JSON，保持原样
+      processed[key] = value;
     } else {
       processed[key] = value;
     }
