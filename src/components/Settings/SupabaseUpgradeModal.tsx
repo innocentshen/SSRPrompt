@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { X, Copy, Check, ExternalLink, ArrowUpCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui';
 import type { Migration } from '../../lib/database/types';
@@ -21,6 +23,8 @@ export function SupabaseUpgradeModal({
   latestVersion,
   pendingMigrations
 }: SupabaseUpgradeModalProps) {
+  const { t } = useTranslation('settings');
+  const { t: tCommon } = useTranslation('common');
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -47,7 +51,7 @@ export function SupabaseUpgradeModal({
     return 'https://supabase.com/dashboard';
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-800 light:bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -58,10 +62,10 @@ export function SupabaseUpgradeModal({
             </div>
             <div>
               <h2 className="text-lg font-semibold text-slate-200 light:text-slate-800">
-                升级 Supabase 数据库
+                {t('upgradeSupabaseDb')}
               </h2>
               <p className="text-sm text-slate-500 light:text-slate-600">
-                发现新版本，请手动执行升级脚本
+                {t('newVersionFoundUpgrade')}
               </p>
             </div>
           </div>
@@ -80,14 +84,14 @@ export function SupabaseUpgradeModal({
               <AlertTriangle className="w-5 h-5 text-amber-500 light:text-amber-600 mt-0.5 flex-shrink-0" />
               <div>
                 <p className="text-sm font-medium text-amber-400 light:text-amber-700">
-                  数据库结构需要升级
+                  {t('dbStructureNeedsUpgrade')}
                 </p>
                 <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
-                  当前版本: <span className="font-mono font-semibold">v{currentVersion}</span> →
-                  最新版本: <span className="font-mono font-semibold">v{latestVersion}</span>
+                  {t('currentVersion')}: <span className="font-mono font-semibold">v{currentVersion}</span> →
+                  {t('latestVersion')}: <span className="font-mono font-semibold">v{latestVersion}</span>
                 </p>
                 <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
-                  待执行迁移: {pendingMigrations.length} 个
+                  {t('pendingMigrations')}: {t('migrationsCount', { count: pendingMigrations.length })}
                 </p>
               </div>
             </div>
@@ -102,7 +106,7 @@ export function SupabaseUpgradeModal({
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                点击下方按钮复制升级 SQL 脚本
+                {t('step1CopyUpgradeSql')}
               </p>
             </div>
           </div>
@@ -112,7 +116,7 @@ export function SupabaseUpgradeModal({
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                打开 Supabase Dashboard 的 SQL Editor
+                {t('step2OpenSqlEditor')}
               </p>
               <a
                 href={getSqlEditorUrl()}
@@ -120,7 +124,7 @@ export function SupabaseUpgradeModal({
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-sm text-cyan-500 hover:underline mt-1"
               >
-                打开 SQL Editor
+                {t('openSqlEditor')}
                 <ExternalLink className="w-3 h-3" />
               </a>
             </div>
@@ -131,7 +135,7 @@ export function SupabaseUpgradeModal({
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                粘贴 SQL 脚本并点击 "Run" 执行
+                {t('step3PasteAndRun')}
               </p>
             </div>
           </div>
@@ -141,7 +145,7 @@ export function SupabaseUpgradeModal({
             </span>
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">
-                返回此页面，重新"测试连接"验证升级结果
+                {t('step4TestConnection')}
               </p>
             </div>
           </div>
@@ -151,7 +155,7 @@ export function SupabaseUpgradeModal({
         <div className="p-4 flex-shrink min-h-0 overflow-hidden">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-slate-400 light:text-slate-600">
-              升级 SQL 脚本预览
+              {t('upgradeSqlPreview')}
             </span>
             <Button
               variant="secondary"
@@ -162,12 +166,12 @@ export function SupabaseUpgradeModal({
               {copied ? (
                 <>
                   <Check className="w-4 h-4 text-emerald-500" />
-                  <span>已复制</span>
+                  <span>{t('copied')}</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-4 h-4" />
-                  <span>复制 SQL</span>
+                  <span>{t('copySql')}</span>
                 </>
               )}
             </Button>
@@ -179,7 +183,7 @@ export function SupabaseUpgradeModal({
 
         {/* Migration List */}
         <div className="px-4 pb-4">
-          <p className="text-xs text-slate-500 light:text-slate-600 mb-2">本次升级包含的变更：</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('upgradeChangesIncluded')}</p>
           <ul className="text-xs text-slate-400 light:text-slate-600 space-y-1">
             {pendingMigrations.map(m => (
               <li key={m.version} className="flex items-center gap-2">
@@ -195,23 +199,24 @@ export function SupabaseUpgradeModal({
         {/* Footer */}
         <div className="p-4 border-t border-slate-700 light:border-slate-200 flex items-center justify-end gap-3">
           <Button variant="secondary" onClick={onClose}>
-            关闭
+            {tCommon('close')}
           </Button>
           <Button onClick={handleCopy}>
             {copied ? (
               <>
                 <Check className="w-4 h-4" />
-                <span>已复制</span>
+                <span>{t('copied')}</span>
               </>
             ) : (
               <>
                 <Copy className="w-4 h-4" />
-                <span>复制升级脚本</span>
+                <span>{t('copyUpgradeSql')}</span>
               </>
             )}
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

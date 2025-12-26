@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { User, LogOut, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../../contexts';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 interface HeaderProps {
   title: string;
@@ -8,6 +10,7 @@ interface HeaderProps {
 }
 
 export function Header({ title, onLogout }: HeaderProps) {
+  const { t } = useTranslation('common');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const { theme, toggleTheme } = useTheme();
 
@@ -15,11 +18,13 @@ export function Header({ title, onLogout }: HeaderProps) {
     <header className="h-14 bg-slate-900 dark:bg-slate-900 light:bg-white border-b border-slate-700 dark:border-slate-700 light:border-slate-200 flex items-center justify-between px-6">
       <h1 className="text-lg font-medium text-white dark:text-white light:text-slate-900">{title}</h1>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        <LanguageSwitcher />
+
         <button
           onClick={toggleTheme}
           className="p-2 text-slate-400 dark:text-slate-400 light:text-slate-500 hover:text-white dark:hover:text-white light:hover:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-800 light:hover:bg-slate-200 rounded-lg transition-colors"
-          title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
         </button>
@@ -48,7 +53,7 @@ export function Header({ title, onLogout }: HeaderProps) {
                     className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 dark:text-slate-300 light:text-slate-700 hover:bg-slate-700 dark:hover:bg-slate-700 light:hover:bg-slate-100 transition-colors"
                   >
                     <LogOut className="w-4 h-4" />
-                    <span>退出登录</span>
+                    <span>{t('logout')}</span>
                   </button>
                 )}
               </div>

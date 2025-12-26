@@ -10,6 +10,8 @@ import {
   testConnection,
   getSchemaVersion,
   executeSql,
+  handleBatchSelect,
+  handleEvaluationDetails,
 } from '../services/mysql-service.js';
 
 const router = Router();
@@ -17,7 +19,7 @@ const router = Router();
 router.post('/mysql-proxy', async (req: Request, res: Response) => {
   try {
     const body: QueryRequest = req.body;
-    const { config, operation, table, columns, data, filters, orderBy, limit } = body;
+    const { config, operation, table, columns, data, filters, orderBy, limit, offset } = body;
 
     if (!config || !config.host || !config.database || !config.user) {
       return res.status(400).json({ error: 'Invalid database configuration' });
@@ -53,6 +55,26 @@ router.post('/mysql-proxy', async (req: Request, res: Response) => {
       return res.json({ success: true });
     }
 
+    // Batch query - execute multiple SELECT queries in one request
+    if (operation === 'batch') {
+      const { batch } = body;
+      if (!batch || !batch.queries || !Array.isArray(batch.queries)) {
+        return res.status(400).json({ error: 'batch.queries array is required for batch operation' });
+      }
+      const result = await handleBatchSelect(pool, batch);
+      return res.json({ data: result });
+    }
+
+    // Evaluation details - get all data for an evaluation in one request
+    if (operation === 'evaluation_details') {
+      const { evaluationId } = body;
+      if (!evaluationId) {
+        return res.status(400).json({ error: 'evaluationId is required for evaluation_details operation' });
+      }
+      const result = await handleEvaluationDetails(pool, evaluationId);
+      return res.json({ data: result });
+    }
+
     // All other operations require table name
     if (!table) {
       return res.status(400).json({ error: 'Table name is required' });
@@ -62,7 +84,7 @@ router.post('/mysql-proxy', async (req: Request, res: Response) => {
 
     switch (operation) {
       case 'select':
-        result = await handleSelect(pool, table, columns || '*', filters || [], orderBy || [], limit ?? null);
+        result = await handleSelect(pool, table, columns || '*', filters || [], orderBy || [], limit ?? null, offset ?? null);
         break;
       case 'insert':
         if (!data) {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Database, Cloud, Server, ArrowRight, CheckCircle2, AlertCircle, Loader2, Copy, Check, FileText, TableProperties } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import { saveConfig, initializeDatabase, type DatabaseConfig } from '../../lib/database';
@@ -11,6 +12,7 @@ interface SetupWizardProps {
 
 export function SetupWizard({ onComplete }: SetupWizardProps) {
   const { showToast } = useToast();
+  const { t } = useTranslation('setup');
   const [step, setStep] = useState<'choose' | 'supabase' | 'mysql'>('choose');
   const [testing, setTesting] = useState(false);
   const [testSuccess, setTestSuccess] = useState(false);
@@ -30,7 +32,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const handleTestSupabase = async () => {
     if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
-      showToast('error', '请填写完整的 Supabase 配置');
+      showToast('error', t('fillSupabaseConfig'));
       return;
     }
 
@@ -52,12 +54,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
       if (result.success) {
         setTestSuccess(true);
         saveConfig(config);
-        showToast('success', '连接成功！');
+        showToast('success', t('connectionSuccessToast'));
       } else {
-        showToast('error', `连接失败: ${result.error}`);
+        showToast('error', `${t('connectionFailed')}: ${result.error}`);
       }
     } catch (e) {
-      showToast('error', `连接测试异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('connectionTestError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setTesting(false);
@@ -67,16 +69,16 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     try {
       await navigator.clipboard.writeText(SUPABASE_INIT_SQL);
       setSqlCopied(true);
-      showToast('success', 'SQL 已复制到剪贴板');
+      showToast('success', t('sqlCopiedToast'));
       setTimeout(() => setSqlCopied(false), 2000);
     } catch {
-      showToast('error', '复制失败，请手动复制');
+      showToast('error', t('copyFailedManual'));
     }
   };
 
   const handleTestMySQL = async () => {
     if (!mysqlHost.trim() || !mysqlDatabase.trim() || !mysqlUser.trim()) {
-      showToast('error', '请填写完整的 MySQL 配置');
+      showToast('error', t('fillMySQLConfig'));
       return;
     }
 
@@ -101,12 +103,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
       if (result.success) {
         setTestSuccess(true);
         saveConfig(config);
-        showToast('success', '连接成功！');
+        showToast('success', t('connectionSuccessToast'));
       } else {
-        showToast('error', `连接失败: ${result.error}`);
+        showToast('error', `${t('connectionFailed')}: ${result.error}`);
       }
     } catch (e) {
-      showToast('error', `连接测试异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('connectionTestError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setTesting(false);
@@ -114,7 +116,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const handleInitializeMySQLTables = async () => {
     if (!testSuccess) {
-      showToast('error', '请先测试连接成功后再初始化表结构');
+      showToast('error', t('testConnectionFirst'));
       return;
     }
 
@@ -138,15 +140,15 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
 
       if (result.success) {
         if (result.executedMigrations.length > 0) {
-          showToast('success', `表结构初始化成功，当前版本: v${result.currentVersion}`);
+          showToast('success', `${t('schemaInitSuccess')}: v${result.currentVersion}`);
         } else {
-          showToast('success', '表结构已是最新版本');
+          showToast('success', t('schemaAlreadyLatest'));
         }
       } else {
-        showToast('error', `初始化失败: ${result.error}`);
+        showToast('error', `${t('initFailed')}: ${result.error}`);
       }
     } catch (e) {
-      showToast('error', `初始化异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('initError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setInitializing(false);
@@ -160,9 +162,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mb-4">
             <Database className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white light:text-slate-900 mb-2">欢迎使用 SSRPrompt</h1>
+          <h1 className="text-2xl font-bold text-white light:text-slate-900 mb-2">{t('welcomeTitle')}</h1>
           <p className="text-slate-400 light:text-slate-600">
-            在开始之前，请先配置数据库连接
+            {t('welcomeDescription')}
           </p>
         </div>
 
@@ -180,14 +182,14 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                   <div>
                     <p className="font-semibold text-white light:text-slate-900">Supabase</p>
-                    <p className="text-xs text-emerald-400 light:text-emerald-600">推荐</p>
+                    <p className="text-xs text-emerald-400 light:text-emerald-600">{t('recommended')}</p>
                   </div>
                 </div>
                 <p className="text-sm text-slate-400 light:text-slate-600">
-                  云端数据库，无需后端服务，免费额度充足，适合个人和小团队使用。
+                  {t('supabaseDescription')}
                 </p>
                 <div className="mt-4 flex items-center text-xs text-cyan-400 light:text-cyan-600">
-                  <span>开始配置</span>
+                  <span>{t('startConfig')}</span>
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </div>
               </button>
@@ -202,14 +204,14 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                   <div>
                     <p className="font-semibold text-white light:text-slate-900">MySQL</p>
-                    <p className="text-xs text-amber-400 light:text-amber-600">需要后端</p>
+                    <p className="text-xs text-amber-400 light:text-amber-600">{t('requiresBackend')}</p>
                   </div>
                 </div>
                 <p className="text-sm text-slate-400 light:text-slate-600">
-                  自建数据库，需要部署后端代理服务，适合有开发经验的用户。
+                  {t('mysqlDescription')}
                 </p>
                 <div className="mt-4 flex items-center text-xs text-slate-500 light:text-slate-400">
-                  <span>开始配置</span>
+                  <span>{t('startConfig')}</span>
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </div>
               </button>
@@ -221,7 +223,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 onClick={onComplete}
                 className="text-sm text-slate-500 light:text-slate-400 hover:text-slate-300 light:hover:text-slate-600 transition-colors"
               >
-                跳过，稍后在设置中配置 →
+                {t('skipSetup')}
               </button>
             </div>
           </div>
@@ -235,19 +237,19 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 onClick={() => { setStep('choose'); setTestSuccess(false); }}
                 className="text-slate-400 hover:text-white light:hover:text-slate-900 transition-colors"
               >
-                ← 返回
+                {t('back')}
               </button>
-              <h2 className="text-lg font-semibold text-white light:text-slate-900">配置 Supabase</h2>
+              <h2 className="text-lg font-semibold text-white light:text-slate-900">{t('configureSupabase')}</h2>
             </div>
 
             <div className="p-4 bg-cyan-500/10 light:bg-cyan-50 border border-cyan-500/20 light:border-cyan-200 rounded-lg">
               <p className="text-sm text-cyan-400 light:text-cyan-700 mb-2">
-                还没有 Supabase 项目？
+                {t('noSupabaseProject')}
               </p>
               <ol className="text-xs text-cyan-400/80 light:text-cyan-600 space-y-1 list-decimal list-inside">
-                <li>访问 <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-cyan-300 light:hover:text-cyan-800">supabase.com</a> 注册账号</li>
-                <li>创建新项目后，进入 Settings → API</li>
-                <li>复制 Project URL 和 anon key</li>
+                <li>{t('supabaseStep1')}</li>
+                <li>{t('supabaseStep2')}</li>
+                <li>{t('supabaseStep3')}</li>
               </ol>
             </div>
 
@@ -260,10 +262,10 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-white light:text-slate-900 mb-1">
-                      初始化数据库表结构
+                      {t('initDatabaseSchema')}
                     </p>
                     <p className="text-xs text-slate-400 light:text-slate-600">
-                      首次使用时，请在 Supabase Dashboard → SQL Editor 中执行初始化脚本
+                      {t('initSchemaDescription')}
                     </p>
                   </div>
                 </div>
@@ -278,7 +280,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   ) : (
                     <Copy className="w-4 h-4" />
                   )}
-                  <span>{sqlCopied ? '已复制' : '复制 SQL'}</span>
+                  <span>{sqlCopied ? t('copied') : t('copySql')}</span>
                 </Button>
               </div>
             </div>
@@ -291,7 +293,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 placeholder="https://xxxxx.supabase.co"
               />
               <Input
-                label="Anon Key (公开密钥)"
+                label={t('anonKeyLabel')}
                 type="password"
                 value={supabaseAnonKey}
                 onChange={(e) => setSupabaseAnonKey(e.target.value)}
@@ -311,12 +313,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 ) : (
                   <Database className="w-4 h-4" />
                 )}
-                <span>{testing ? '测试中...' : testSuccess ? '连接成功' : '测试连接'}</span>
+                <span>{testing ? t('testing') : testSuccess ? t('connectionSuccess') : t('testConnection')}</span>
               </Button>
 
               {testSuccess && (
                 <Button variant="secondary" onClick={onComplete}>
-                  <span>进入应用</span>
+                  <span>{t('enterApp')}</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               )}
@@ -325,7 +327,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
             {testSuccess && (
               <div className="p-3 bg-emerald-500/10 light:bg-emerald-50 border border-emerald-500/20 light:border-emerald-200 rounded-lg flex items-center gap-2 text-sm text-emerald-400 light:text-emerald-600">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>配置已保存，您可以开始使用了！</span>
+                <span>{t('configSavedSuccess')}</span>
               </div>
             )}
           </div>
@@ -339,9 +341,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 onClick={() => { setStep('choose'); setTestSuccess(false); }}
                 className="text-slate-400 hover:text-white light:hover:text-slate-900 transition-colors"
               >
-                ← 返回
+                {t('back')}
               </button>
-              <h2 className="text-lg font-semibold text-white light:text-slate-900">配置 MySQL</h2>
+              <h2 className="text-lg font-semibold text-white light:text-slate-900">{t('configureMySQL')}</h2>
             </div>
 
             <div className="p-4 bg-amber-500/10 light:bg-amber-50 border border-amber-500/20 light:border-amber-200 rounded-lg">
@@ -349,11 +351,10 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 <AlertCircle className="w-4 h-4 text-amber-400 light:text-amber-600 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-amber-400 light:text-amber-700 mb-1">
-                    使用 MySQL 需要后端服务
+                    {t('mysqlRequiresBackend')}
                   </p>
                   <p className="text-xs text-amber-400/80 light:text-amber-600">
-                    请参考项目 <code className="bg-amber-500/20 light:bg-amber-100 px-1 rounded">server/</code> 目录中的代码部署后端代理服务。
-                    如果您没有后端开发经验，建议使用 Supabase。
+                    {t('mysqlBackendDescription')}
                   </p>
                 </div>
               </div>
@@ -362,37 +363,37 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <Input
-                  label="主机地址"
+                  label={t('hostAddress')}
                   value={mysqlHost}
                   onChange={(e) => setMysqlHost(e.target.value)}
                   placeholder="localhost"
                 />
                 <Input
-                  label="端口"
+                  label={t('port')}
                   value={mysqlPort}
                   onChange={(e) => setMysqlPort(e.target.value)}
                   placeholder="3306"
                 />
               </div>
               <Input
-                label="数据库名"
+                label={t('databaseName')}
                 value={mysqlDatabase}
                 onChange={(e) => setMysqlDatabase(e.target.value)}
                 placeholder="ssrprompt"
               />
               <div className="grid grid-cols-2 gap-4">
                 <Input
-                  label="用户名"
+                  label={t('username')}
                   value={mysqlUser}
                   onChange={(e) => setMysqlUser(e.target.value)}
                   placeholder="root"
                 />
                 <Input
-                  label="密码"
+                  label={t('password')}
                   type="password"
                   value={mysqlPassword}
                   onChange={(e) => setMysqlPassword(e.target.value)}
-                  placeholder="数据库密码"
+                  placeholder={t('passwordPlaceholder')}
                 />
               </div>
             </div>
@@ -410,7 +411,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   ) : (
                     <Database className="w-4 h-4" />
                   )}
-                  <span>{testing ? '测试中...' : testSuccess ? '连接成功' : '测试连接'}</span>
+                  <span>{testing ? t('testing') : testSuccess ? t('connectionSuccess') : t('testConnection')}</span>
                 </Button>
 
                 <Button
@@ -423,26 +424,26 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   ) : (
                     <TableProperties className="w-4 h-4" />
                   )}
-                  <span>{initializing ? '初始化中...' : '初始化表结构'}</span>
+                  <span>{initializing ? t('initializing') : t('initSchema')}</span>
                 </Button>
 
                 {testSuccess && (
                   <Button variant="secondary" onClick={onComplete}>
-                    <span>进入应用</span>
+                    <span>{t('enterApp')}</span>
                     <ArrowRight className="w-4 h-4" />
                   </Button>
                 )}
               </div>
 
               <p className="text-xs text-slate-500 light:text-slate-400">
-                首次使用 MySQL 时需要初始化表结构。如果表已存在，此操作不会影响现有数据。
+                {t('mysqlInitNote')}
               </p>
             </div>
 
             {testSuccess && (
               <div className="p-3 bg-emerald-500/10 light:bg-emerald-50 border border-emerald-500/20 light:border-emerald-200 rounded-lg flex items-center gap-2 text-sm text-emerald-400 light:text-emerald-600">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>配置已保存，您可以开始使用了！</span>
+                <span>{t('configSavedSuccess')}</span>
               </div>
             )}
           </div>
@@ -451,7 +452,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
         {/* Footer */}
         <div className="mt-6 text-center">
           <p className="text-xs text-slate-500 light:text-slate-400">
-            配置将保存在浏览器本地存储中
+            {t('configSavedLocally')}
           </p>
         </div>
       </div>

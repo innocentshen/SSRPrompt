@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS models (
   model_id text NOT NULL,
   name text NOT NULL,
   capabilities text[] DEFAULT '{}',
+  supports_vision boolean DEFAULT true,
   created_at timestamptz DEFAULT now()
 );
 

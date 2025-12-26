@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, MutableRefObject } from 'react';
+import { useTranslation } from 'react-i18next';
 import { flushSync } from 'react-dom';
 import {
   Plus,
@@ -26,7 +27,7 @@ import {
   Copy,
   Maximize2,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, useToast, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentModal } from '../components/Prompt';
 import type { DebugRun } from '../components/Prompt';
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
@@ -34,8 +35,11 @@ import { callAIModel, streamAIModel, fileToBase64, extractThinking, type FileAtt
 import { analyzePrompt, type PromptAnalysisResult } from '../lib/prompt-analyzer';
 import { toResponseFormat } from '../lib/schema-utils';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
+import { getFileUploadCapabilities, isFileTypeAllowed } from '../lib/model-capabilities';
 import type { Prompt, Model, Provider, PromptVersion, PromptMessage, PromptConfig, PromptVariable } from '../types';
 import { DEFAULT_PROMPT_CONFIG } from '../types/database';
+import { useToast } from '../store/useUIStore';
+import { useGlobalStore } from '../store/useGlobalStore';
 
 type TabType = 'edit' | 'observe' | 'optimize';
 
@@ -59,11 +63,20 @@ function debounce<T extends (...args: never[]) => unknown>(
 
 export function PromptsPage() {
   const { showToast } = useToast();
+  const { t } = useTranslation('prompts');
+  const { t: tCommon } = useTranslation('common');
+
+  // Use global store for providers and models (shared across pages, with caching)
+  const {
+    providers,
+    models,
+    fetchProvidersAndModels,
+    getEnabledProviders,
+  } = useGlobalStore();
+
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
   const [versions, setVersions] = useState<PromptVersion[]>([]);
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [models, setModels] = useState<Model[]>([]);
   const [showNewPrompt, setShowNewPrompt] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
@@ -169,6 +182,20 @@ export function PromptsPage() {
     loadData();
   }, []);
 
+  // Set default model when models are loaded
+  useEffect(() => {
+    if (models.length > 0 && !selectedModel) {
+      const enabledModels = models.filter((m) => {
+        const provider = providers.find((p) => p.id === m.provider_id);
+        return provider?.enabled;
+      });
+      if (enabledModels.length > 0) {
+        setSelectedModel(enabledModels[0].id);
+        setOptimizeModelId(enabledModels[0].id);
+      }
+    }
+  }, [models, providers, selectedModel]);
+
   useEffect(() => {
     if (selectedPrompt) {
       // Mark that we're switching prompts - block auto-save
@@ -257,28 +284,24 @@ export function PromptsPage() {
     }
 
     try {
-      const [promptsRes, providersRes, modelsRes] = await Promise.all([
-        getDatabase().from('prompts').select('*').order('order_index').order('updated_at', { ascending: false }),
-        getDatabase().from('providers').select('*').eq('enabled', true),
-        getDatabase().from('models').select('*'),
-      ]);
+      // Load providers and models from global store (with caching)
+      await fetchProvidersAndModels();
 
-      if (promptsRes.data) {
-        setPrompts(promptsRes.data);
-        if (promptsRes.data.length > 0) {
-          setSelectedPrompt(promptsRes.data[0]);
-        }
-      }
-      if (providersRes.data) setProviders(providersRes.data);
-      if (modelsRes.data) {
-        setModels(modelsRes.data);
-        if (modelsRes.data.length > 0) {
-          setSelectedModel(modelsRes.data[0].id);
-          setOptimizeModelId(modelsRes.data[0].id);
+      // Load prompts
+      const { data: promptsData } = await getDatabase()
+        .from('prompts')
+        .select('*')
+        .order('order_index')
+        .order('updated_at', { ascending: false });
+
+      if (promptsData) {
+        setPrompts(promptsData);
+        if (promptsData.length > 0) {
+          setSelectedPrompt(promptsData[0]);
         }
       }
     } catch {
-      showToast('error', '请先在设置中配置数据库连接');
+      showToast('error', t('configureDbFirst'));
     }
   };
 
@@ -311,7 +334,7 @@ export function PromptsPage() {
         .single();
 
       if (error) {
-        showToast('error', '创建失败: ' + error.message);
+        showToast('error', t('createFailed') + ': ' + error.message);
         return;
       }
 
@@ -320,10 +343,10 @@ export function PromptsPage() {
         setSelectedPrompt(data);
         setNewPromptName('');
         setShowNewPrompt(false);
-        showToast('success', 'Prompt 已创建');
+        showToast('success', t('promptCreated'));
       }
     } catch {
-      showToast('error', '创建 Prompt 失败');
+      showToast('error', t('createPromptFailed'));
     }
   };
 
@@ -355,7 +378,7 @@ export function PromptsPage() {
         .eq('id', selectedPrompt.id);
 
       if (error) {
-        showToast('error', '保存失败: ' + error.message);
+        showToast('error', t('saveFailed') + ': ' + error.message);
         return;
       }
 
@@ -376,9 +399,9 @@ export function PromptsPage() {
       );
       loadVersions(selectedPrompt.id);
       setAutoSaveStatus('saved');
-      showToast('success', '已保存为 v' + newVersion);
+      showToast('success', t('savedVersion', { version: newVersion }));
     } catch {
-      showToast('error', '保存失败');
+      showToast('error', t('saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -410,7 +433,7 @@ export function PromptsPage() {
   const handleRun = async () => {
     let finalPrompt = buildPromptFromMessages();
     if (!finalPrompt) {
-      showToast('error', '请先编写 Prompt 内容');
+      showToast('error', t('writePromptFirst'));
       return;
     }
 
@@ -421,7 +444,7 @@ export function PromptsPage() {
     const provider = providers.find((p) => p.id === model?.provider_id);
 
     if (!model || !provider) {
-      showToast('error', '请先在设置中配置并启用模型服务商');
+      showToast('error', t('configureModelProviderFirst'));
       return;
     }
 
@@ -509,7 +532,7 @@ export function PromptsPage() {
             setThinkingContent(thinking);
             setIsThinking(false);
 
-            const outputText = `${content}\n\n---\n**处理时间:** ${(latencyMs / 1000).toFixed(2)}s`;
+            const outputText = `${content}\n\n---\n**${t('processingTime')}:** ${(latencyMs / 1000).toFixed(2)}s`;
             setTestOutput(outputText);
 
             // Add to debug history with attachments and thinking
@@ -530,14 +553,14 @@ export function PromptsPage() {
 
             // Ensure setRunning(false) is always called
             setRunning(false);
-            showToast('success', '运行完成');
+            showToast('success', t('runComplete'));
 
             // Save to database (non-blocking)
             try {
               await getDatabase().from('traces').insert({
                 prompt_id: selectedPrompt?.id,
                 model_id: model.id,
-                input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
+                input: finalPrompt + (testInput ? `\n\n${t('userInput')}: ${testInput}` : ''),
                 output: finalContent,
                 tokens_input: tokensInput,
                 tokens_output: tokensOutput,
@@ -554,7 +577,7 @@ export function PromptsPage() {
             }
           },
           onError: async (error) => {
-            setTestOutput(`**[错误]**\n\n${error}\n\n请检查:\n1. API Key 是否正确配置\n2. 模型名称是否正确\n3. Base URL 是否可访问\n4. 网络连接是否正常`);
+            setTestOutput(`**[${t('error')}]**\n\n${error}\n\n${t('errorCheckList')}`);
 
             // Add to debug history
             const newRun: DebugRun = {
@@ -573,14 +596,14 @@ export function PromptsPage() {
 
             // Ensure setRunning(false) is always called
             setRunning(false);
-            showToast('error', '运行失败: ' + error);
+            showToast('error', t('runFailed') + ': ' + error);
 
             // Save to database (non-blocking)
             try {
               await getDatabase().from('traces').insert({
                 prompt_id: selectedPrompt?.id,
                 model_id: model.id,
-                input: finalPrompt + (testInput ? `\n\n用户输入: ${testInput}` : ''),
+                input: finalPrompt + (testInput ? `\n\n${t('userInput')}: ${testInput}` : ''),
                 output: error,
                 tokens_input: 0,
                 tokens_output: 0,
@@ -599,10 +622,10 @@ export function PromptsPage() {
         options
       );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      setTestOutput(`**[错误]**\n\n${errorMessage}\n\n请检查:\n1. API Key 是否正确配置\n2. 模型名称是否正确\n3. Base URL 是否可访问\n4. 网络连接是否正常`);
+      const errorMessage = error instanceof Error ? error.message : t('unknownError');
+      setTestOutput(`**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`);
       setRunning(false);
-      showToast('error', '运行失败: ' + errorMessage);
+      showToast('error', t('runFailed') + ': ' + errorMessage);
     }
   };
 
@@ -611,15 +634,15 @@ export function PromptsPage() {
     try {
       const { error } = await getDatabase().from('prompts').delete().eq('id', selectedPrompt.id);
       if (error) {
-        showToast('error', '删除失败: ' + error.message);
+        showToast('error', t('deleteFailed') + ': ' + error.message);
         return;
       }
       const remaining = prompts.filter((p) => p.id !== selectedPrompt.id);
       setPrompts(remaining);
       setSelectedPrompt(remaining[0] || null);
-      showToast('success', 'Prompt 已删除');
+      showToast('success', t('promptDeleted'));
     } catch {
-      showToast('error', '删除失败');
+      showToast('error', t('deleteFailed'));
     }
   };
 
@@ -635,7 +658,7 @@ export function PromptsPage() {
       setPromptContent(version.content);
     }
     setShowVersions(false);
-    showToast('info', `已恢复到 v${version.version}`);
+    showToast('info', t('restoredToVersion', { version: version.version }));
   };
 
   const handleDragStart = (index: number) => {
@@ -701,7 +724,7 @@ export function PromptsPage() {
       setDebugDetailCopied(field);
       setTimeout(() => setDebugDetailCopied(null), 2000);
     } catch {
-      showToast('error', '复制失败');
+      showToast('error', t('copyFailed'));
     }
   };
 
@@ -714,7 +737,7 @@ export function PromptsPage() {
       const provider = providers.find((p) => p.id === model?.provider_id);
 
       if (!model || !provider) {
-        showToast('error', '请先选择一个分析模型');
+        showToast('error', t('selectAnalyzeModelFirst'));
         return [];
       }
 
@@ -727,16 +750,16 @@ export function PromptsPage() {
       setAnalysisResult(result);
 
       if (result.score >= 90) {
-        showToast('success', `分析完成！评分: ${result.score}/100 - 优秀`);
+        showToast('success', t('analysisComplete', { score: result.score, level: t('scoreExcellent') }));
       } else if (result.score >= 70) {
-        showToast('success', `分析完成！评分: ${result.score}/100 - 良好`);
+        showToast('success', t('analysisComplete', { score: result.score, level: t('scoreGood') }));
       } else {
-        showToast('info', `分析完成！评分: ${result.score}/100 - 有改进空间`);
+        showToast('info', t('analysisComplete', { score: result.score, level: t('scoreNeedsWork') }));
       }
 
       return result.suggestions;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '分析失败';
+      const errorMessage = err instanceof Error ? err.message : t('analyzeFailed');
       showToast('error', errorMessage);
       return [];
     } finally {
@@ -766,26 +789,84 @@ export function PromptsPage() {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return '刚刚';
-    if (diffMins < 60) return `${diffMins}分钟前`;
-    if (diffHours < 24) return `${diffHours}小时前`;
-    if (diffDays < 7) return `${diffDays}天前`;
+    if (diffMins < 1) return t('justNow');
+    if (diffMins < 60) return t('minutesAgo', { count: diffMins });
+    if (diffHours < 24) return t('hoursAgo', { count: diffHours });
+    if (diffDays < 7) return t('daysAgo', { count: diffDays });
     return date.toLocaleDateString('zh-CN');
   };
+
+  // 计算当前选中模型的文件上传能力
+  const fileUploadCapabilities = useMemo(() => {
+    const model = models.find((m) => m.id === selectedModel);
+    const provider = providers.find((p) => p.id === model?.provider_id);
+    if (!model || !provider) {
+      return { accept: '.txt,.md,.json,.csv,.xml,.yaml,.yml', canUploadImage: false, canUploadPdf: false, canUploadText: true };
+    }
+    return getFileUploadCapabilities(provider.type, model.model_id, model.supports_vision ?? true);
+  }, [selectedModel, models, providers]);
+
+  // 计算比较功能的文件上传能力（取两个模型的交集）
+  const compareFileUploadCapabilities = useMemo(() => {
+    const model1 = models.find((m) => m.id === compareModels[0]);
+    const model2 = models.find((m) => m.id === compareModels[1]);
+    const provider1 = providers.find((p) => p.id === model1?.provider_id);
+    const provider2 = providers.find((p) => p.id === model2?.provider_id);
+
+    let canUploadImage = true;
+    let canUploadPdf = true;
+
+    if (model1 && provider1) {
+      const cap1 = getFileUploadCapabilities(provider1.type, model1.model_id, model1.supports_vision ?? true);
+      canUploadImage = canUploadImage && cap1.canUploadImage;
+      canUploadPdf = canUploadPdf && cap1.canUploadPdf;
+    }
+    if (model2 && provider2) {
+      const cap2 = getFileUploadCapabilities(provider2.type, model2.model_id, model2.supports_vision ?? true);
+      canUploadImage = canUploadImage && cap2.canUploadImage;
+      canUploadPdf = canUploadPdf && cap2.canUploadPdf;
+    }
+
+    const acceptParts: string[] = [];
+    if (canUploadImage) acceptParts.push('image/*');
+    if (canUploadPdf) acceptParts.push('application/pdf');
+
+    return {
+      accept: acceptParts.length > 0 ? acceptParts.join(',') : '',
+      canUploadImage,
+      canUploadPdf,
+    };
+  }, [compareModels, models, providers]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     const maxSize = 20 * 1024 * 1024;
+    const model = models.find((m) => m.id === selectedModel);
+    const provider = providers.find((p) => p.id === model?.provider_id);
 
     for (const file of Array.from(files)) {
       if (file.size > maxSize) {
-        showToast('error', `${file.name} 超过 20MB 限制`);
+        showToast('error', t('fileTooLarge', { name: file.name }));
         continue;
       }
+
+      // 使用新的文件类型验证
       if (!isSupportedFileType(file)) {
-        showToast('error', `${file.name} 不支持的文件类型`);
+        showToast('error', t('unsupportedFileType', { name: file.name }));
+        continue;
+      }
+
+      // 根据当前模型能力检查是否允许上传
+      if (model && provider && !isFileTypeAllowed(file, provider.type, model.model_id, model.supports_vision ?? true)) {
+        const isImage = file.type.startsWith('image/');
+        const isPdf = file.type === 'application/pdf';
+        if (isImage) {
+          showToast('error', t('imageNotSupported'));
+        } else if (isPdf) {
+          showToast('error', t('pdfNotSupported'));
+        }
         continue;
       }
 
@@ -793,7 +874,7 @@ export function PromptsPage() {
         const attachment = await fileToBase64(file);
         setAttachedFiles((prev) => [...prev, attachment]);
       } catch {
-        showToast('error', `${file.name} 读取失败`);
+        showToast('error', t('fileReadFailed', { name: file.name }));
       }
     }
 
@@ -806,19 +887,24 @@ export function PromptsPage() {
     const items = e.clipboardData.items;
     for (const item of Array.from(items)) {
       if (item.type.startsWith('image/')) {
+        // 检查当前模型是否支持图片
+        if (!fileUploadCapabilities.canUploadImage) {
+          showToast('error', t('imageNotSupported'));
+          return;
+        }
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
           if (file.size > 20 * 1024 * 1024) {
-            showToast('error', '粘贴的图片超过 20MB 限制');
+            showToast('error', t('imageTooLarge'));
             continue;
           }
           try {
             const attachment = await fileToBase64(file);
             setAttachedFiles((prev) => [...prev, attachment]);
-            showToast('success', '图片已添加');
+            showToast('success', t('imageAdded'));
           } catch {
-            showToast('error', '无法读取粘贴的图片');
+            showToast('error', t('cannotReadImage'));
           }
         }
       }
@@ -837,12 +923,12 @@ export function PromptsPage() {
   const handleRunComparison = async () => {
     if (compareMode === 'models') {
       if (!compareVersion || !compareModels[0] || !compareModels[1]) {
-        showToast('error', '请选择版本和两个模型');
+        showToast('error', t('selectVersionAndModels'));
         return;
       }
     } else {
       if (!compareModel || !compareVersions[0] || !compareVersions[1]) {
-        showToast('error', '请选择模型和两个版本');
+        showToast('error', t('selectModelAndVersions'));
         return;
       }
     }
@@ -861,7 +947,7 @@ export function PromptsPage() {
         const provider2 = providers.find((p) => p.id === model2?.provider_id);
 
         if (!model1 || !model2 || !provider1 || !provider2) {
-          showToast('error', '模型或服务商配置错误');
+          showToast('error', t('modelConfigError'));
           return;
         }
 
@@ -874,18 +960,18 @@ export function PromptsPage() {
           left:
             result1.status === 'fulfilled'
               ? { content: result1.value.content, latency: result1.value.latencyMs, tokensIn: result1.value.tokensInput, tokensOut: result1.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || '执行失败' },
+              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || t('executionFailed') },
           right:
             result2.status === 'fulfilled'
               ? { content: result2.value.content, latency: result2.value.latencyMs, tokensIn: result2.value.tokensInput, tokensOut: result2.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || '执行失败' },
+              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || t('executionFailed') },
         });
       } else {
         const model = models.find((m) => m.id === compareModel);
         const provider = providers.find((p) => p.id === model?.provider_id);
 
         if (!model || !provider) {
-          showToast('error', '模型或服务商配置错误');
+          showToast('error', t('modelConfigError'));
           return;
         }
 
@@ -903,18 +989,18 @@ export function PromptsPage() {
           left:
             result1.status === 'fulfilled'
               ? { content: result1.value.content, latency: result1.value.latencyMs, tokensIn: result1.value.tokensInput, tokensOut: result1.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || '执行失败' },
+              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || t('executionFailed') },
           right:
             result2.status === 'fulfilled'
               ? { content: result2.value.content, latency: result2.value.latencyMs, tokensIn: result2.value.tokensInput, tokensOut: result2.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || '执行失败' },
+              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || t('executionFailed') },
         });
       }
 
-      showToast('success', '比对完成');
+      showToast('success', t('compareComplete'));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      showToast('error', '比对失败: ' + errorMessage);
+      const errorMessage = error instanceof Error ? error.message : t('unknownError');
+      showToast('error', t('compareFailed') + ': ' + errorMessage);
     } finally {
       setCompareRunning(false);
     }
@@ -925,15 +1011,48 @@ export function PromptsPage() {
     if (!files || files.length === 0) return;
 
     const maxSize = 20 * 1024 * 1024;
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+
+    // 获取两个比较模型的能力，取交集
+    const model1 = models.find((m) => m.id === compareModels[0]);
+    const model2 = models.find((m) => m.id === compareModels[1]);
+    const provider1 = providers.find((p) => p.id === model1?.provider_id);
+    const provider2 = providers.find((p) => p.id === model2?.provider_id);
+
+    // 计算两个模型共同支持的能力
+    let canUploadImage = true;
+    let canUploadPdf = true;
+
+    if (model1 && provider1) {
+      const cap1 = getFileUploadCapabilities(provider1.type, model1.model_id, model1.supports_vision ?? true);
+      canUploadImage = canUploadImage && cap1.canUploadImage;
+      canUploadPdf = canUploadPdf && cap1.canUploadPdf;
+    }
+    if (model2 && provider2) {
+      const cap2 = getFileUploadCapabilities(provider2.type, model2.model_id, model2.supports_vision ?? true);
+      canUploadImage = canUploadImage && cap2.canUploadImage;
+      canUploadPdf = canUploadPdf && cap2.canUploadPdf;
+    }
 
     for (const file of Array.from(files)) {
       if (file.size > maxSize) {
-        showToast('error', `${file.name} 超过 20MB 限制`);
+        showToast('error', t('fileTooLarge', { name: file.name }));
         continue;
       }
-      if (!allowedTypes.includes(file.type)) {
-        showToast('error', `${file.name} 不支持的文件类型`);
+
+      const isImage = file.type.startsWith('image/');
+      const isPdf = file.type === 'application/pdf';
+
+      // 检查文件类型是否被支持
+      if (isImage && !canUploadImage) {
+        showToast('error', t('modelsNotSupportImage'));
+        continue;
+      }
+      if (isPdf && !canUploadPdf) {
+        showToast('error', t('modelsNotSupportPdf'));
+        continue;
+      }
+      if (!isImage && !isPdf) {
+        showToast('error', t('unsupportedFileType', { name: file.name }));
         continue;
       }
 
@@ -941,7 +1060,7 @@ export function PromptsPage() {
         const attachment = await fileToBase64(file);
         setCompareFiles((prev) => [...prev, attachment]);
       } catch {
-        showToast('error', `${file.name} 读取失败`);
+        showToast('error', t('fileReadFailed', { name: file.name }));
       }
     }
   };
@@ -951,9 +1070,9 @@ export function PromptsPage() {
   };
 
   const tabs = [
-    { id: 'edit' as TabType, label: '编辑', icon: <FileText className="w-4 h-4" /> },
-    { id: 'observe' as TabType, label: '历史', icon: <Eye className="w-4 h-4" /> },
-    { id: 'optimize' as TabType, label: '智能优化', icon: <Sparkles className="w-4 h-4" /> },
+    { id: 'edit' as TabType, label: t('tabEdit'), icon: <FileText className="w-4 h-4" /> },
+    { id: 'observe' as TabType, label: t('tabHistory'), icon: <Eye className="w-4 h-4" /> },
+    { id: 'optimize' as TabType, label: t('tabOptimize'), icon: <Sparkles className="w-4 h-4" /> },
   ];
 
   const renderAutoSaveStatus = () => {
@@ -962,28 +1081,28 @@ export function PromptsPage() {
         return (
           <span className="flex items-center gap-1 text-xs text-green-400 light:text-green-600">
             <Check className="w-3 h-3" />
-            已保存
+            {t('saved')}
           </span>
         );
       case 'saving':
         return (
           <span className="flex items-center gap-1 text-xs text-cyan-400 light:text-cyan-600">
             <Cloud className="w-3 h-3 animate-pulse" />
-            保存中...
+            {t('saving')}
           </span>
         );
       case 'unsaved':
         return (
           <span className="flex items-center gap-1 text-xs text-amber-400 light:text-amber-600">
             <CloudOff className="w-3 h-3" />
-            未保存
+            {t('unsaved')}
           </span>
         );
       case 'error':
         return (
           <span className="flex items-center gap-1 text-xs text-red-400 light:text-red-600">
             <CloudOff className="w-3 h-3" />
-            保存失败
+            {t('saveFailed')}
           </span>
         );
     }
@@ -998,7 +1117,7 @@ export function PromptsPage() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
             <input
               type="text"
-              placeholder="搜索 Prompt..."
+              placeholder={t("searchPlaceholder")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-4 py-2 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-300 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
@@ -1006,7 +1125,7 @@ export function PromptsPage() {
           </div>
           <Button className="w-full" onClick={() => setShowNewPrompt(true)}>
             <Plus className="w-4 h-4" />
-            <span>新建 Prompt</span>
+            <span>{t('newPrompt')}</span>
           </Button>
         </div>
 
@@ -1073,15 +1192,15 @@ export function PromptsPage() {
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setShowCompare(true)}>
                   <GitCompare className="w-4 h-4" />
-                  <span>比对</span>
+                  <span>{t('compare')}</span>
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setShowVersions(true)}>
                   <History className="w-4 h-4" />
-                  <span>历史</span>
+                  <span>{t('history')}</span>
                 </Button>
                 <Button variant="secondary" size="sm" onClick={handleSave} loading={saving}>
                   <Save className="w-4 h-4" />
-                  <span>提交新版</span>
+                  <span>{t('submitNewVersion')}</span>
                 </Button>
                 <Button variant="ghost" size="sm" onClick={handleDeletePrompt}>
                   <Trash2 className="w-4 h-4 text-red-400" />
@@ -1101,9 +1220,9 @@ export function PromptsPage() {
                   {/* Left panel - Prompt Editor */}
                   <div className="flex-1 flex flex-col border-r border-slate-700 light:border-slate-200 overflow-hidden min-w-0 basis-0">
                     <div className="flex-shrink-0 p-4 border-b border-slate-700 light:border-slate-200">
-                      <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">Prompt 编辑器</h3>
+                      <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('promptEditor')}</h3>
                       <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                        使用多消息模式编写对话，或使用 {'{{变量名}}'} 定义变量
+                        {t('multiMessageHint')}
                       </p>
                     </div>
                     <div className="flex-1 p-4 overflow-y-auto">
@@ -1117,7 +1236,7 @@ export function PromptsPage() {
                           <textarea
                             value={promptContent}
                             onChange={(e) => setPromptContent(e.target.value)}
-                            placeholder="在这里编写你的 Prompt...&#10;&#10;示例:&#10;你是一个专业的 {{role}}。用户会向你提问，请根据以下上下文回答:&#10;&#10;上下文: {{context}}&#10;&#10;问题: {{question}}"
+                            placeholder={t('promptPlaceholder')}
                             className="flex-1 w-full p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500 font-mono"
                           />
                           <div className="text-center mt-4">
@@ -1133,7 +1252,7 @@ export function PromptsPage() {
                               }}
                             >
                               <Plus className="w-4 h-4 mr-1" />
-                              切换到多消息模式
+                              {t('switchToMultiMessage')}
                             </Button>
                           </div>
                         </div>
@@ -1146,21 +1265,21 @@ export function PromptsPage() {
                     <div className="flex-shrink-0 p-3 border-b border-slate-700 light:border-slate-200">
                       <div className="flex items-center gap-2">
                         <Cpu className="w-4 h-4 text-cyan-400" />
-                        <span className="text-sm font-medium text-slate-300 light:text-slate-700">运行配置</span>
+                        <span className="text-sm font-medium text-slate-300 light:text-slate-700">{t('runConfig')}</span>
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-3 space-y-3">
                       {/* Model selector */}
                       <div className="p-3 bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200">
                         <label className="block text-xs text-slate-400 light:text-slate-600 mb-2">
-                          运行模型
+                          {t('runModel')}
                         </label>
                         <ModelSelector
                           models={models}
                           providers={providers}
                           selectedModelId={selectedModel}
                           onSelect={setSelectedModel}
-                          placeholder="请先配置模型"
+                          placeholder={t("configureModelFirst")}
                         />
                       </div>
 
@@ -1200,14 +1319,14 @@ export function PromptsPage() {
                   {/* Right panel - Test & Output */}
                   <div className="flex-1 flex flex-col bg-slate-900/20 light:bg-slate-100 overflow-hidden min-w-0 basis-0">
                     <div className="flex-shrink-0 p-4 border-b border-slate-700 light:border-slate-200">
-                      <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">测试与输出</h3>
+                      <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('testAndOutput')}</h3>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
                       {/* Variable values input */}
                       {promptVariables.length > 0 && (
                         <div className="space-y-2">
                           <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                            变量值
+                            {t('variableValues')}
                           </label>
                           <div className="space-y-2 p-3 bg-slate-800/50 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
                             {promptVariables.map((variable) => (
@@ -1225,7 +1344,7 @@ export function PromptsPage() {
                                       [variable.name]: e.target.value,
                                     }))
                                   }
-                                  placeholder={variable.default_value || variable.description || '输入值...'}
+                                  placeholder={variable.default_value || variable.description || t('inputValuePlaceholder')}
                                   className="flex-1 px-2 py-1.5 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
                                 />
                               </div>
@@ -1237,13 +1356,13 @@ export function PromptsPage() {
                       {/* Test input */}
                       <div className="space-y-1.5">
                         <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                          测试输入
+                          {t('testInput')}
                         </label>
                         <textarea
                           value={testInput}
                           onChange={(e) => setTestInput(e.target.value)}
                           onPaste={handlePaste}
-                          placeholder="输入测试内容...（支持粘贴图片）"
+                          placeholder={t("inputPlaceholder")}
                           rows={4}
                           className="w-full p-3 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500"
                         />
@@ -1253,7 +1372,7 @@ export function PromptsPage() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                            附件
+                            {t('attachments')}
                           </label>
                           <button
                             type="button"
@@ -1261,13 +1380,13 @@ export function PromptsPage() {
                             className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
                           >
                             <Paperclip className="w-3.5 h-3.5" />
-                            添加文件
+                            {t('addFile')}
                           </button>
                         </div>
                         <input
                           ref={fileInputRef}
                           type="file"
-                          accept={getFileInputAccept()}
+                          accept={fileUploadCapabilities.accept}
                           multiple
                           onChange={handleFileSelect}
                           className="hidden"
@@ -1281,22 +1400,33 @@ export function PromptsPage() {
                                   key={index}
                                   className="flex items-center gap-2 p-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg"
                                 >
-                                  {file.type.startsWith('image/') ? (
-                                    <img
-                                      src={`data:${file.type};base64,${file.base64}`}
-                                      alt={file.name}
-                                      className="w-8 h-8 object-cover rounded"
-                                    />
-                                  ) : (
-                                    <FileIcon className="w-4 h-4 text-slate-400" />
-                                  )}
-                                  <span className="flex-1 text-xs text-slate-300 light:text-slate-700 truncate">
-                                    {file.name}
-                                  </span>
                                   <button
                                     type="button"
-                                    onClick={() => removeFile(index)}
-                                    className="p-1 text-slate-500 hover:text-red-400 transition-colors"
+                                    onClick={() => setPreviewAttachment(file)}
+                                    className="flex-1 flex items-center gap-2 min-w-0 hover:text-cyan-400 light:hover:text-cyan-600 transition-colors"
+                                    title={t('clickToPreview')}
+                                  >
+                                    {file.type.startsWith('image/') ? (
+                                      <img
+                                        src={`data:${file.type};base64,${file.base64}`}
+                                        alt={file.name}
+                                        className="w-8 h-8 object-cover rounded flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <FileIcon className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                    )}
+                                    <span className="text-xs text-slate-300 light:text-slate-700 truncate">
+                                      {file.name}
+                                    </span>
+                                    <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600 flex-shrink-0" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeFile(index);
+                                    }}
+                                    className="p-1 text-slate-500 hover:text-red-400 transition-colors flex-shrink-0"
                                   >
                                     <X className="w-3.5 h-3.5" />
                                   </button>
@@ -1307,7 +1437,7 @@ export function PromptsPage() {
                         ) : (
                           <div className="p-2 border border-dashed border-slate-700 light:border-slate-300 rounded-lg text-center">
                             <p className="text-xs text-slate-500 light:text-slate-600">
-                              支持图片、PDF、txt、md、json、csv、xml、yaml
+                              {t('supportedFileTypes')}
                             </p>
                           </div>
                         )}
@@ -1315,7 +1445,7 @@ export function PromptsPage() {
 
                       <Button className="w-full" onClick={handleRun} loading={running}>
                         <Play className="w-4 h-4" />
-                        <span>运行</span>
+                        <span>{t('run')}</span>
                       </Button>
 
                       {/* Thinking Block */}
@@ -1330,7 +1460,7 @@ export function PromptsPage() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                            输出结果
+                            {t('outputResult')}
                           </label>
                           <button
                             type="button"
@@ -1341,7 +1471,7 @@ export function PromptsPage() {
                                 : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
                             }`}
                           >
-                            {renderMarkdown ? 'Markdown' : '纯文本'}
+                            {renderMarkdown ? t('markdown') : t('plainText')}
                           </button>
                         </div>
                         <div className="min-h-[300px] max-h-[500px] p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-300 light:text-slate-700 overflow-y-auto">
@@ -1354,10 +1484,10 @@ export function PromptsPage() {
                           ) : running ? (
                             <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
                               <Loader2 className="w-4 h-4 animate-spin" />
-                              <span>生成中...</span>
+                              <span>{t('generating')}</span>
                             </div>
                           ) : (
-                            <span className="text-slate-500 light:text-slate-600">点击运行查看结果</span>
+                            <span className="text-slate-500 light:text-slate-600">{t('clickRunToSeeResult')}</span>
                           )}
                         </div>
                       </div>
@@ -1404,7 +1534,7 @@ export function PromptsPage() {
                         }));
                         setPromptMessages(newMessages);
                       }
-                      showToast('success', '建议已应用');
+                      showToast('success', t('suggestionApplied'));
                     }}
                     onOptimize={handleOptimize}
                     isOptimizing={isOptimizing}
@@ -1418,28 +1548,28 @@ export function PromptsPage() {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <FileText className="w-16 h-16 mx-auto mb-4 text-slate-700 light:text-slate-400" />
-              <p className="text-slate-500 light:text-slate-600">选择一个 Prompt 开始编辑</p>
+              <p className="text-slate-500 light:text-slate-600">{t('selectPromptToEdit')}</p>
             </div>
           </div>
         )}
       </div>
 
       {/* New Prompt Modal */}
-      <Modal isOpen={showNewPrompt} onClose={() => setShowNewPrompt(false)} title="新建 Prompt">
+      <Modal isOpen={showNewPrompt} onClose={() => setShowNewPrompt(false)} title={t("newPrompt")}>
         <div className="space-y-4">
           <Input
-            label="Prompt 名称"
+            label={t("promptName")}
             value={newPromptName}
             onChange={(e) => setNewPromptName(e.target.value)}
-            placeholder="给 Prompt 起个名字"
+            placeholder={t("promptNamePlaceholder")}
             autoFocus
           />
           <div className="flex justify-end gap-3">
             <Button variant="ghost" onClick={() => setShowNewPrompt(false)}>
-              取消
+              {tCommon('cancel')}
             </Button>
             <Button onClick={handleCreatePrompt} disabled={!newPromptName.trim()}>
-              创建
+              {tCommon('create')}
             </Button>
           </div>
         </div>
@@ -1449,7 +1579,7 @@ export function PromptsPage() {
       <Modal
         isOpen={showVersions}
         onClose={() => setShowVersions(false)}
-        title="版本历史"
+        title={t('versionHistory')}
         size="lg"
       >
         <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -1475,12 +1605,12 @@ export function PromptsPage() {
                 </div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => handleRestoreVersion(version)}>
-                恢复
+                {t('restore')}
               </Button>
             </div>
           ))}
           {versions.length === 0 && (
-            <p className="text-center text-slate-500 light:text-slate-600 py-8">暂无历史版本</p>
+            <p className="text-center text-slate-500 light:text-slate-600 py-8">{t('noVersionHistory')}</p>
           )}
         </div>
       </Modal>
@@ -1492,7 +1622,7 @@ export function PromptsPage() {
           setShowCompare(false);
           setCompareResults({ left: null, right: null });
         }}
-        title="Prompt 比对"
+        title={t('promptCompare')}
         size="xl"
       >
         <div className="space-y-4">
@@ -1505,7 +1635,7 @@ export function PromptsPage() {
                   : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
               }`}
             >
-              相同版本不同模型
+              {t('sameVersionDiffModels')}
             </button>
             <button
               onClick={() => setCompareMode('versions')}
@@ -1515,18 +1645,18 @@ export function PromptsPage() {
                   : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
               }`}
             >
-              相同模型不同版本
+              {t('sameModelDiffVersions')}
             </button>
           </div>
 
           {compareMode === 'models' ? (
             <div className="space-y-3">
               <Select
-                label="选择版本"
+                label={t('selectVersion')}
                 value={compareVersion}
                 onChange={(e) => setCompareVersion(e.target.value)}
                 options={[
-                  { value: '', label: '选择版本' },
+                  { value: '', label: t('selectVersion') },
                   ...versions.map((v) => ({
                     value: v.id,
                     label: `v${v.version} - ${new Date(v.created_at).toLocaleString('zh-CN')}`,
@@ -1534,44 +1664,44 @@ export function PromptsPage() {
                 ]}
               />
               <div className="grid grid-cols-2 gap-4">
-                <Select
-                  label="模型 A"
-                  value={compareModels[0]}
-                  onChange={(e) => setCompareModels([e.target.value, compareModels[1]])}
-                  options={[
-                    { value: '', label: '选择模型' },
-                    ...enabledModels.map((m) => ({ value: m.id, label: m.name })),
-                  ]}
-                />
-                <Select
-                  label="模型 B"
-                  value={compareModels[1]}
-                  onChange={(e) => setCompareModels([compareModels[0], e.target.value])}
-                  options={[
-                    { value: '', label: '选择模型' },
-                    ...enabledModels.map((m) => ({ value: m.id, label: m.name })),
-                  ]}
-                />
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelA')}</label>
+                  <ModelSelector
+                    models={models}
+                    providers={providers}
+                    selectedModelId={compareModels[0]}
+                    onSelect={(modelId) => setCompareModels([modelId, compareModels[1]])}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelB')}</label>
+                  <ModelSelector
+                    models={models}
+                    providers={providers}
+                    selectedModelId={compareModels[1]}
+                    onSelect={(modelId) => setCompareModels([compareModels[0], modelId])}
+                  />
+                </div>
               </div>
             </div>
           ) : (
             <div className="space-y-3">
-              <Select
-                label="选择模型"
-                value={compareModel}
-                onChange={(e) => setCompareModel(e.target.value)}
-                options={[
-                  { value: '', label: '选择模型' },
-                  ...enabledModels.map((m) => ({ value: m.id, label: m.name })),
-                ]}
-              />
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{tCommon('selectModel')}</label>
+                <ModelSelector
+                  models={models}
+                  providers={providers}
+                  selectedModelId={compareModel}
+                  onSelect={(modelId) => setCompareModel(modelId)}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <Select
-                  label="版本 A"
+                  label={t('versionA')}
                   value={compareVersions[0]}
                   onChange={(e) => setCompareVersions([e.target.value, compareVersions[1]])}
                   options={[
-                    { value: '', label: '选择版本' },
+                    { value: '', label: t('selectVersion') },
                     ...versions.map((v) => ({
                       value: v.id,
                       label: `v${v.version} - ${new Date(v.created_at).toLocaleString('zh-CN')}`,
@@ -1579,11 +1709,11 @@ export function PromptsPage() {
                   ]}
                 />
                 <Select
-                  label="版本 B"
+                  label={t('versionB')}
                   value={compareVersions[1]}
                   onChange={(e) => setCompareVersions([compareVersions[0], e.target.value])}
                   options={[
-                    { value: '', label: '选择版本' },
+                    { value: '', label: t('selectVersion') },
                     ...versions.map((v) => ({
                       value: v.id,
                       label: `v${v.version} - ${new Date(v.created_at).toLocaleString('zh-CN')}`,
@@ -1595,11 +1725,11 @@ export function PromptsPage() {
           )}
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">测试输入</label>
+            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('testInput')}</label>
             <textarea
               value={compareInput}
               onChange={(e) => setCompareInput(e.target.value)}
-              placeholder="输入测试内容..."
+              placeholder={t('inputPlaceholder')}
               rows={3}
               className="w-full p-3 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500"
             />
@@ -1607,23 +1737,24 @@ export function PromptsPage() {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">附件</label>
+              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('attachments')}</label>
               <button
                 type="button"
                 onClick={() => compareFileInputRef.current?.click()}
                 className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
               >
                 <Paperclip className="w-3.5 h-3.5" />
-                添加文件
+                {t('addFile')}
               </button>
             </div>
             <input
               ref={compareFileInputRef}
               type="file"
-              accept="image/*,application/pdf"
+              accept={compareFileUploadCapabilities.accept || 'image/*,application/pdf'}
               multiple
               onChange={handleCompareFileSelect}
               className="hidden"
+              disabled={!compareFileUploadCapabilities.canUploadImage && !compareFileUploadCapabilities.canUploadPdf}
             />
             {compareFiles.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -1662,7 +1793,7 @@ export function PromptsPage() {
 
           <Button className="w-full" onClick={handleRunComparison} loading={compareRunning}>
             <Play className="w-4 h-4" />
-            <span>运行比对</span>
+            <span>{t('run')}{t('compare')}</span>
           </Button>
 
           {(compareResults.left || compareResults.right) && (
@@ -1688,7 +1819,7 @@ export function PromptsPage() {
                 <div className="h-96 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
                   {compareResults.left?.error ? (
                     <div className="text-red-400 light:text-red-600 text-sm">
-                      <p className="font-medium">错误</p>
+                      <p className="font-medium">{t('error')}</p>
                       <p className="mt-1 text-xs">{compareResults.left.error}</p>
                     </div>
                   ) : compareResults.left ? (
@@ -1696,7 +1827,7 @@ export function PromptsPage() {
                   ) : (
                     <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>运行中...</span>
+                      <span>{t('running')}</span>
                     </div>
                   )}
                 </div>
@@ -1723,7 +1854,7 @@ export function PromptsPage() {
                 <div className="h-96 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
                   {compareResults.right?.error ? (
                     <div className="text-red-400 light:text-red-600 text-sm">
-                      <p className="font-medium">错误</p>
+                      <p className="font-medium">{t('error')}</p>
                       <p className="mt-1 text-xs">{compareResults.right.error}</p>
                     </div>
                   ) : compareResults.right ? (
@@ -1731,7 +1862,7 @@ export function PromptsPage() {
                   ) : (
                     <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>运行中...</span>
+                      <span>{t('running')}</span>
                     </div>
                   )}
                 </div>
@@ -1748,47 +1879,47 @@ export function PromptsPage() {
           setShowDebugDetail(null);
           setDebugDetailExpanded(null);
         }}
-        title="调试详情"
+        title={t('callDetails')}
         size="lg"
       >
         {showDebugDetail && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">状态</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('status')}</p>
                 <Badge variant={showDebugDetail.status === 'success' ? 'success' : 'error'}>
-                  {showDebugDetail.status === 'success' ? '成功' : '失败'}
+                  {showDebugDetail.status === 'success' ? t('success') : t('error')}
                 </Badge>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">延迟</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('latency')}</p>
                 <p className="text-sm font-medium text-slate-200 light:text-slate-800">{showDebugDetail.latencyMs}ms</p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输入 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('inputTokens')}</p>
                 <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{showDebugDetail.tokensInput}</p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输出 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('outputTokens')}</p>
                 <p className="text-sm font-medium text-teal-400 light:text-teal-600">{showDebugDetail.tokensOutput}</p>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">输入</h4>
+                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('input')}</h4>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setDebugDetailExpanded({ field: 'input', content: showDebugDetail.input })}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="放大查看"
+                    title={tCommon('expand')}
                   >
                     <Maximize2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDebugDetailCopy(showDebugDetail.input, 'input')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="复制"
+                    title={tCommon('copy')}
                   >
                     {debugDetailCopied === 'input' ? (
                       <Check className="w-4 h-4 text-emerald-400" />
@@ -1805,19 +1936,19 @@ export function PromptsPage() {
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">输出</h4>
+                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('output')}</h4>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setDebugDetailExpanded({ field: 'output', content: showDebugDetail.output })}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="放大查看"
+                    title={tCommon('expand')}
                   >
                     <Maximize2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDebugDetailCopy(showDebugDetail.output, 'output')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="复制"
+                    title={tCommon('copy')}
                   >
                     {debugDetailCopied === 'output' ? (
                       <Check className="w-4 h-4 text-emerald-400" />
@@ -1831,14 +1962,14 @@ export function PromptsPage() {
                 {showDebugDetail.output ? (
                   <MarkdownRenderer content={showDebugDetail.output} />
                 ) : (
-                  <span className="text-sm text-slate-500 light:text-slate-400">(空)</span>
+                  <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
                 )}
               </div>
             </div>
 
             {showDebugDetail.errorMessage && (
               <div>
-                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">错误信息</h4>
+                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{t('errorMessage')}</h4>
                 <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
                   <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
                     {showDebugDetail.errorMessage}
@@ -1849,7 +1980,7 @@ export function PromptsPage() {
 
             <div className="pt-4 border-t border-slate-700 light:border-slate-200">
               <p className="text-xs text-slate-500 light:text-slate-600">
-                运行时间: {showDebugDetail.timestamp.toLocaleString('zh-CN')}
+                {t('createdAt')}: {showDebugDetail.timestamp.toLocaleString('zh-CN')}
               </p>
             </div>
           </div>
@@ -1860,7 +1991,7 @@ export function PromptsPage() {
       <Modal
         isOpen={!!debugDetailExpanded}
         onClose={() => setDebugDetailExpanded(null)}
-        title={debugDetailExpanded?.field === 'input' ? '输入内容' : '输出内容'}
+        title={debugDetailExpanded?.field === 'input' ? t('input') : t('output')}
         size="xl"
       >
         {debugDetailExpanded && (
@@ -1873,12 +2004,12 @@ export function PromptsPage() {
                 {debugDetailCopied === debugDetailExpanded.field ? (
                   <>
                     <Check className="w-4 h-4 text-emerald-400" />
-                    <span>已复制</span>
+                    <span>{tCommon('copied')}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    <span>复制</span>
+                    <span>{tCommon('copy')}</span>
                   </>
                 )}
               </button>
@@ -1887,7 +2018,7 @@ export function PromptsPage() {
               {debugDetailExpanded.content ? (
                 <MarkdownRenderer content={debugDetailExpanded.content} />
               ) : (
-                <span className="text-sm text-slate-500 light:text-slate-400">(空)</span>
+                <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
               )}
             </div>
           </div>

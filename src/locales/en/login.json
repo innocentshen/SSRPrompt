@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "enterPassword": "Enter password to access the system",
+  "accessPassword": "Access Password",
+  "passwordPlaceholder": "Enter password",
+  "passwordHint": "Default password is admin123, can be changed via VITE_APP_PASSWORD environment variable",
+  "wrongPassword": "Wrong password, please try again",
+  "verifying": "Verifying...",
+  "enterSystem": "Enter System",
+  "keepPasswordSafe": "Please keep your access password safe",
+  "starOnGithub": "Star on GitHub",
+  "likeItStarIt": "If you like it, please give me a Star"
+}

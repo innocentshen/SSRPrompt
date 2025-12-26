@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
   ArrowRight,
@@ -22,6 +23,7 @@ import { ThinkingBlock, AttachmentPreview, AttachmentModal } from '../components
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import { streamAIModelWithMessages, fileToBase64, extractThinking, type ChatMessage as AIChatMessage, type FileAttachment } from '../lib/ai-service';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
+import { getFileUploadCapabilities, isFileTypeAllowed } from '../lib/model-capabilities';
 import type { Model, Provider } from '../types';
 
 interface PromptWizardPageProps {
@@ -30,9 +32,9 @@ interface PromptWizardPageProps {
 
 interface Template {
   id: string;
-  name: string;
-  description: string;
-  initialPrompt: string;
+  nameKey: string;
+  descriptionKey: string;
+  initialPromptKey: string;
   exampleVariables?: Record<string, string>;
 }
 
@@ -46,59 +48,44 @@ interface ChatMessage {
 const DEFAULT_TEMPLATES: Template[] = [
   {
     id: 'content-writer',
-    name: '内容写作助手',
-    description: '生成文章、博客、营销文案等各类内容',
-    initialPrompt: '我想创建一个内容写作助手，帮助生成高质量的文章和文案。',
+    nameKey: 'wizardTemplateContentWriter',
+    descriptionKey: 'wizardTemplateContentWriterDesc',
+    initialPromptKey: 'wizardTemplateInitialContentWriter',
   },
   {
     id: 'code-assistant',
-    name: '代码助手',
-    description: '帮助编写、解释和调试代码',
-    initialPrompt: '我想创建一个代码助手，帮助我编写和理解代码。',
+    nameKey: 'wizardTemplateCodeAssistant',
+    descriptionKey: 'wizardTemplateCodeAssistantDesc',
+    initialPromptKey: 'wizardTemplateInitialCodeAssistant',
   },
   {
     id: 'translator',
-    name: '翻译助手',
-    description: '多语言翻译和本地化',
-    initialPrompt: '我想创建一个翻译助手，能够进行准确的多语言翻译。',
+    nameKey: 'wizardTemplateTranslator',
+    descriptionKey: 'wizardTemplateTranslatorDesc',
+    initialPromptKey: 'wizardTemplateInitialTranslator',
   },
   {
     id: 'data-analyzer',
-    name: '数据分析师',
-    description: '分析数据并生成洞察报告',
-    initialPrompt: '我想创建一个数据分析助手，帮助分析数据并提供洞察。',
+    nameKey: 'wizardTemplateDataAnalyzer',
+    descriptionKey: 'wizardTemplateDataAnalyzerDesc',
+    initialPromptKey: 'wizardTemplateInitialDataAnalyzer',
   },
   {
     id: 'customer-service',
-    name: '客服助手',
-    description: '回答客户问题，提供支持服务',
-    initialPrompt: '我想创建一个客服助手，能够友好地回答客户问题。',
+    nameKey: 'wizardTemplateCustomerService',
+    descriptionKey: 'wizardTemplateCustomerServiceDesc',
+    initialPromptKey: 'wizardTemplateInitialCustomerService',
   },
   {
     id: 'custom',
-    name: '自定义场景',
-    description: '从零开始，自由描述您的需求',
-    initialPrompt: '',
+    nameKey: 'wizardTemplateCustom',
+    descriptionKey: 'wizardTemplateCustomDesc',
+    initialPromptKey: '',
   },
 ];
 
-const SYSTEM_PROMPT = `你是一个专业的 Prompt 工程师助手。你的任务是通过对话帮助用户创建高质量的 AI Prompt。
-
-你需要：
-1. 了解用户想要创建的 Prompt 的用途和目标
-2. 询问关键细节，如目标受众、输出格式、特殊要求等
-3. 逐步完善 Prompt 的内容
-4. 在合适的时候，生成完整的 Prompt 并询问用户是否满意
-
-当你准备好生成最终 Prompt 时，请使用以下格式：
-
----PROMPT_START---
-[这里是生成的 Prompt 内容]
----PROMPT_END---
-
-请用中文与用户交流。保持友好、专业，并给出有建设性的建议。`;
-
 export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
+  const { t } = useTranslation('prompts');
   const { showToast } = useToast();
   const [step, setStep] = useState<'template' | 'chat' | 'result'>('template');
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
@@ -150,7 +137,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
         }
       }
     } catch {
-      showToast('error', '请先在设置中配置数据库连接');
+      showToast('error', t('wizardConfigureDbFirst'));
     }
   };
 
@@ -160,21 +147,31 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     return { model, provider };
   };
 
+  // 计算当前选中模型的文件上传能力
+  const fileUploadCapabilities = useMemo(() => {
+    const { model, provider } = getModelInfo(selectedModelId);
+    if (!model || !provider) {
+      return { accept: '.txt,.md,.json,.csv,.xml,.yaml,.yml', canUploadImage: false, canUploadPdf: false, canUploadText: true };
+    }
+    return getFileUploadCapabilities(provider.type, model.model_id, model.supports_vision ?? true);
+  }, [selectedModelId, models, providers]);
+
   const handleSelectTemplate = (template: Template) => {
     setSelectedTemplate(template);
+    const initialPrompt = template.initialPromptKey ? t(template.initialPromptKey) : '';
     if (template.id === 'custom') {
       setMessages([]);
       setInputMessage('');
     } else {
       setMessages([
-        { role: 'user', content: template.initialPrompt },
+        { role: 'user', content: initialPrompt },
       ]);
     }
     setStep('chat');
 
     // Auto-send initial message for non-custom templates
-    if (template.id !== 'custom' && template.initialPrompt) {
-      sendMessage(template.initialPrompt);
+    if (template.id !== 'custom' && initialPrompt) {
+      sendMessage(initialPrompt);
     }
   };
 
@@ -184,7 +181,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     const currentFiles = [...attachedFiles];
     const userMessage: ChatMessage = {
       role: 'user',
-      content: content.trim() || '(仅上传了图片)',
+      content: content.trim() || t('wizardImageOnlyUploaded'),
       attachments: currentFiles.length > 0 ? currentFiles : undefined,
     };
     const newMessages = [...messages, userMessage];
@@ -199,13 +196,13 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     try {
       const { model, provider } = getModelInfo(selectedModelId);
       if (!model || !provider) {
-        showToast('error', '请选择可用的模型');
+        showToast('error', t('wizardSelectModel'));
         setIsLoading(false);
         return;
       }
 
       const apiMessages: AIChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: t('wizardSystemPrompt') },
         ...newMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ];
 
@@ -270,7 +267,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
         currentFiles.length > 0 ? currentFiles : undefined
       );
     } catch (e) {
-      showToast('error', `发送失败: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('wizardSendFailed')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
       setIsLoading(false);
       setStreamingContent('');
     }
@@ -291,20 +288,35 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     const files = e.target.files;
     if (!files) return;
 
+    const { model, provider } = getModelInfo(selectedModelId);
+
     for (const file of Array.from(files)) {
       if (file.size > 10 * 1024 * 1024) {
-        showToast('error', `文件 ${file.name} 超过 10MB 限制`);
+        showToast('error', t('wizardFileTooLarge', { name: file.name }));
         continue;
       }
       if (!isSupportedFileType(file)) {
-        showToast('error', `${file.name} 不支持的文件类型`);
+        showToast('error', t('wizardUnsupportedFileType', { name: file.name }));
         continue;
       }
+
+      // 根据当前模型能力检查是否允许上传
+      if (model && provider && !isFileTypeAllowed(file, provider.type, model.model_id, model.supports_vision ?? true)) {
+        const isImage = file.type.startsWith('image/');
+        const isPdf = file.type === 'application/pdf';
+        if (isImage) {
+          showToast('error', t('imageNotSupported'));
+        } else if (isPdf) {
+          showToast('error', t('pdfNotSupported'));
+        }
+        continue;
+      }
+
       try {
         const attachment = await fileToBase64(file);
         setAttachedFiles((prev) => [...prev, attachment]);
       } catch {
-        showToast('error', `无法读取文件 ${file.name}`);
+        showToast('error', t('wizardCannotReadFile', { name: file.name }));
       }
     }
     if (fileInputRef.current) {
@@ -316,6 +328,11 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     const items = e.clipboardData.items;
     for (const item of Array.from(items)) {
       if (item.type.startsWith('image/')) {
+        // 检查当前模型是否支持图片
+        if (!fileUploadCapabilities.canUploadImage) {
+          showToast('error', t('imageNotSupported'));
+          return;
+        }
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
@@ -323,7 +340,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
             const attachment = await fileToBase64(file);
             setAttachedFiles((prev) => [...prev, attachment]);
           } catch {
-            showToast('error', '无法读取粘贴的图片');
+            showToast('error', t('wizardCannotReadPastedImage'));
           }
         }
       }
@@ -340,13 +357,13 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      showToast('error', '复制失败');
+      showToast('error', t('wizardCopyFailed'));
     }
   };
 
   const handleSavePrompt = async () => {
     if (!promptName.trim()) {
-      showToast('error', '请输入 Prompt 名称');
+      showToast('error', t('wizardEnterPromptName'));
       return;
     }
 
@@ -374,14 +391,14 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
         .single();
 
       if (error) {
-        showToast('error', '保存失败');
+        showToast('error', t('wizardSaveFailed'));
         return;
       }
 
-      showToast('success', 'Prompt 已保存');
+      showToast('success', t('wizardPromptSaved'));
       onNavigate('prompts');
     } catch (e) {
-      showToast('error', `保存失败: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('wizardSaveFailed')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -408,11 +425,11 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
               <Wand2 className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-white light:text-slate-900">Prompt 创建向导</h1>
+              <h1 className="text-lg font-semibold text-white light:text-slate-900">{t('wizardTitle')}</h1>
               <p className="text-sm text-slate-400 light:text-slate-600">
-                {step === 'template' && '选择场景模板'}
-                {step === 'chat' && 'AI 引导创建'}
-                {step === 'result' && '保存 Prompt'}
+                {step === 'template' && t('wizardStepTemplate')}
+                {step === 'chat' && t('wizardStepChat')}
+                {step === 'result' && t('wizardStepResult')}
               </p>
             </div>
           </div>
@@ -424,9 +441,9 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto">
             <div className="mb-6">
-              <h2 className="text-xl font-semibold text-white light:text-slate-900 mb-2">选择场景模板</h2>
+              <h2 className="text-xl font-semibold text-white light:text-slate-900 mb-2">{t('wizardSelectTemplate')}</h2>
               <p className="text-slate-400 light:text-slate-600">
-                选择一个最接近您需求的模板，或者从自定义场景开始
+                {t('wizardSelectTemplateDesc')}
               </p>
             </div>
 
@@ -449,9 +466,9 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                         <FileText className="w-5 h-5" />
                       )}
                     </div>
-                    <span className="font-medium text-white light:text-slate-900">{template.name}</span>
+                    <span className="font-medium text-white light:text-slate-900">{t(template.nameKey)}</span>
                   </div>
-                  <p className="text-sm text-slate-400 light:text-slate-600">{template.description}</p>
+                  <p className="text-sm text-slate-400 light:text-slate-600">{t(template.descriptionKey)}</p>
                 </button>
               ))}
             </div>
@@ -460,7 +477,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
             {availableModels.length > 0 && (
               <div className="mt-8 p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-                  对话模型
+                  {t('wizardChatModel')}
                 </label>
                 <div className="max-w-xs">
                   <ModelSelector
@@ -468,7 +485,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                     providers={providers}
                     selectedModelId={selectedModelId}
                     onSelect={setSelectedModelId}
-                    placeholder="选择模型"
+                    placeholder={t('wizardSelectModel')}
                   />
                 </div>
               </div>
@@ -477,7 +494,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
             {availableModels.length === 0 && (
               <div className="mt-8 p-4 bg-amber-500/10 light:bg-amber-50 border border-amber-500/20 light:border-amber-200 rounded-lg">
                 <p className="text-sm text-amber-400 light:text-amber-700">
-                  请先在设置中配置并启用 AI 服务商和模型
+                  {t('wizardConfigureProviderFirst')}
                 </p>
                 <Button
                   variant="secondary"
@@ -485,7 +502,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                   className="mt-2"
                   onClick={() => onNavigate('settings')}
                 >
-                  前往设置
+                  {t('wizardGoToSettings')}
                 </Button>
               </div>
             )}
@@ -501,7 +518,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
               {messages.length === 0 && !streamingContent && (
                 <div className="text-center py-12 text-slate-500 light:text-slate-400">
                   <Bot className="w-12 h-12 mx-auto mb-3" />
-                  <p>描述您想创建的 Prompt，AI 会帮助您逐步完善</p>
+                  <p>{t('wizardChatPlaceholder')}</p>
                 </div>
               )}
 
@@ -618,7 +635,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 light:text-emerald-600" />
                   <span className="text-sm font-medium text-emerald-400 light:text-emerald-600">
-                    Prompt 已生成
+                    {t('wizardPromptGenerated')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -630,7 +647,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                   </button>
                   <Button size="sm" onClick={() => setStep('result')}>
                     <Save className="w-4 h-4" />
-                    <span>保存</span>
+                    <span>{t('wizardSave')}</span>
                   </Button>
                 </div>
               </div>
@@ -645,7 +662,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
             <div className="max-w-3xl mx-auto space-y-3">
               {/* Model Selector in Chat */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 light:text-slate-600">当前模型:</span>
+                <span className="text-xs text-slate-500 light:text-slate-600">{t('wizardCurrentModel')}</span>
                 <div className="flex-1 max-w-xs">
                   <ModelSelector
                     models={models}
@@ -653,7 +670,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                     selectedModelId={selectedModelId}
                     onSelect={setSelectedModelId}
                     disabled={isLoading}
-                    placeholder="选择模型"
+                    placeholder={t('wizardSelectModel')}
                   />
                 </div>
               </div>
@@ -690,7 +707,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept={getFileInputAccept()}
+                  accept={fileUploadCapabilities.accept}
                   multiple
                   onChange={handleFileSelect}
                   className="hidden"
@@ -699,7 +716,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="p-2 rounded-lg text-slate-400 light:text-slate-500 hover:text-cyan-400 light:hover:text-cyan-600 hover:bg-slate-700 light:hover:bg-slate-100 transition-colors"
-                    title="上传文件"
+                    title={t('wizardUploadFile')}
                   >
                     <Paperclip className="w-5 h-5" />
                   </button>
@@ -708,7 +725,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
-                    placeholder="描述您的需求...（支持粘贴图片）"
+                    placeholder={t('wizardInputPlaceholder')}
                     rows={1}
                     className="flex-1 bg-transparent text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none min-h-[24px] max-h-[120px]"
                     style={{ height: 'auto' }}
@@ -742,23 +759,23 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-2xl mx-auto space-y-6">
             <div>
-              <h2 className="text-xl font-semibold text-white light:text-slate-900 mb-2">保存 Prompt</h2>
+              <h2 className="text-xl font-semibold text-white light:text-slate-900 mb-2">{t('wizardSavePrompt')}</h2>
               <p className="text-slate-400 light:text-slate-600">
-                为您的 Prompt 取个名字，然后保存到工作区
+                {t('wizardSavePromptDesc')}
               </p>
             </div>
 
             <div className="space-y-4">
               <Input
-                label="Prompt 名称"
+                label={t('wizardPromptNameLabel')}
                 value={promptName}
                 onChange={(e) => setPromptName(e.target.value)}
-                placeholder="例如：内容写作助手 v1"
+                placeholder={t('wizardPromptNamePlaceholder')}
               />
 
               <div>
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-                  Prompt 内容
+                  {t('wizardPromptContent')}
                 </label>
                 <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
                   <pre className="text-sm text-slate-300 light:text-slate-700 whitespace-pre-wrap font-mono max-h-64 overflow-y-auto">
@@ -774,7 +791,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                 onClick={() => setStep('chat')}
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span>返回编辑</span>
+                <span>{t('wizardBackToEdit')}</span>
               </Button>
               <Button
                 onClick={handleSavePrompt}
@@ -785,7 +802,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                 ) : (
                   <Save className="w-4 h-4" />
                 )}
-                <span>保存 Prompt</span>
+                <span>{t('wizardSavePromptBtn')}</span>
               </Button>
             </div>
           </div>

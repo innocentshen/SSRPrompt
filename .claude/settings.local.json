@@ -27,7 +27,28 @@
       "Bash(grep:*)",
       "Bash(sort:*)",
       "Bash(npx tsx:*)",
-      "Bash(del \"H:\\\\ssrprompt\\\\test-thinking.ts\")"
+      "Bash(del \"H:\\\\ssrprompt\\\\test-thinking.ts\")",
+      "Bash(find:*)",
+      "Bash(git -C \"H:\\\\ssrprompt\" log --oneline -10)",
+      "Bash(npm uninstall:*)",
+      "Bash(for i in 1 2 3 4 5)",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(time curl -s -w \"\\\\n响应时间: %{time_total}s\\\\n\" -X POST http://localhost:3001/api/mysql-proxy )",
+      "Bash(__NEW_LINE__ echo \"\")",
+      "Bash(git checkout:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(powershell -Command:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(node update-traces.cjs:*)",
+      "WebSearch",
+      "Bash(node update-setup-wizard.cjs:*)",
+      "Bash(del \"H:\\\\ssrprompt\\\\update-setup-wizard.cjs\")",
+      "WebFetch(domain:docs.cherry-ai.com)",
+      "Bash(node migrate-provider-form.cjs:*)",
+      "Bash(wc:*)"
     ]
   }
 }

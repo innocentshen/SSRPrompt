@@ -1,10 +1,14 @@
 import mysql from 'mysql2/promise';
 import crypto from 'crypto';
-import type { MySQLConfig, FilterCondition } from '../types/index.js';
+import type { MySQLConfig, FilterCondition, BatchQueryRequest } from '../types/index.js';
 import { buildWhereClause, buildOrderByClause, processRow } from '../utils/query-builder.js';
 import { SCHEMA_SQL } from '../utils/schema.js';
 
 const pools = new Map<string, mysql.Pool>();
+const poolWarmupStatus = new Map<string, boolean>();
+
+// 是否启用详细日志（生产环境可以关闭）
+const VERBOSE_LOG = process.env.VERBOSE_LOG === 'true';
 
 function getPoolKey(config: MySQLConfig): string {
   return `${config.host}:${config.port}:${config.database}:${config.user}`;
@@ -35,6 +39,26 @@ function processValueForMySQL(val: unknown): unknown {
   return val;
 }
 
+// 预热连接池 - 提前建立连接
+async function warmupPool(pool: mysql.Pool, key: string): Promise<void> {
+  if (poolWarmupStatus.get(key)) {
+    return;
+  }
+
+  try {
+    // 获取一个连接来预热连接池
+    const connection = await pool.getConnection();
+    await connection.ping();
+    connection.release();
+    poolWarmupStatus.set(key, true);
+    if (VERBOSE_LOG) {
+      console.log(`[MySQL] Pool warmed up: ${key}`);
+    }
+  } catch (err) {
+    console.error(`[MySQL] Pool warmup failed: ${key}`, err);
+  }
+}
+
 export function getPool(config: MySQLConfig): mysql.Pool {
   const key = getPoolKey(config);
 
@@ -47,9 +71,17 @@ export function getPool(config: MySQLConfig): mysql.Pool {
       password: config.password,
       waitForConnections: true,
       connectionLimit: 10,
+      maxIdle: 5,                    // 最大空闲连接数
+      idleTimeout: 60000,            // 空闲连接超时时间 60秒
       queueLimit: 0,
+      enableKeepAlive: true,         // 启用 TCP keep-alive
+      keepAliveInitialDelay: 10000,  // keep-alive 初始延迟 10秒
+      connectTimeout: 10000,         // 连接超时 10秒
     });
     pools.set(key, pool);
+
+    // 异步预热连接池（不阻塞当前请求）
+    warmupPool(pool, key);
   }
 
   return pools.get(key)!;
@@ -61,19 +93,27 @@ export async function handleSelect(
   columns: string,
   filters: FilterCondition[],
   orderBy: { column: string; ascending: boolean }[],
-  limit: number | null
+  limit: number | null,
+  offset: number | null = null
 ): Promise<Record<string, unknown>[]> {
   const safeTable = table.replace(/[^a-zA-Z0-9_]/g, '');
   const { sql: whereClause, values } = buildWhereClause(filters);
   const orderClause = buildOrderByClause(orderBy);
-  const limitClause = limit ? ` LIMIT ${limit}` : '';
+  let limitClause = '';
+  if (limit) {
+    limitClause = offset ? ` LIMIT ${offset}, ${limit}` : ` LIMIT ${limit}`;
+  }
 
   const query = `SELECT ${columns} FROM ${safeTable}${whereClause}${orderClause}${limitClause}`;
-  console.log('[MySQL Select] Query:', query);
+  if (VERBOSE_LOG) {
+    console.log('[MySQL Select] Query:', query);
+  }
 
   try {
     const [rows] = await pool.query(query, values);
-    console.log('[MySQL Select] Raw rows count:', (rows as unknown[]).length);
+    if (VERBOSE_LOG) {
+      console.log('[MySQL Select] Raw rows count:', (rows as unknown[]).length);
+    }
 
     const processedRows = (rows as Record<string, unknown>[]).map((row, index) => {
       try {
@@ -204,4 +244,108 @@ export async function executeSql(pool: mysql.Pool, sql: string): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * 批量查询 - 一次执行多个 SELECT 查询，减少网络往返
+ */
+export async function handleBatchSelect(
+  pool: mysql.Pool,
+  batch: BatchQueryRequest
+): Promise<Record<string, Record<string, unknown>[]>> {
+  const results: Record<string, Record<string, unknown>[]> = {};
+
+  // 并行执行所有查询
+  const queryPromises = batch.queries.map(async (query) => {
+    const data = await handleSelect(
+      pool,
+      query.table,
+      query.columns || '*',
+      query.filters || [],
+      query.orderBy || [],
+      query.limit ?? null,
+      query.offset ?? null
+    );
+    return { key: query.key, data };
+  });
+
+  const queryResults = await Promise.all(queryPromises);
+
+  for (const { key, data } of queryResults) {
+    results[key] = data;
+  }
+
+  return results;
+}
+
+/**
+ * 评测详情专用查询 - 一次请求获取评测的所有相关数据
+ * 包括：test_cases, evaluation_criteria, evaluation_runs, 以及最新完成运行的 test_case_results
+ */
+export async function handleEvaluationDetails(
+  pool: mysql.Pool,
+  evaluationId: string
+): Promise<{
+  testCases: Record<string, unknown>[];
+  criteria: Record<string, unknown>[];
+  runs: Record<string, unknown>[];
+  results: Record<string, unknown>[];
+  latestCompletedRunId: string | null;
+}> {
+  // 并行查询 test_cases, criteria, runs
+  const [testCases, criteria, runs] = await Promise.all([
+    handleSelect(
+      pool,
+      'test_cases',
+      '*',  // 使用 SELECT * 保持兼容性
+      [{ column: 'evaluation_id', operator: '=', value: evaluationId }],
+      [{ column: 'order_index', ascending: true }],
+      null,
+      null
+    ),
+    handleSelect(
+      pool,
+      'evaluation_criteria',
+      '*',
+      [{ column: 'evaluation_id', operator: '=', value: evaluationId }],
+      [{ column: 'created_at', ascending: true }],
+      null,
+      null
+    ),
+    handleSelect(
+      pool,
+      'evaluation_runs',
+      '*',
+      [{ column: 'evaluation_id', operator: '=', value: evaluationId }],
+      [{ column: 'created_at', ascending: false }],
+      null,
+      null
+    ),
+  ]);
+
+  // 找到最新完成的运行
+  const latestCompletedRun = runs.find(r => r.status === 'completed');
+  const latestCompletedRunId = latestCompletedRun ? String(latestCompletedRun.id) : null;
+
+  // 如果有完成的运行，获取其结果
+  let results: Record<string, unknown>[] = [];
+  if (latestCompletedRunId) {
+    results = await handleSelect(
+      pool,
+      'test_case_results',
+      '*',
+      [{ column: 'run_id', operator: '=', value: latestCompletedRunId }],
+      [{ column: 'created_at', ascending: true }],
+      null,
+      null
+    );
+  }
+
+  return {
+    testCases,
+    criteria,
+    runs,
+    results,
+    latestCompletedRunId,
+  };
 }

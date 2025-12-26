@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Compass,
   FileText,
@@ -15,15 +16,16 @@ interface SidebarProps {
   onNavigate: (page: string) => void;
 }
 
-const navItems = [
-  { id: 'home', name: '首页', icon: Home },
-  { id: 'prompts', name: 'Prompt 开发', icon: FileText },
-  { id: 'evaluation', name: '评测中心', icon: BarChart3 },
-  { id: 'traces', name: '历史记录', icon: Eye },
-  { id: 'settings', name: '设置', icon: Settings },
+const navItemsConfig = [
+  { id: 'home', nameKey: 'home', icon: Home },
+  { id: 'prompts', nameKey: 'prompts', icon: FileText },
+  { id: 'evaluation', nameKey: 'evaluation', icon: BarChart3 },
+  { id: 'traces', nameKey: 'traces', icon: Eye },
+  { id: 'settings', nameKey: 'settings', icon: Settings },
 ];
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
+  const { t } = useTranslation('nav');
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -55,7 +57,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       </div>
 
       <nav className="flex-1 py-4">
-        {navItems.map((item) => {
+        {navItemsConfig.map((item) => {
           const Icon = item.icon;
           const isActive = currentPage === item.id;
           return (
@@ -69,7 +71,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               }`}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
-              {!collapsed && <span className="whitespace-nowrap">{item.name}</span>}
+              {!collapsed && <span className="whitespace-nowrap">{t(item.nameKey)}</span>}
             </button>
           );
         })}

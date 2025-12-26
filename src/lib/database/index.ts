@@ -1,8 +1,9 @@
 import { SupabaseAdapter } from './supabase-adapter';
-import { MySQLAdapter } from './mysql-adapter';
+import { MySQLAdapter, type EvaluationDetailsResponse } from './mysql-adapter';
 import type { DatabaseConfig, DatabaseProvider, DatabaseService } from './types';
 
 export type { DatabaseConfig, DatabaseProvider, DatabaseService, QueryBuilder, QueryResult, SupabaseConfig, MySQLConfig } from './types';
+export type { EvaluationDetailsResponse } from './mysql-adapter';
 
 const DB_CONFIG_KEY = 'ai_platform_db_config';
 
@@ -82,4 +83,15 @@ export function getSupabaseClient() {
   const config = getStoredConfig();
   const adapter = new SupabaseAdapter(config.supabase);
   return adapter.getClient();
+}
+
+/**
+ * 获取 MySQL 适配器实例（用于访问批量查询等高级功能）
+ * 仅在当前 provider 为 mysql 时有效
+ */
+export function getMySQLAdapter(): MySQLAdapter | null {
+  if (currentConfig.provider === 'mysql' && currentService instanceof MySQLAdapter) {
+    return currentService;
+  }
+  return null;
 }

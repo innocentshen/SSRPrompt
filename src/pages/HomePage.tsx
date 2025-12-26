@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Compass, FileText, Wand2, ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '../components/ui';
 
@@ -6,6 +7,8 @@ interface HomePageProps {
 }
 
 export function HomePage({ onNavigate }: HomePageProps) {
+  const { t } = useTranslation('home');
+
   return (
     <div className="h-full flex flex-col items-center justify-center p-8 bg-gradient-to-b from-slate-950 to-slate-900 light:from-slate-50 light:to-white">
       {/* Hero Section */}
@@ -14,10 +17,10 @@ export function HomePage({ onNavigate }: HomePageProps) {
           <Compass className="w-10 h-10 text-white" />
         </div>
         <h1 className="text-4xl font-bold text-white light:text-slate-900 mb-3">
-          SSRPrompt
+          {t('title')}
         </h1>
         <p className="text-lg text-slate-400 light:text-slate-600 max-w-md mx-auto">
-          专业的 Prompt 工程平台，帮助您构建、测试和优化 AI 提示词
+          {t('subtitle')}
         </p>
       </div>
 
@@ -34,17 +37,17 @@ export function HomePage({ onNavigate }: HomePageProps) {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-white light:text-slate-900">
-                从0开始写 Prompt
+                {t('createFromScratch')}
               </h2>
-              <p className="text-sm text-cyan-400 light:text-cyan-600">AI 引导创建</p>
+              <p className="text-sm text-cyan-400 light:text-cyan-600">{t('aiGuided')}</p>
             </div>
           </div>
           <p className="text-slate-400 light:text-slate-600 mb-4">
-            不知道如何开始？让 AI 帮助您一步步构建专业的 Prompt，支持场景模板选择。
+            {t('createDescription')}
           </p>
           <div className="flex items-center text-cyan-400 light:text-cyan-600 font-medium">
             <Sparkles className="w-4 h-4 mr-2" />
-            <span>开始创建</span>
+            <span>{t('startCreating')}</span>
             <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
           </div>
         </button>
@@ -60,17 +63,17 @@ export function HomePage({ onNavigate }: HomePageProps) {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-white light:text-slate-900">
-                调试现有 Prompt
+                {t('debugExisting')}
               </h2>
-              <p className="text-sm text-teal-400 light:text-teal-600">直接进入工作区</p>
+              <p className="text-sm text-teal-400 light:text-teal-600">{t('directToWorkspace')}</p>
             </div>
           </div>
           <p className="text-slate-400 light:text-slate-600 mb-4">
-            已有 Prompt？直接进入开发工作区，进行测试、对比和优化。
+            {t('debugDescription')}
           </p>
           <div className="flex items-center text-teal-400 light:text-teal-600 font-medium">
             <FileText className="w-4 h-4 mr-2" />
-            <span>进入工作区</span>
+            <span>{t('enterWorkspace')}</span>
             <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
           </div>
         </button>
@@ -79,7 +82,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
       {/* Quick Stats or Tips */}
       <div className="mt-12 text-center">
         <p className="text-sm text-slate-500 light:text-slate-400">
-          提示：您可以随时从侧边栏导航到不同功能区域
+          {t('tip')}
         </p>
       </div>
     </div>

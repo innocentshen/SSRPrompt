@@ -1,4 +1,5 @@
 import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, Zap, Square, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge, Button } from '../ui';
 import type { EvaluationRun, EvaluationStatus } from '../../types';
 
@@ -10,11 +11,11 @@ interface RunHistoryProps {
   onDeleteRun?: (runId: string) => void;
 }
 
-const statusConfig: Record<EvaluationStatus, { label: string; variant: 'info' | 'warning' | 'success' | 'error'; icon: React.ReactNode }> = {
-  pending: { label: '等待中', variant: 'info', icon: <Clock className="w-4 h-4" /> },
-  running: { label: '运行中', variant: 'warning', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
-  completed: { label: '已完成', variant: 'success', icon: <CheckCircle2 className="w-4 h-4" /> },
-  failed: { label: '失败', variant: 'error', icon: <XCircle className="w-4 h-4" /> },
+const statusConfig: Record<EvaluationStatus, { labelKey: string; variant: 'info' | 'warning' | 'success' | 'error'; icon: React.ReactNode }> = {
+  pending: { labelKey: 'pending', variant: 'info', icon: <Clock className="w-4 h-4" /> },
+  running: { labelKey: 'running', variant: 'warning', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
+  completed: { labelKey: 'completed', variant: 'success', icon: <CheckCircle2 className="w-4 h-4" /> },
+  failed: { labelKey: 'failed', variant: 'error', icon: <XCircle className="w-4 h-4" /> },
 };
 
 function formatDuration(startedAt: string, completedAt: string | null): string {
@@ -29,12 +30,14 @@ function formatDuration(startedAt: string, completedAt: string | null): string {
 }
 
 export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDeleteRun }: RunHistoryProps) {
+  const { t } = useTranslation('evaluation');
+
   if (runs.length === 0) {
     return (
       <div className="text-center py-12 text-slate-500 light:text-slate-600 border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
         <Play className="w-12 h-12 mx-auto mb-3 text-slate-600 light:text-slate-400" />
-        <p>暂无执行记录</p>
-        <p className="text-xs mt-1">点击"运行评测"开始第一次执行</p>
+        <p>{t('noExecutionRecords')}</p>
+        <p className="text-xs mt-1">{t('clickRunToStart')}</p>
       </div>
     );
   }
@@ -44,9 +47,9 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium text-slate-300 light:text-slate-700 flex items-center gap-2">
           <Clock className="w-4 h-4 text-slate-400 light:text-slate-500" />
-          执行历史
+          {t('executionHistory')}
         </h3>
-        <span className="text-xs text-slate-500 light:text-slate-600">共 {runs.length} 次执行</span>
+        <span className="text-xs text-slate-500 light:text-slate-600">{t('totalExecutions', { count: runs.length })}</span>
       </div>
 
       <div className="space-y-2">
@@ -80,12 +83,12 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-slate-200 light:text-slate-800">
-                        第 {runs.length - index} 次执行
+                        {t('executionNum', { num: runs.length - index })}
                       </span>
-                      <Badge variant={status.variant}>{status.label}</Badge>
+                      <Badge variant={status.variant}>{t(status.labelKey)}</Badge>
                     </div>
                     <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                      {new Date(run.started_at).toLocaleString('zh-CN')}
+                      {new Date(run.started_at).toLocaleString()}
                     </p>
                   </div>
                 </div>
@@ -99,7 +102,7 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                       }`}>
                         {passRate}%
                       </p>
-                      <p className="text-xs text-slate-500 light:text-slate-600">通过率</p>
+                      <p className="text-xs text-slate-500 light:text-slate-600">{t('passRate')}</p>
                     </div>
                   )}
                   {onDeleteRun && run.status !== 'running' && (
@@ -109,7 +112,7 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                         onDeleteRun(run.id);
                       }}
                       className="p-1.5 text-slate-500 hover:text-red-400 transition-colors rounded hover:bg-slate-700/50 light:hover:bg-slate-100"
-                      title="删除此记录"
+                      title={t('deleteRecord')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -123,22 +126,22 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
               {run.status === 'completed' && run.results.total_cases && (
                 <div className="mt-3 pt-3 border-t border-slate-700/50 light:border-slate-200 grid grid-cols-4 gap-4">
                   <div>
-                    <p className="text-xs text-slate-500 light:text-slate-600">测试用例</p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">{t('testCases')}</p>
                     <p className="text-sm text-slate-300 light:text-slate-700">{run.results.total_cases}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 light:text-slate-600">通过</p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">{t('passed')}</p>
                     <p className="text-sm text-emerald-400 light:text-emerald-600">{run.results.passed_cases || 0}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 light:text-slate-600">Token 消耗</p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">{t('tokenConsumption')}</p>
                     <p className="text-sm text-cyan-400 light:text-cyan-600 flex items-center gap-1">
                       <Zap className="w-3 h-3" />
                       {((run.total_tokens_input || 0) + (run.total_tokens_output || 0)).toLocaleString()}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 light:text-slate-600">耗时</p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">{t('duration')}</p>
                     <p className="text-sm text-slate-300 light:text-slate-700">{formatDuration(run.started_at, run.completed_at)}</p>
                   </div>
                 </div>
@@ -156,7 +159,7 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                     <div className="flex-1 h-1.5 bg-slate-700 light:bg-slate-200 rounded-full overflow-hidden">
                       <div className="h-full bg-amber-500 light:bg-amber-400 rounded-full animate-pulse" style={{ width: '60%' }} />
                     </div>
-                    <span className="text-xs text-slate-500 light:text-slate-600">执行中...</span>
+                    <span className="text-xs text-slate-500 light:text-slate-600">{t('executing')}</span>
                     {onStopRun && (
                       <Button
                         variant="danger"
@@ -167,7 +170,7 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                         }}
                       >
                         <Square className="w-3 h-3" />
-                        <span>中止</span>
+                        <span>{t('abort')}</span>
                       </Button>
                     )}
                   </div>

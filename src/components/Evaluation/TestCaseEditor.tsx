@@ -1,8 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
-import { Trash2, Paperclip, X, FileText, Image, Check, Loader2, Eye, EyeOff, Maximize2, Code, File } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Trash2, Paperclip, X, FileText, Image, Check, Loader2, Eye, EyeOff, Maximize2, Code, File, Play } from 'lucide-react';
 import { Button, Modal, MarkdownRenderer } from '../ui';
-import type { TestCase, FileAttachmentData } from '../../types';
-import { getFileInputAccept, isSupportedFileType, getFileIconType, isImageFile, isPdfFile, isTextFile, readTextContent, getSyntaxLanguage } from '../../lib/file-utils';
+import { AttachmentModal } from '../Prompt/AttachmentModal';
+import type { TestCase, FileAttachmentData, ProviderType } from '../../types';
+import { getFileInputAccept, isSupportedFileType, getFileIconType } from '../../lib/file-utils';
+import { isFileTypeAllowed } from '../../lib/model-capabilities';
+
+interface FileUploadCapabilities {
+  accept: string;
+  canUploadImage: boolean;
+  canUploadPdf: boolean;
+  canUploadText: boolean;
+}
 
 interface TestCaseEditorProps {
   testCase: TestCase;
@@ -10,7 +20,13 @@ interface TestCaseEditorProps {
   variables: string[];
   onUpdate: (testCase: TestCase) => Promise<void>;
   onDelete: () => void;
+  onRunSingle?: () => void;
+  isRunning?: boolean;
   isSaving?: boolean;
+  fileUploadCapabilities?: FileUploadCapabilities;
+  providerType?: ProviderType;
+  modelId?: string;
+  supportsVision?: boolean;
 }
 
 interface LocalInputProps {
@@ -74,9 +90,17 @@ export function TestCaseEditor({
   variables,
   onUpdate,
   onDelete,
+  onRunSingle,
+  isRunning,
   isSaving,
+  fileUploadCapabilities,
+  providerType,
+  modelId,
+  supportsVision = true,
 }: TestCaseEditorProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const { t } = useTranslation('evaluation');
+  const { t: tCommon } = useTranslation('common');
+  const [isExpanded, setIsExpanded] = useState(false);
   const [localSaving, setLocalSaving] = useState(false);
   const [previewInput, setPreviewInput] = useState(false);
   const [previewExpected, setPreviewExpected] = useState(false);
@@ -102,6 +126,13 @@ export function TestCaseEditor({
       if (!isSupportedFileType(file)) {
         continue; // Skip unsupported files
       }
+
+      // 根据模型能力检查是否允许上传
+      if (providerType && modelId && !isFileTypeAllowed(file, providerType, modelId, supportsVision)) {
+        // 静默跳过不支持的文件类型（UI 层面已经通过 accept 限制了）
+        continue;
+      }
+
       const base64 = await fileToBase64(file);
       newAttachments.push({
         name: file.name,
@@ -110,8 +141,9 @@ export function TestCaseEditor({
       });
     }
 
+    const updatedAttachments = [...testCase.attachments, ...newAttachments];
     await handleUpdate({
-      attachments: [...testCase.attachments, ...newAttachments],
+      attachments: updatedAttachments,
     });
 
     if (fileInputRef.current) {
@@ -133,8 +165,9 @@ export function TestCaseEditor({
   };
 
   const removeAttachment = async (attachmentIndex: number) => {
+    const updatedAttachments = testCase.attachments.filter((_, i) => i !== attachmentIndex);
     await handleUpdate({
-      attachments: testCase.attachments.filter((_, i) => i !== attachmentIndex),
+      attachments: updatedAttachments,
     });
   };
 
@@ -169,45 +202,6 @@ export function TestCaseEditor({
     setExpandedPreview(false);
   };
 
-  const renderAttachmentPreview = (attachment: FileAttachmentData) => {
-    if (isImageFile(attachment)) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <img
-            src={`data:${attachment.type};base64,${attachment.base64}`}
-            alt={attachment.name}
-            className="max-w-full max-h-[70vh] object-contain"
-          />
-        </div>
-      );
-    }
-    if (isPdfFile(attachment)) {
-      return (
-        <iframe
-          src={`data:application/pdf;base64,${attachment.base64}`}
-          className="w-full h-[70vh]"
-          title={attachment.name}
-        />
-      );
-    }
-    if (isTextFile(attachment)) {
-      const textContent = readTextContent(attachment.base64);
-      const language = getSyntaxLanguage(attachment);
-      return (
-        <div className="h-[70vh] overflow-auto">
-          <pre className="p-4 bg-slate-900 light:bg-slate-100 rounded-lg text-sm font-mono text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
-            <code className={`language-${language}`}>{textContent}</code>
-          </pre>
-        </div>
-      );
-    }
-    return (
-      <div className="flex items-center justify-center h-[200px] text-slate-500 light:text-slate-600">
-        无法预览此文件类型
-      </div>
-    );
-  };
-
   const closeExpandModal = async () => {
     if (expandedField === 'input') {
       await handleUpdate({ input_text: expandedValue });
@@ -232,47 +226,67 @@ export function TestCaseEditor({
             {index + 1}
           </span>
           <span className="text-sm font-medium text-slate-200 light:text-slate-800">
-            {testCase.name || `测试用例 #${index + 1}`}
+            {testCase.name || t('testCaseNum', { num: index + 1 })}
           </span>
           {testCase.attachments.length > 0 && (
             <span className="text-xs text-slate-500 light:text-slate-600">
-              ({testCase.attachments.length} 个附件)
+              ({t('attachmentsCount', { count: testCase.attachments.length })})
             </span>
           )}
           {showSaving ? (
             <span className="flex items-center gap-1 text-xs text-amber-400 light:text-amber-600">
               <Loader2 className="w-3 h-3 animate-spin" />
-              保存中...
+              {t('saving')}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-xs text-emerald-400 light:text-emerald-600">
               <Check className="w-3 h-3" />
-              已保存
+              {t('saved')}
             </span>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {onRunSingle && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRunSingle();
+              }}
+              disabled={isRunning}
+              title={t('runThisCase')}
+            >
+              {isRunning ? (
+                <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-cyan-400" />
+              )}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
+          </Button>
+        </div>
       </button>
 
       {isExpanded && (
         <div className="p-4 pt-0 space-y-4 border-t border-slate-700/50 light:border-slate-200">
           <div>
             <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              用例名称
+              {t('testCaseName')}
             </label>
             <LocalInput
               value={testCase.name}
               onChange={(value) => handleUpdate({ name: value })}
-              placeholder="给测试用例起个名字"
+              placeholder={t('enterTestCaseName')}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 text-sm"
             />
           </div>
@@ -280,14 +294,14 @@ export function TestCaseEditor({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                输入文本
+                {t('inputText')}
               </label>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => openExpandModal('input')}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
-                  title="放大编辑"
+                  title={t('expandEdit')}
                 >
                   <Maximize2 className="w-3 h-3" />
                 </button>
@@ -301,7 +315,7 @@ export function TestCaseEditor({
                   }`}
                 >
                   {previewInput ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  {previewInput ? '编辑' : '预览'}
+                  {previewInput ? tCommon('edit') : t('preview')}
                 </button>
               </div>
             </div>
@@ -310,7 +324,7 @@ export function TestCaseEditor({
                 {testCase.input_text ? (
                   <MarkdownRenderer content={testCase.input_text} />
                 ) : (
-                  <span className="text-slate-500 light:text-slate-400">无内容</span>
+                  <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
                 )}
               </div>
             ) : (
@@ -318,7 +332,7 @@ export function TestCaseEditor({
                 as="textarea"
                 value={testCase.input_text}
                 onChange={(value) => handleUpdate({ input_text: value })}
-                placeholder="输入要测试的文本内容..."
+                placeholder={t('enterTestContent')}
                 rows={3}
                 className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm font-mono min-h-[80px]"
               />
@@ -328,7 +342,7 @@ export function TestCaseEditor({
           {variables.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-                变量值
+                {t('variableValues')}
               </label>
               <div className="space-y-2">
                 {variables.map((varName) => (
@@ -339,7 +353,7 @@ export function TestCaseEditor({
                     <LocalInput
                       value={testCase.input_variables[varName] || ''}
                       onChange={(value) => updateVariable(varName, value)}
-                      placeholder={`${varName} 的值`}
+                      placeholder={t('valueOfVar', { name: varName })}
                       className="flex-1 px-2 py-1 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                     />
                   </div>
@@ -350,42 +364,47 @@ export function TestCaseEditor({
 
           <div>
             <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              附件
+              {t('attachments')}
             </label>
             <div className="space-y-2">
-              {testCase.attachments.map((attachment, i) => {
-                const Icon = getFileIcon(attachment);
-                return (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 p-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200"
-                  >
-                    <Icon className="w-4 h-4 text-slate-400 light:text-slate-500" />
-                    <span className="flex-1 text-sm text-slate-300 light:text-slate-700 truncate">
-                      {attachment.name}
-                    </span>
-                    <button
-                      onClick={() => setPreviewAttachment(attachment)}
-                      className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
-                      title="预览附件"
+              {testCase.attachments.length > 0 && (
+                testCase.attachments.map((attachment, i) => {
+                  const Icon = getFileIcon(attachment);
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 p-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200 group"
                     >
-                      <Eye className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-cyan-400 light:hover:text-cyan-600" />
-                    </button>
-                    <button
-                      onClick={() => removeAttachment(i)}
-                      className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
-                      title="删除附件"
-                    >
-                      <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-                    </button>
-                  </div>
-                );
-              })}
+                      <button
+                        onClick={() => setPreviewAttachment(attachment)}
+                        className="flex-1 flex items-center gap-2 min-w-0 hover:text-cyan-400 light:hover:text-cyan-600 transition-colors"
+                        title={t('clickToPreview')}
+                      >
+                        <Icon className="w-4 h-4 text-slate-400 light:text-slate-500 flex-shrink-0" />
+                        <span className="text-sm text-slate-300 light:text-slate-700 truncate">
+                          {attachment.name}
+                        </span>
+                        <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600 flex-shrink-0" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeAttachment(i);
+                        }}
+                        className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors flex-shrink-0"
+                        title={t('deleteAttachment')}
+                      >
+                        <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileSelect}
-                accept={getFileInputAccept()}
+                accept={fileUploadCapabilities?.accept || getFileInputAccept()}
                 multiple
                 className="hidden"
               />
@@ -395,7 +414,7 @@ export function TestCaseEditor({
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Paperclip className="w-4 h-4" />
-                <span>添加附件</span>
+                <span>{t('addAttachment')}</span>
               </Button>
             </div>
           </div>
@@ -403,14 +422,14 @@ export function TestCaseEditor({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                期望输出 (可选)
+                {t('expectedOutputOptional')}
               </label>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => openExpandModal('expected')}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
-                  title="放大编辑"
+                  title={t('expandEdit')}
                 >
                   <Maximize2 className="w-3 h-3" />
                 </button>
@@ -424,7 +443,7 @@ export function TestCaseEditor({
                   }`}
                 >
                   {previewExpected ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  {previewExpected ? '编辑' : '预览'}
+                  {previewExpected ? tCommon('edit') : t('preview')}
                 </button>
               </div>
             </div>
@@ -433,7 +452,7 @@ export function TestCaseEditor({
                 {testCase.expected_output ? (
                   <MarkdownRenderer content={testCase.expected_output} />
                 ) : (
-                  <span className="text-slate-500 light:text-slate-400">无内容</span>
+                  <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
                 )}
               </div>
             ) : (
@@ -441,7 +460,7 @@ export function TestCaseEditor({
                 as="textarea"
                 value={testCase.expected_output || ''}
                 onChange={(value) => handleUpdate({ expected_output: value || null })}
-                placeholder="期望的模型输出，用于对比评估..."
+                placeholder={t('expectedOutputPlaceholder')}
                 rows={2}
                 className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm font-mono min-h-[56px]"
               />
@@ -450,24 +469,24 @@ export function TestCaseEditor({
 
           <div>
             <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              备注 (可选)
+              {t('notesOptional')}
             </label>
             <LocalInput
               as="textarea"
               value={testCase.notes || ''}
               onChange={(value) => handleUpdate({ notes: value || null })}
-              placeholder="添加备注信息，如测试目的、注意事项等（不会发送给 AI）..."
+              placeholder={t('notesPlaceholder')}
               rows={2}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm min-h-[56px]"
             />
             <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-              备注内容仅供参考，不会在评测时发送给 AI
+              {t('notesHint')}
             </p>
           </div>
 
           <p className="text-xs text-slate-500 light:text-slate-600 flex items-center gap-1">
             <Check className="w-3 h-3" />
-            输入内容在失焦时自动保存
+            {t('autoSaveHint')}
           </p>
         </div>
       )}
@@ -476,7 +495,7 @@ export function TestCaseEditor({
       <Modal
         isOpen={!!expandedField}
         onClose={closeExpandModal}
-        title={expandedField === 'input' ? '编辑输入文本' : '编辑期望输出'}
+        title={expandedField === 'input' ? t('editInputText') : t('editExpectedOutput')}
         size="xl"
       >
         <div className="space-y-4">
@@ -491,7 +510,7 @@ export function TestCaseEditor({
               }`}
             >
               {expandedPreview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              {expandedPreview ? '编辑' : '预览'}
+              {expandedPreview ? tCommon('edit') : t('preview')}
             </button>
           </div>
           {expandedPreview ? (
@@ -499,37 +518,34 @@ export function TestCaseEditor({
               {expandedValue ? (
                 <MarkdownRenderer content={expandedValue} />
               ) : (
-                <span className="text-slate-500 light:text-slate-400">无内容</span>
+                <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
               )}
             </div>
           ) : (
             <textarea
               value={expandedValue}
               onChange={(e) => setExpandedValue(e.target.value)}
-              placeholder={expandedField === 'input' ? '输入要测试的文本内容...' : '期望的模型输出，用于对比评估...'}
+              placeholder={expandedField === 'input' ? t('enterTestContent') : t('expectedOutputPlaceholder')}
               className="w-full h-[60vh] px-4 py-3 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
             />
           )}
           <div className="flex justify-end gap-3">
             <Button variant="ghost" onClick={() => { setExpandedField(null); setExpandedValue(''); setExpandedPreview(false); }}>
-              取消
+              {tCommon('cancel')}
             </Button>
             <Button onClick={closeExpandModal}>
-              保存
+              {tCommon('save')}
             </Button>
           </div>
         </div>
       </Modal>
 
       {/* Attachment Preview Modal */}
-      <Modal
+      <AttachmentModal
+        attachment={previewAttachment}
         isOpen={!!previewAttachment}
         onClose={() => setPreviewAttachment(null)}
-        title={previewAttachment?.name || '附件预览'}
-        size="xl"
-      >
-        {previewAttachment && renderAttachmentPreview(previewAttachment)}
-      </Modal>
+      />
     </div>
   );
 }

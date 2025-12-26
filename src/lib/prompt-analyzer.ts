@@ -1,6 +1,7 @@
 import type { Provider, PromptMessage, PromptVariable } from '../types';
 import { callAIModel } from './ai-service';
 import { getOptimizationSettings } from '../components/Settings/OptimizationSettings';
+import i18n from '../i18n';
 
 export type SuggestionType = 'clarity' | 'structure' | 'specificity' | 'examples' | 'constraints';
 export type SuggestionSeverity = 'low' | 'medium' | 'high';
@@ -37,7 +38,8 @@ export async function analyzePrompt(
 ): Promise<PromptAnalysisResult> {
   // Get the configurable analysis prompt from settings
   const settings = getOptimizationSettings();
-  const analysisSystemPrompt = settings.analysisPrompt;
+  // 如果存储的值为空，使用翻译后的默认值
+  const analysisSystemPrompt = settings.analysisPrompt || i18n.t('defaultAnalysisPrompt', { ns: 'settings' });
 
   const promptContent = request.messages.length > 0
     ? request.messages.map((m, i) => `[消息 ${i + 1} - ${m.role.toUpperCase()}]\n${m.content}`).join('\n\n---\n\n')

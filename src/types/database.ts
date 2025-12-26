@@ -20,6 +20,7 @@ export interface Model {
   model_id: string;
   name: string;
   capabilities: string[];
+  supports_vision: boolean;
   created_at: string;
 }
 

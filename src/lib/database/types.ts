@@ -36,8 +36,10 @@ export interface QueryBuilder<T> {
   lt(column: string, value: unknown): QueryBuilder<T>;
   lte(column: string, value: unknown): QueryBuilder<T>;
   in(column: string, values: unknown[]): QueryBuilder<T>;
+  is(column: string, value: null): QueryBuilder<T>;
   order(column: string, options?: { ascending?: boolean }): QueryBuilder<T>;
   limit(count: number): QueryBuilder<T>;
+  range(from: number, to: number): QueryBuilder<T>;
   single(): Promise<QueryResult<T>>;
   maybeSingle(): Promise<QueryResult<T | null>>;
   then<TResult>(

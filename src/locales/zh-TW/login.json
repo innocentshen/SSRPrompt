@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "enterPassword": "請輸入密碼以存取系統",
+  "accessPassword": "存取密碼",
+  "passwordPlaceholder": "輸入密碼",
+  "passwordHint": "預設密碼為 admin123，可在環境變數 VITE_APP_PASSWORD 中修改",
+  "wrongPassword": "密碼錯誤，請重試",
+  "verifying": "驗證中...",
+  "enterSystem": "進入系統",
+  "keepPasswordSafe": "請妥善保管您的存取密碼",
+  "starOnGithub": "Star on GitHub",
+  "likeItStarIt": "如果覺得不錯，請給我一個 Star"
+}

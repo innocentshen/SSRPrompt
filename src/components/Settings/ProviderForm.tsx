@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Eye,
   EyeOff,
@@ -30,12 +31,12 @@ interface ProviderFormProps {
   onTestConnection: (apiKey: string, baseUrl: string, type: ProviderType) => Promise<boolean>;
 }
 
-const providerTypes = [
+const providerTypesStatic = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'gemini', label: 'Google Gemini' },
   { value: 'azure', label: 'Azure OpenAI' },
-  { value: 'custom', label: '自定义 (OpenAI 兼容)' },
+  { value: 'custom', label: '', isCustom: true },
 ];
 
 const defaultBaseUrls: Record<ProviderType, string> = {
@@ -72,6 +73,13 @@ export function ProviderForm({
   const [selectedFetchedModels, setSelectedFetchedModels] = useState<Set<string>>(new Set());
   const [modelFilter, setModelFilter] = useState('');
   const { showToast } = useToast();
+  const { t } = useTranslation('settings');
+  const { t: tCommon } = useTranslation('common');
+
+  const providerTypes = providerTypesStatic.map(p => ({
+    value: p.value,
+    label: p.isCustom ? t('customOpenAICompatible') : p.label
+  }));
 
   useEffect(() => {
     if (provider) {
@@ -129,7 +137,7 @@ export function ProviderForm({
 
   const handleFetchModels = async () => {
     if (!apiKey) {
-      showToast('error', '请先填写 API Key');
+      showToast('error', t('fillApiKeyFirst'));
       return;
     }
 
@@ -147,13 +155,13 @@ export function ProviderForm({
         modelsUrl = `${cleanBaseUrl}/v1/models`;
         headers['Authorization'] = `Bearer ${apiKey.split(',')[0].trim()}`;
       } else if (type === 'anthropic') {
-        showToast('info', 'Anthropic 不支持自动获取，请手动添加模型');
+        showToast('info', t('anthropicNoAutoFetch'));
         setFetchingModels(false);
         return;
       } else if (type === 'gemini') {
         modelsUrl = `https://generativelanguage.googleapis.com/v1/models?key=${apiKey.split(',')[0].trim()}`;
       } else {
-        showToast('error', '该服务商类型暂不支持自动获取');
+        showToast('error', t('providerNoAutoFetch'));
         setFetchingModels(false);
         return;
       }
@@ -189,7 +197,7 @@ export function ProviderForm({
       modelList = modelList.filter(m => !existingModelIds.has(m.id));
 
       if (modelList.length === 0) {
-        showToast('info', '没有发现新模型，或所有模型已添加');
+        showToast('info', t('noNewModelsFound'));
         setFetchingModels(false);
         return;
       }
@@ -198,9 +206,9 @@ export function ProviderForm({
       setFetchedModels(modelList);
       setSelectedFetchedModels(new Set());
       setShowModelPicker(true);
-      showToast('success', `发现 ${modelList.length} 个可用模型`);
+      showToast('success', t('foundModelsCount', { count: modelList.length }));
     } catch (err: any) {
-      showToast('error', '获取模型列表失败: ' + (err.message || '网络错误'));
+      showToast('error', t('fetchModelsFailed') + ': ' + (err.message || 'Network error'));
     } finally {
       setFetchingModels(false);
     }
@@ -225,7 +233,7 @@ export function ProviderForm({
     }
     setShowModelPicker(false);
     setSelectedFetchedModels(new Set());
-    showToast('success', `已添加 ${modelsToAdd.length} 个模型`);
+    showToast('success', t('modelsAddedCount', { count: modelsToAdd.length }));
   };
 
   if (!provider) {
@@ -235,7 +243,7 @@ export function ProviderForm({
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 light:bg-slate-200 flex items-center justify-center">
             <AlertCircle className="w-8 h-8 text-slate-600 light:text-slate-400" />
           </div>
-          <p className="text-slate-500 light:text-slate-600">选择一个服务商进行配置</p>
+          <p className="text-slate-500 light:text-slate-600">{t('selectProviderToConfigure')}</p>
         </div>
       </div>
     );
@@ -245,20 +253,20 @@ export function ProviderForm({
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-2xl mx-auto p-6 space-y-8">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white light:text-slate-900">服务商配置</h2>
-          <Toggle enabled={enabled} onChange={setEnabled} label="启用" />
+          <h2 className="text-xl font-semibold text-white light:text-slate-900">{t('providerConfig')}</h2>
+          <Toggle enabled={enabled} onChange={setEnabled} label={t('enable')} />
         </div>
 
         <div className="space-y-5">
           <Input
-            label="服务商名称"
+            label={t('providerName')}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="例如：My OpenAI"
+            placeholder={t('providerNamePlaceholder')}
           />
 
           <Select
-            label="服务商类型"
+            label={t('providerType')}
             value={type}
             onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
             options={providerTypes}
@@ -299,24 +307,24 @@ export function ProviderForm({
                 ) : (
                   <Check className="w-4 h-4" />
                 )}
-                <span>测试</span>
+                <span>{t('test')}</span>
               </Button>
             </div>
             <p className="text-xs text-slate-500 light:text-slate-600">
-              支持多个 API Key，用英文逗号分隔，系统将自动轮询使用
+              {t('apiKeyHint')}
             </p>
           </div>
 
           <div className="space-y-1.5">
             <Input
-              label="API 地址"
+              label={t('apiAddress')}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={defaultBaseUrls[type] || 'https://api.example.com'}
               hint={
                 type === 'custom'
-                  ? '填写完整地址，以 # 结尾则不自动追加路径'
-                  : '一般无需修改，使用默认地址即可'
+                  ? t('customBaseUrlHint')
+                  : t('defaultBaseUrlHint')
               }
             />
           </div>
@@ -324,7 +332,7 @@ export function ProviderForm({
 
         <div className="border-t border-slate-700 light:border-slate-200 pt-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-white light:text-slate-900">模型管理</h3>
+            <h3 className="text-lg font-medium text-white light:text-slate-900">{t('modelManagement')}</h3>
             <Button
               variant="ghost"
               size="sm"
@@ -333,20 +341,20 @@ export function ProviderForm({
               disabled={!apiKey}
             >
               <RefreshCw className={`w-4 h-4 ${fetchingModels ? 'animate-spin' : ''}`} />
-              <span>自动获取</span>
+              <span>{t('autoFetch')}</span>
             </Button>
           </div>
 
           <div className="space-y-3">
             <div className="flex gap-2">
               <Input
-                placeholder="模型 ID (如 gpt-4)"
+                placeholder={t('modelIdPlaceholder')}
                 value={newModelId}
                 onChange={(e) => setNewModelId(e.target.value)}
                 className="flex-1"
               />
               <Input
-                placeholder="显示名称 (可选)"
+                placeholder={t('displayNamePlaceholder')}
                 value={newModelName}
                 onChange={(e) => setNewModelName(e.target.value)}
                 className="flex-1"
@@ -359,7 +367,7 @@ export function ProviderForm({
             <div className="bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 divide-y divide-slate-700 light:divide-slate-200">
               {models.length === 0 ? (
                 <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
-                  暂无模型，请添加或自动获取
+                  {t('noModelsAddOrFetch')}
                 </div>
               ) : (
                 models.map((model) => (
@@ -387,10 +395,10 @@ export function ProviderForm({
         <div className="flex items-center justify-between pt-4 border-t border-slate-700 light:border-slate-200">
           <Button variant="danger" onClick={onDelete}>
             <Trash2 className="w-4 h-4" />
-            <span>删除服务商</span>
+            <span>{t('deleteProvider')}</span>
           </Button>
           <Button onClick={handleSave} loading={saving}>
-            保存配置
+            {t('saveConfig')}
           </Button>
         </div>
       </div>
@@ -401,12 +409,12 @@ export function ProviderForm({
           setShowModelPicker(false);
           setModelFilter('');
         }}
-        title="选择要添加的模型"
+        title={t('selectModelsToAdd')}
         size="lg"
       >
         <div className="space-y-4">
           <Input
-            placeholder="搜索模型名称或ID..."
+            placeholder={t('searchModels')}
             value={modelFilter}
             onChange={(e) => setModelFilter(e.target.value)}
           />
@@ -414,9 +422,9 @@ export function ProviderForm({
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-400 light:text-slate-600">
               {modelFilter
-                ? `筛选到 ${fetchedModels.filter(m => m.id.toLowerCase().includes(modelFilter.toLowerCase()) || m.name.toLowerCase().includes(modelFilter.toLowerCase())).length} 个模型`
-                : `发现 ${fetchedModels.length} 个可用模型`}
-              ，已选择 {selectedFetchedModels.size} 个
+                ? t('filteredModels', { count: fetchedModels.filter(m => m.id.toLowerCase().includes(modelFilter.toLowerCase()) || m.name.toLowerCase().includes(modelFilter.toLowerCase())).length })
+                : t('foundModels', { count: fetchedModels.length })}
+              {t('selectedCount', { count: selectedFetchedModels.size })}
             </p>
             <div className="flex gap-2">
               <Button
@@ -429,14 +437,14 @@ export function ProviderForm({
                   setSelectedFetchedModels(new Set([...selectedFetchedModels, ...filteredIds]));
                 }}
               >
-                全选{modelFilter ? '筛选' : ''}
+                {modelFilter ? t('selectAllFiltered') : t('selectAll')}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setSelectedFetchedModels(new Set())}
               >
-                取消全选
+                {t('deselectAll')}
               </Button>
             </div>
           </div>
@@ -466,7 +474,7 @@ export function ProviderForm({
             ))}
             {fetchedModels.filter(m => !modelFilter || m.id.toLowerCase().includes(modelFilter.toLowerCase()) || m.name.toLowerCase().includes(modelFilter.toLowerCase())).length === 0 && (
               <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
-                没有匹配的模型
+                {t('noMatchingModels')}
               </div>
             )}
           </div>
@@ -476,13 +484,13 @@ export function ProviderForm({
               setShowModelPicker(false);
               setModelFilter('');
             }}>
-              取消
+              {tCommon('cancel')}
             </Button>
             <Button
               onClick={handleAddSelectedModels}
               disabled={selectedFetchedModels.size === 0}
             >
-              添加选中的 {selectedFetchedModels.size} 个模型
+              {t('addSelectedModels', { count: selectedFetchedModels.size })}
             </Button>
           </div>
         </div>

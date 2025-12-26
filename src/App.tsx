@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/ui';
 import { ThemeProvider } from './contexts';
@@ -7,23 +8,29 @@ import { LoginPage } from './pages/LoginPage';
 import { SetupWizard } from './components/Setup';
 import { getStoredConfig, initializeDatabase, getDatabase } from './lib/database';
 
-const pageTitles: Record<string, string> = {
-  home: '首页',
-  wizard: 'Prompt 创建向导',
-  prompts: 'Prompt 开发',
-  evaluation: '评测中心',
-  traces: '历史记录',
-  settings: '设置',
-};
-
 const AUTH_KEY = 'ai_compass_auth';
 
 function App() {
+  const { t } = useTranslation('nav');
+  const { t: tCommon } = useTranslation('common');
   const [currentPage, setCurrentPage] = useState('home');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [isCheckingDb, setIsCheckingDb] = useState(true);
+
+  // ҳ�����ӳ�䵽 i18n key
+  const getPageTitle = (page: string) => {
+    const titleMap: Record<string, string> = {
+      home: t('home'),
+      wizard: t('wizard'),
+      prompts: t('prompts'),
+      evaluation: t('evaluation'),
+      traces: t('traces'),
+      settings: t('settings'),
+    };
+    return titleMap[page] || t('home');
+  };
 
   useEffect(() => {
     const storedAuth = localStorage.getItem(AUTH_KEY);
@@ -97,7 +104,7 @@ function App() {
   if (isCheckingAuth || isCheckingDb) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">加载中...</div>
+        <div className="text-slate-400">{tCommon('loading')}</div>
       </div>
     );
   }
@@ -147,7 +154,7 @@ function App() {
         <Layout
           currentPage={currentPage}
           onNavigate={setCurrentPage}
-          title={pageTitles[currentPage]}
+          title={getPageTitle(currentPage)}
           onLogout={handleLogout}
         >
           {renderPage()}

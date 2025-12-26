@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, ZoomIn, ZoomOut, RotateCw, Download } from 'lucide-react';
 import type { FileAttachment } from '../../lib/ai-service';
 import { isImageFile, isPdfFile, isTextFile, readTextContent, getFileTypeName, getSyntaxLanguage } from '../../lib/file-utils';
@@ -11,6 +12,7 @@ interface AttachmentModalProps {
 }
 
 export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModalProps) {
+  const { t } = useTranslation('common');
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
 
@@ -50,7 +52,6 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
       size="xl"
     >
       <div className="space-y-4">
-        {/* 工具栏 */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-400 light:text-slate-600">
@@ -63,7 +64,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
                 <button
                   onClick={handleZoomOut}
                   className="p-2 rounded-lg bg-slate-800 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-600 transition-colors"
-                  title="缩小"
+                  title={t('zoomOut')}
                 >
                   <ZoomOut className="w-4 h-4" />
                 </button>
@@ -73,14 +74,14 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
                 <button
                   onClick={handleZoomIn}
                   className="p-2 rounded-lg bg-slate-800 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-600 transition-colors"
-                  title="放大"
+                  title={t('zoomIn')}
                 >
                   <ZoomIn className="w-4 h-4" />
                 </button>
                 <button
                   onClick={handleRotate}
                   className="p-2 rounded-lg bg-slate-800 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-600 transition-colors"
-                  title="旋转"
+                  title={t('rotate')}
                 >
                   <RotateCw className="w-4 h-4" />
                 </button>
@@ -89,14 +90,13 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
             <button
               onClick={handleDownload}
               className="p-2 rounded-lg bg-slate-800 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-600 transition-colors"
-              title="下载"
+              title={t('download')}
             >
               <Download className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* 预览区域 */}
         <div className="max-h-[60vh] overflow-auto rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/50 light:bg-slate-50">
           {isImage && (
             <div className="flex items-center justify-center p-4 min-h-[300px]">
@@ -135,8 +135,8 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
 
           {!isImage && !isPdf && !isText && (
             <div className="p-8 text-center text-slate-500 light:text-slate-400">
-              <p>无法预览此文件类型</p>
-              <p className="text-sm mt-2">点击下载按钮获取文件</p>
+              <p>{t('cannotPreviewFileType')}</p>
+              <p className="text-sm mt-2">{t('clickDownloadToGetFile')}</p>
             </div>
           )}
         </div>

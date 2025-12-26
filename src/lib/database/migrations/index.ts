@@ -8,13 +8,12 @@ import type { Migration, MigrationStatus, MigrationResult, DatabaseService } fro
 
 // 导入所有迁移
 import { migration as migration001 } from './001_initial';
+import { migration as migration003 } from './003_add_model_vision_support';
 
 // 注册所有迁移（按版本号排序）
 export const allMigrations: Migration[] = [
   migration001,
-  // 后续迁移在这里添加，如：
-  // migration002,
-  // migration003,
+  migration003,
 ].sort((a, b) => a.version - b.version);
 
 /**

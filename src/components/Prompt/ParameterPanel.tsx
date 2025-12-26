@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Settings2, RotateCcw } from 'lucide-react';
 import { PromptConfig, DEFAULT_PROMPT_CONFIG } from '../../types/database';
 import { Slider, Collapsible, Button } from '../ui';
@@ -10,6 +11,8 @@ interface ParameterPanelProps {
 }
 
 export function ParameterPanel({ config, onChange, disabled = false, defaultOpen = false }: ParameterPanelProps) {
+  const { t } = useTranslation('prompts');
+
   const handleChange = (key: keyof PromptConfig, value: number) => {
     onChange({ ...config, [key]: value });
   };
@@ -22,7 +25,7 @@ export function ParameterPanel({ config, onChange, disabled = false, defaultOpen
 
   return (
     <Collapsible
-      title="模型参数"
+      title={t('modelParameters')}
       icon={<Settings2 className="w-4 h-4 text-cyan-400 light:text-cyan-600" />}
       defaultOpen={defaultOpen}
       action={
@@ -34,64 +37,64 @@ export function ParameterPanel({ config, onChange, disabled = false, defaultOpen
             className="text-xs"
           >
             <RotateCcw className="w-3 h-3 mr-1" />
-            重置
+            {t('resetToDefault')}
           </Button>
         )
       }
     >
       <div className="space-y-4">
         <Slider
-          label="温度 (Temperature)"
+          label={t('temperature')}
           value={config.temperature}
           min={0}
           max={2}
           step={0.1}
           onChange={(value) => handleChange('temperature', value)}
-          tooltip="控制随机性，值越高输出越随机"
+          tooltip={t('temperatureTooltip')}
           disabled={disabled}
         />
 
         <Slider
-          label="Top P"
+          label={t('topP')}
           value={config.top_p}
           min={0}
           max={1}
           step={0.1}
           onChange={(value) => handleChange('top_p', value)}
-          tooltip="核采样，值越低输出越聚焦"
+          tooltip={t('topPTooltip')}
           disabled={disabled}
         />
 
         <Slider
-          label="频率惩罚"
+          label={t('frequencyPenalty')}
           value={config.frequency_penalty}
           min={0}
           max={2}
           step={0.1}
           onChange={(value) => handleChange('frequency_penalty', value)}
-          tooltip="减少重复词汇的出现"
+          tooltip={t('frequencyPenaltyTooltip')}
           disabled={disabled}
         />
 
         <Slider
-          label="存在惩罚"
+          label={t('presencePenalty')}
           value={config.presence_penalty}
           min={0}
           max={2}
           step={0.1}
           onChange={(value) => handleChange('presence_penalty', value)}
-          tooltip="鼓励引入新话题"
+          tooltip={t('presencePenaltyTooltip')}
           disabled={disabled}
         />
 
         <Slider
-          label="最大 Tokens"
+          label={t('maxTokens')}
           value={config.max_tokens}
           min={1}
           max={32000}
           step={1}
           onChange={(value) => handleChange('max_tokens', value)}
-          tooltip="生成的最大 token 数量"
+          tooltip={t('maxTokensTooltip')}
           disabled={disabled}
         />
       </div>

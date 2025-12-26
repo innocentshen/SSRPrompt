@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Search, ChevronDown, Check, Cpu } from 'lucide-react';
 import type { Model, Provider } from '../../types';
 
@@ -35,8 +36,10 @@ export function ModelSelector({
   selectedModelId,
   onSelect,
   disabled = false,
-  placeholder = '选择模型',
+  placeholder,
 }: ModelSelectorProps) {
+  const { t } = useTranslation('common');
+  const actualPlaceholder = placeholder || t('selectModel');
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [openDirection, setOpenDirection] = useState<'up' | 'down'>('down');
@@ -147,7 +150,7 @@ export function ModelSelector({
           ) : (
             <>
               <Cpu className="w-4 h-4 text-slate-500" />
-              <span className="text-slate-500">{placeholder}</span>
+              <span className="text-slate-500">{actualPlaceholder}</span>
             </>
           )}
         </div>
@@ -170,7 +173,7 @@ export function ModelSelector({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索模型..."
+                placeholder={t('searchModels')}
                 className="w-full pl-9 pr-3 py-2 bg-slate-700 light:bg-slate-100 border-0 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
               />
             </div>
@@ -180,7 +183,7 @@ export function ModelSelector({
           <div className="max-h-[300px] overflow-y-auto">
             {groupedModels.length === 0 ? (
               <div className="p-4 text-center text-slate-500 text-sm">
-                {searchQuery ? '没有找到匹配的模型' : '没有可用的模型'}
+                {searchQuery ? t('noMatchingModels') : t('noAvailableModels')}
               </div>
             ) : (
               groupedModels.map(({ provider, models: providerModels }) => (

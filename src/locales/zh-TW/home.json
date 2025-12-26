@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "subtitle": "專業的 Prompt 工程平台，幫助您建構、測試和最佳化 AI 提示詞",
+  "createFromScratch": "從零開始寫 Prompt",
+  "aiGuided": "AI 引導建立",
+  "createDescription": "不知道如何開始？讓 AI 幫助您一步步建構專業的 Prompt，支援場景範本選擇。",
+  "startCreating": "開始建立",
+  "debugExisting": "除錯現有 Prompt",
+  "directToWorkspace": "直接進入工作區",
+  "debugDescription": "已有 Prompt？直接進入開發工作區，進行測試、比較和最佳化。",
+  "enterWorkspace": "進入工作區",
+  "tip": "提示：您可以隨時從側邊欄導覽到不同功能區域"
+}

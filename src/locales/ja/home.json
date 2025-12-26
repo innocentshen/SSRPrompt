@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "subtitle": "プロフェッショナルなプロンプトエンジニアリングプラットフォーム - AIプロンプトの構築、テスト、最適化",
+  "createFromScratch": "ゼロからプロンプトを作成",
+  "aiGuided": "AIガイド作成",
+  "createDescription": "どこから始めればいいかわからない？AIがステップバイステップでプロフェッショナルなプロンプト作成をサポートします。",
+  "startCreating": "作成開始",
+  "debugExisting": "既存プロンプトをデバッグ",
+  "directToWorkspace": "ワークスペースへ",
+  "debugDescription": "既にプロンプトをお持ちですか？開発ワークスペースで直接テスト、比較、最適化を行えます。",
+  "enterWorkspace": "ワークスペースに入る",
+  "tip": "ヒント：サイドバーからいつでも他の機能に移動できます"
+}

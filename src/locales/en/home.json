@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "subtitle": "Professional Prompt Engineering Platform - Build, Test and Optimize AI Prompts",
+  "createFromScratch": "Create Prompt from Scratch",
+  "aiGuided": "AI-Guided Creation",
+  "createDescription": "Don't know where to start? Let AI help you build professional prompts step by step, with scenario templates.",
+  "startCreating": "Start Creating",
+  "debugExisting": "Debug Existing Prompt",
+  "directToWorkspace": "Go to Workspace",
+  "debugDescription": "Already have a prompt? Go directly to the development workspace for testing, comparison, and optimization.",
+  "enterWorkspace": "Enter Workspace",
+  "tip": "Tip: You can navigate to different features from the sidebar anytime"
+}

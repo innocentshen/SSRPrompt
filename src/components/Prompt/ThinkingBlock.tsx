@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Brain, ChevronDown, ChevronRight, Clock } from 'lucide-react';
 import { MarkdownRenderer } from '../ui';
 
@@ -24,12 +25,12 @@ export function ThinkingBlock({
   durationMs,
   defaultExpanded = false,
 }: ThinkingBlockProps) {
+  const { t } = useTranslation('prompts');
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 流式输出时显示计时器
   useEffect(() => {
     if (isStreaming) {
       startTimeRef.current = Date.now();
@@ -50,10 +51,8 @@ export function ThinkingBlock({
     };
   }, [isStreaming]);
 
-  // 完成后自动折叠
   useEffect(() => {
     if (!isStreaming && content) {
-      // 延迟一下再折叠，让用户能看到完成状态
       const timer = setTimeout(() => {
         setIsExpanded(false);
       }, 500);
@@ -77,7 +76,6 @@ export function ThinkingBlock({
             : 'bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 hover:bg-slate-800 light:hover:bg-slate-50'
         }`}
       >
-        {/* 图标 */}
         <div className={`p-1.5 rounded-md ${
           isStreaming
             ? 'bg-purple-500/20 text-purple-400'
@@ -86,7 +84,6 @@ export function ThinkingBlock({
           <Brain className="w-4 h-4" />
         </div>
 
-        {/* 标题和状态 */}
         <div className="flex-1 flex items-center gap-2 text-left">
           <span className={`text-sm font-medium ${
             isStreaming
@@ -95,7 +92,7 @@ export function ThinkingBlock({
           }`}>
             {isStreaming ? (
               <span className="flex items-center gap-1">
-                思考中
+                {t('thinkingInProgress')}
                 <span className="inline-flex">
                   <span className="animate-bounce" style={{ animationDelay: '0ms' }}>.</span>
                   <span className="animate-bounce" style={{ animationDelay: '150ms' }}>.</span>
@@ -103,11 +100,10 @@ export function ThinkingBlock({
                 </span>
               </span>
             ) : (
-              '思考完成'
+              t('thinkingComplete')
             )}
           </span>
 
-          {/* 耗时 */}
           {displayDuration > 0 && (
             <span className="flex items-center gap-1 text-xs text-slate-500 light:text-slate-500">
               <Clock className="w-3 h-3" />
@@ -116,7 +112,6 @@ export function ThinkingBlock({
           )}
         </div>
 
-        {/* 展开/折叠图标 */}
         <div className="text-slate-500 light:text-slate-400">
           {isExpanded ? (
             <ChevronDown className="w-4 h-4" />
@@ -126,7 +121,6 @@ export function ThinkingBlock({
         </div>
       </button>
 
-      {/* 展开的内容 */}
       {isExpanded && (
         <div className={`mt-2 p-4 rounded-lg border ${
           isStreaming
@@ -138,7 +132,7 @@ export function ThinkingBlock({
               <MarkdownRenderer content={content} />
             ) : (
               <span className="text-slate-500 light:text-slate-400 italic">
-                正在思考...
+                {t('thinkingContent')}
               </span>
             )}
           </div>

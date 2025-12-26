@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Cloud, Bot, Sparkles, Cpu, Server } from 'lucide-react';
 import { Modal, Button, Input, Select } from '../ui';
 import type { ProviderType } from '../../types';
@@ -9,18 +10,20 @@ interface AddProviderModalProps {
   onAdd: (name: string, type: ProviderType) => Promise<void>;
 }
 
-const providerTypes = [
-  { value: 'openai', label: 'OpenAI', icon: Sparkles, color: 'from-emerald-500 to-green-500' },
-  { value: 'anthropic', label: 'Anthropic', icon: Bot, color: 'from-amber-500 to-orange-500' },
-  { value: 'gemini', label: 'Google Gemini', icon: Cpu, color: 'from-blue-500 to-cyan-500' },
-  { value: 'azure', label: 'Azure OpenAI', icon: Cloud, color: 'from-sky-500 to-blue-500' },
-  { value: 'custom', label: '自定义 (OpenAI 兼容)', icon: Server, color: 'from-slate-500 to-slate-600' },
-];
-
 export function AddProviderModal({ isOpen, onClose, onAdd }: AddProviderModalProps) {
+  const { t } = useTranslation('settings');
+  const { t: tCommon } = useTranslation('common');
   const [name, setName] = useState('');
   const [type, setType] = useState<ProviderType>('openai');
   const [loading, setLoading] = useState(false);
+
+  const providerTypes = [
+    { value: 'openai', label: 'OpenAI', icon: Sparkles, color: 'from-emerald-500 to-green-500' },
+    { value: 'anthropic', label: 'Anthropic', icon: Bot, color: 'from-amber-500 to-orange-500' },
+    { value: 'gemini', label: 'Google Gemini', icon: Cpu, color: 'from-blue-500 to-cyan-500' },
+    { value: 'azure', label: 'Azure OpenAI', icon: Cloud, color: 'from-sky-500 to-blue-500' },
+    { value: 'custom', label: t('customOpenAICompatible'), icon: Server, color: 'from-slate-500 to-slate-600' },
+  ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,19 +42,19 @@ export function AddProviderModal({ isOpen, onClose, onAdd }: AddProviderModalPro
   const selectedType = providerTypes.find((t) => t.value === type);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="添加服务商" size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('addProvider')} size="md">
       <form onSubmit={handleSubmit} className="space-y-6">
         <Input
-          label="服务商名称"
+          label={t('providerName')}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="给服务商起个名字，如：我的 OpenAI"
+          placeholder={t('providerNamePlaceholder')}
           autoFocus
         />
 
         <div className="space-y-3">
           <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-            服务商类型
+            {t('providerType')}
           </label>
           <div className="grid grid-cols-1 gap-2">
             {providerTypes.map((providerType) => {
@@ -99,10 +102,10 @@ export function AddProviderModal({ isOpen, onClose, onAdd }: AddProviderModalPro
 
         <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
           <Button type="button" variant="ghost" onClick={onClose}>
-            取消
+            {tCommon('cancel')}
           </Button>
           <Button type="submit" loading={loading} disabled={!name.trim()}>
-            添加
+            {tCommon('add')}
           </Button>
         </div>
       </form>

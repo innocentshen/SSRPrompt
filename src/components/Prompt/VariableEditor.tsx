@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Variable, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { PromptVariable, PromptVariableType } from '../../types/database';
 import { Button, Input, Select, Collapsible } from '../ui';
@@ -10,16 +11,28 @@ interface VariableEditorProps {
   defaultOpen?: boolean;
 }
 
-const VARIABLE_TYPES: { value: PromptVariableType; label: string }[] = [
-  { value: 'string', label: '字符串' },
-  { value: 'number', label: '数字' },
-  { value: 'boolean', label: '布尔值' },
-  { value: 'array', label: '数组' },
-  { value: 'object', label: '对象' },
+const VARIABLE_TYPES_KEYS: { value: PromptVariableType; labelKey: string }[] = [
+  { value: 'string', labelKey: 'stringType' },
+  { value: 'number', labelKey: 'numberType' },
+  { value: 'boolean', labelKey: 'booleanType' },
+  { value: 'array', labelKey: 'arrayType' },
+  { value: 'object', labelKey: 'objectType' },
 ];
 
 export function VariableEditor({ variables, onChange, disabled = false, defaultOpen = false }: VariableEditorProps) {
+  const { t } = useTranslation('prompts');
+  const { t: tCommon } = useTranslation('common');
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  const variableTypes = VARIABLE_TYPES_KEYS.map(vt => ({
+    value: vt.value,
+    label: t(vt.labelKey)
+  }));
+
+  const getTypeLabel = (type: PromptVariableType) => {
+    const found = VARIABLE_TYPES_KEYS.find(vt => vt.value === type);
+    return found ? t(found.labelKey) : type;
+  };
 
   const handleAddVariable = () => {
     const newVariable: PromptVariable = {
@@ -49,7 +62,7 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
 
   return (
     <Collapsible
-      title={`变量定义 (${variables.length})`}
+      title={`${t('variableDefinition')} (${variables.length})`}
       icon={<Variable className="w-4 h-4 text-amber-400 light:text-amber-600" />}
       defaultOpen={defaultOpen}
       action={
@@ -64,14 +77,14 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
           className="text-xs"
         >
           <Plus className="w-3 h-3 mr-1" />
-          添加
+          {tCommon('add')}
         </Button>
       }
     >
       <div className="space-y-2">
         {variables.length === 0 ? (
           <div className="text-center py-4 text-slate-500 light:text-slate-500 text-sm">
-            <p>在 Prompt 中使用 {`{{变量名}}`} 定义变量</p>
+            <p>{t('useVariableSyntax')}</p>
           </div>
         ) : (
           variables.map((variable, index) => (
@@ -93,7 +106,7 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
                   {variable.name}
                 </code>
                 <span className="text-xs text-slate-500 px-1.5 py-0.5 bg-slate-700 light:bg-slate-200 rounded">
-                  {VARIABLE_TYPES.find(t => t.value === variable.type)?.label || variable.type}
+                  {getTypeLabel(variable.type)}
                 </span>
                 {variable.required && (
                   <span className="text-xs text-red-400 light:text-red-500">*</span>
@@ -117,7 +130,7 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-slate-400 light:text-slate-600 mb-1">
-                        变量名
+                        {t('variableName')}
                       </label>
                       <Input
                         value={variable.name}
@@ -129,14 +142,14 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
                     </div>
                     <div>
                       <label className="block text-xs text-slate-400 light:text-slate-600 mb-1">
-                        类型
+                        {t('variableType')}
                       </label>
                       <Select
                         value={variable.type}
                         onChange={(e) =>
                           handleUpdateVariable(index, { type: e.target.value as PromptVariableType })
                         }
-                        options={VARIABLE_TYPES}
+                        options={variableTypes}
                         disabled={disabled}
                       />
                     </div>
@@ -144,24 +157,24 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
 
                   <div>
                     <label className="block text-xs text-slate-400 light:text-slate-600 mb-1">
-                      描述
+                      {t('variableDesc')}
                     </label>
                     <Input
                       value={variable.description || ''}
                       onChange={(e) => handleUpdateVariable(index, { description: e.target.value })}
-                      placeholder="变量描述（可选）"
+                      placeholder={t('variableDescPlaceholder')}
                       disabled={disabled}
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs text-slate-400 light:text-slate-600 mb-1">
-                      默认值
+                      {t('defaultValue')}
                     </label>
                     <Input
                       value={variable.default_value || ''}
                       onChange={(e) => handleUpdateVariable(index, { default_value: e.target.value })}
-                      placeholder="默认值（可选）"
+                      placeholder={t('defaultValuePlaceholder')}
                       disabled={disabled}
                     />
                   </div>
@@ -179,7 +192,7 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
                       htmlFor={`required-${index}`}
                       className="text-sm text-slate-300 light:text-slate-700"
                     >
-                      必填
+                      {t('requiredField')}
                     </label>
                   </div>
                 </div>

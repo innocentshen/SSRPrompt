@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Bot, Database, Sparkles } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Bot, Database, Sparkles, FlaskConical } from 'lucide-react';
 import { ProviderList } from '../components/Settings/ProviderList';
 import { ProviderForm } from '../components/Settings/ProviderForm';
 import { AddProviderModal } from '../components/Settings/AddProviderModal';
 import { DatabaseSettings } from '../components/Settings/DatabaseSettings';
 import { OptimizationSettings } from '../components/Settings/OptimizationSettings';
+import { ModelCapabilityTest } from '../components/Settings/ModelCapabilityTest';
 import { useToast } from '../components/ui';
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import type { Provider, Model, ProviderType } from '../types';
 
-type SettingsTab = 'providers' | 'database' | 'optimization';
+type SettingsTab = 'providers' | 'database' | 'optimization' | 'capability-test';
 
 export function SettingsPage() {
+  const { t } = useTranslation('settings');
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers');
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -28,7 +31,6 @@ export function SettingsPage() {
   }, []);
 
   const loadProviders = async () => {
-    // 检查数据库是否已配置
     if (!isDatabaseConfigured()) {
       setLoading(false);
       return;
@@ -47,7 +49,7 @@ export function SettingsPage() {
         .order('created_at', { ascending: true });
 
       if (providersError) {
-        showToast('error', '请先在"数据库"页签中配置数据库连接');
+        showToast('error', t('configureDbFirst'));
       } else if (providersData) {
         setProviders(providersData);
         if (providersData.length > 0 && !selectedProviderId) {
@@ -58,7 +60,7 @@ export function SettingsPage() {
         setModels(modelsData);
       }
     } catch {
-      showToast('error', '请先在"数据库"页签中配置数据库连接');
+      showToast('error', t('configureDbFirst'));
     }
     setLoading(false);
   };
@@ -77,17 +79,17 @@ export function SettingsPage() {
         .single();
 
       if (error) {
-        showToast('error', '添加失败: ' + error.message);
+        showToast('error', t('addFailed') + ': ' + error.message);
         return;
       }
 
       if (data) {
         setProviders((prev) => [...prev, data]);
         setSelectedProviderId(data.id);
-        showToast('success', '服务商已添加');
+        showToast('success', t('providerAddedSuccess'));
       }
     } catch {
-      showToast('error', '添加服务商失败');
+      showToast('error', t('addProviderFailed'));
     }
   };
 
@@ -103,16 +105,16 @@ export function SettingsPage() {
         .eq('id', selectedProviderId);
 
       if (error) {
-        showToast('error', '保存失败: ' + error.message);
+        showToast('error', t('saveFailed') + ': ' + error.message);
         return;
       }
 
       setProviders((prev) =>
         prev.map((p) => (p.id === selectedProviderId ? { ...p, ...data } : p))
       );
-      showToast('success', '配置已保存');
+      showToast('success', t('configSaved'));
     } catch {
-      showToast('error', '保存配置失败');
+      showToast('error', t('saveConfigFailed'));
     }
   };
 
@@ -125,7 +127,7 @@ export function SettingsPage() {
         .eq('id', selectedProviderId);
 
       if (error) {
-        showToast('error', '删除失败: ' + error.message);
+        showToast('error', t('deleteFailed') + ': ' + error.message);
         return;
       }
 
@@ -133,13 +135,13 @@ export function SettingsPage() {
       setProviders(remaining);
       setModels((prev) => prev.filter((m) => m.provider_id !== selectedProviderId));
       setSelectedProviderId(remaining[0]?.id || null);
-      showToast('success', '服务商已删除');
+      showToast('success', t('providerDeletedSuccess'));
     } catch {
-      showToast('error', '删除服务商失败');
+      showToast('error', t('deleteProviderFailed'));
     }
   };
 
-  const handleAddModel = async (modelId: string, name: string) => {
+  const handleAddModel = async (modelId: string, name: string, supportsVision: boolean = true) => {
     if (!selectedProviderId) return;
     try {
       const { data, error } = await getDatabase()
@@ -149,21 +151,42 @@ export function SettingsPage() {
           model_id: modelId,
           name,
           capabilities: ['chat'],
+          supports_vision: supportsVision,
         })
         .select()
         .single();
 
       if (error) {
-        showToast('error', '添加模型失败: ' + error.message);
+        showToast('error', t('addModelFailed') + ': ' + error.message);
         return;
       }
 
       if (data) {
         setModels((prev) => [...prev, data]);
-        showToast('success', '模型已添加');
+        showToast('success', t('modelAddedSuccess'));
       }
     } catch {
-      showToast('error', '添加模型失败');
+      showToast('error', t('addModelFailed'));
+    }
+  };
+
+  const handleToggleVision = async (modelId: string, supportsVision: boolean) => {
+    try {
+      const { error } = await getDatabase()
+        .from('models')
+        .update({ supports_vision: supportsVision })
+        .eq('id', modelId);
+
+      if (error) {
+        showToast('error', t('updateFailed') + ': ' + error.message);
+        return;
+      }
+
+      setModels((prev) =>
+        prev.map((m) => (m.id === modelId ? { ...m, supports_vision: supportsVision } : m))
+      );
+    } catch {
+      showToast('error', t('updateModelFailed'));
     }
   };
 
@@ -172,30 +195,30 @@ export function SettingsPage() {
       const { error } = await getDatabase().from('models').delete().eq('id', modelId);
 
       if (error) {
-        showToast('error', '删除模型失败');
+        showToast('error', t('deleteModelFailed'));
         return;
       }
 
       setModels((prev) => prev.filter((m) => m.id !== modelId));
-      showToast('success', '模型已删除');
+      showToast('success', t('modelDeletedSuccess'));
     } catch {
-      showToast('error', '删除模型失败');
+      showToast('error', t('deleteModelFailed'));
     }
   };
 
   const handleTestConnection = async (apiKey: string, baseUrl: string, type: ProviderType): Promise<boolean> => {
     if (!apiKey) {
-      showToast('error', '请先填写 API Key');
+      showToast('error', t('fillApiKeyFirst'));
       return false;
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     if (apiKey.length > 10) {
-      showToast('success', '连接测试成功');
+      showToast('success', t('connectionTestSuccess'));
       return true;
     } else {
-      showToast('error', 'API Key 格式不正确');
+      showToast('error', t('apiKeyFormatError'));
       return false;
     }
   };
@@ -212,7 +235,7 @@ export function SettingsPage() {
           }`}
         >
           <Bot className="w-4 h-4" />
-          AI 服务商
+          {t('providers')}
         </button>
         <button
           onClick={() => setActiveTab('database')}
@@ -223,7 +246,7 @@ export function SettingsPage() {
           }`}
         >
           <Database className="w-4 h-4" />
-          数据库
+          {t('database')}
         </button>
         <button
           onClick={() => setActiveTab('optimization')}
@@ -234,7 +257,18 @@ export function SettingsPage() {
           }`}
         >
           <Sparkles className="w-4 h-4" />
-          智能优化
+          {t('optimization')}
+        </button>
+        <button
+          onClick={() => setActiveTab('capability-test')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'capability-test'
+              ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
+              : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+          }`}
+        >
+          <FlaskConical className="w-4 h-4" />
+          {t('capabilityTest')}
         </button>
       </div>
 
@@ -253,6 +287,7 @@ export function SettingsPage() {
             onDelete={handleDeleteProvider}
             onAddModel={handleAddModel}
             onRemoveModel={handleRemoveModel}
+            onToggleVision={handleToggleVision}
             onTestConnection={handleTestConnection}
           />
           <AddProviderModal
@@ -271,6 +306,12 @@ export function SettingsPage() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-3xl">
             <OptimizationSettings />
+          </div>
+        </div>
+      ) : activeTab === 'capability-test' ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-4xl">
+            <ModelCapabilityTest models={models} providers={providers} />
           </div>
         </div>
       ) : null}

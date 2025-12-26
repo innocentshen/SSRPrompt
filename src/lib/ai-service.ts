@@ -461,8 +461,6 @@ export async function streamAIModelWithMessages(
           max_tokens: params.max_tokens ?? 4096,
           stream: true,
           stream_options: { include_usage: true },
-          // OpenRouter: 启用思考功能 (对于支持的模型如 Gemini Flash Thinking)
-          reasoning: { enabled: true },
         };
 
         if (params.top_p !== undefined) requestBody.top_p = params.top_p;

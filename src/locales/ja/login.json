@@ -1,0 +1,13 @@
+{
+  "title": "SSRPrompt",
+  "enterPassword": "システムにアクセスするにはパスワードを入力してください",
+  "accessPassword": "アクセスパスワード",
+  "passwordPlaceholder": "パスワードを入力",
+  "passwordHint": "デフォルトパスワードは admin123 です。環境変数 VITE_APP_PASSWORD で変更できます",
+  "wrongPassword": "パスワードが間違っています。もう一度お試しください",
+  "verifying": "確認中...",
+  "enterSystem": "システムに入る",
+  "keepPasswordSafe": "アクセスパスワードは安全に保管してください",
+  "starOnGithub": "GitHubでスターを付ける",
+  "likeItStarIt": "気に入ったら、スターをお願いします"
+}

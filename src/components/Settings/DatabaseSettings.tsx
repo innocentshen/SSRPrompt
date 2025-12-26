@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Database, Server, CheckCircle2, XCircle, Loader2, RefreshCw, Cloud, TableProperties, ArrowUpCircle, AlertCircle } from 'lucide-react';
 import { Button, Input, useToast } from '../ui';
 import {
@@ -15,6 +16,7 @@ import { SupabaseUpgradeModal } from './SupabaseUpgradeModal';
 
 export function DatabaseSettings() {
   const { showToast } = useToast();
+  const { t } = useTranslation('settings');
   const [config, setConfig] = useState<DatabaseConfig>(getStoredConfig());
   const [testing, setTesting] = useState(false);
   const [initializing, setInitializing] = useState(false);
@@ -94,17 +96,17 @@ export function DatabaseSettings() {
 
       if (result.success) {
         setConnectionStatus('success');
-        showToast('success', '数据库连接测试成功');
+        showToast('success', t('dbConnectionTestSuccess'));
 
         // 连接成功后检查迁移状态
         await checkMigrationStatus(db);
       } else {
         setConnectionStatus('error');
-        showToast('error', `连接失败: ${result.error}`);
+        showToast('error', `${t('dbConnectionFailed')}: ${result.error}`);
       }
     } catch (e) {
       setConnectionStatus('error');
-      showToast('error', `连接测试异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('dbConnectionTestError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setTesting(false);
@@ -123,7 +125,7 @@ export function DatabaseSettings() {
 
   const handleUpgrade = async () => {
     if (config.provider !== 'mysql') {
-      showToast('info', 'Supabase 需要在 Dashboard 中手动执行迁移脚本');
+      showToast('info', t('supabaseManualMigration'));
       setShowInitModal(true);
       return;
     }
@@ -136,14 +138,14 @@ export function DatabaseSettings() {
       const result = await runPendingMigrations(db);
 
       if (result.success) {
-        showToast('success', `升级成功！执行了 ${result.executedMigrations.length} 个迁移，当前版本: v${result.currentVersion}`);
+        showToast('success', t('upgradeSuccess', { count: result.executedMigrations.length, version: result.currentVersion }));
         // 重新检查迁移状态
         await checkMigrationStatus(db);
       } else {
-        showToast('error', `升级失败: ${result.error}`);
+        showToast('error', `${t('upgradeFailed')}: ${result.error}`);
       }
     } catch (e) {
-      showToast('error', `升级异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('upgradeError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setUpgrading(false);
@@ -151,7 +153,7 @@ export function DatabaseSettings() {
 
   const handleInitializeTables = async () => {
     if (config.provider !== 'mysql') {
-      showToast('info', 'Supabase 表结构已通过迁移自动管理');
+      showToast('info', t('supabaseAutoMigration'));
       return;
     }
 
@@ -163,12 +165,12 @@ export function DatabaseSettings() {
       const result = await db.initialize();
 
       if (result.success) {
-        showToast('success', '表结构初始化成功');
+        showToast('success', t('initSuccess'));
       } else {
-        showToast('error', `初始化失败: ${result.error}`);
+        showToast('error', `${t('initFailed')}: ${result.error}`);
       }
     } catch (e) {
-      showToast('error', `初始化异常: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('initError')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
 
     setInitializing(false);
@@ -198,12 +200,12 @@ export function DatabaseSettings() {
     initializeDatabase(newConfig);
 
     if (hasChanged) {
-      showToast('success', '数据库配置已保存，页面即将刷新...');
+      showToast('success', t('dbConfigSavedRefresh'));
       setTimeout(() => {
         window.location.reload();
       }, 1000);
     } else {
-      showToast('success', '数据库配置已保存');
+      showToast('success', t('dbConfigSaved'));
     }
   };
 
@@ -217,16 +219,16 @@ export function DatabaseSettings() {
           <Database className="w-5 h-5 text-cyan-500 light:text-cyan-600" />
         </div>
         <div>
-          <h3 className="text-lg font-medium text-slate-200 light:text-slate-800">数据库配置</h3>
-          <p className="text-sm text-slate-500 light:text-slate-600">选择并配置数据存储方式</p>
+          <h3 className="text-lg font-medium text-slate-200 light:text-slate-800">{t('dbConfig')}</h3>
+          <p className="text-sm text-slate-500 light:text-slate-600">{t('dbConfigDesc')}</p>
         </div>
       </div>
 
       <div className="space-y-4">
-        <label className="block text-sm font-medium text-slate-300 light:text-slate-700">数据库类型</label>
+        <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('dbType')}</label>
         <div className="p-3 bg-amber-500/10 light:bg-amber-50 border border-amber-500/20 light:border-amber-200 rounded-lg">
           <p className="text-sm text-amber-400 light:text-amber-700">
-            不同数据库的数据是完全隔离的。切换数据库后，您将看到该数据库中的数据。
+            {t('dbIsolationWarning')}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -246,7 +248,7 @@ export function DatabaseSettings() {
                 <p className={`font-medium ${config.provider === 'supabase' ? 'text-cyan-400 light:text-cyan-600' : 'text-slate-300 light:text-slate-700'}`}>
                   Supabase
                 </p>
-                <p className="text-xs text-slate-500 light:text-slate-600">云端数据库</p>
+                <p className="text-xs text-slate-500 light:text-slate-600">{t('cloudDatabase')}</p>
               </div>
             </div>
           </button>
@@ -267,7 +269,7 @@ export function DatabaseSettings() {
                 <p className={`font-medium ${config.provider === 'mysql' ? 'text-cyan-400 light:text-cyan-600' : 'text-slate-300 light:text-slate-700'}`}>
                   MySQL
                 </p>
-                <p className="text-xs text-slate-500 light:text-slate-600">自建数据库</p>
+                <p className="text-xs text-slate-500 light:text-slate-600">{t('selfHostedDatabase')}</p>
               </div>
             </div>
           </button>
@@ -279,21 +281,21 @@ export function DatabaseSettings() {
           <div className="flex items-start gap-3 pb-4 border-b border-slate-700 light:border-slate-200">
             <Cloud className="w-5 h-5 text-cyan-500 light:text-cyan-600 mt-0.5 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-slate-200 light:text-slate-800">Supabase 连接配置</p>
+              <p className="text-sm font-medium text-slate-200 light:text-slate-800">{t('supabaseConnectionConfig')}</p>
               <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                在 <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">supabase.com</a> 创建项目后，从 Settings &gt; API 获取连接信息
+                {t('supabaseConnectionHint').split('supabase.com')[0]}<a href="https://supabase.com" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">supabase.com</a>{t('supabaseConnectionHint').split('supabase.com')[1]}
               </p>
             </div>
           </div>
 
           <Input
-            label="Project URL"
+            label={t('projectUrl')}
             value={supabaseUrl}
             onChange={(e) => setSupabaseUrl(e.target.value)}
             placeholder="https://xxxxx.supabase.co"
           />
           <Input
-            label="Anon Key (公开密钥)"
+            label={t('anonKey')}
             type="password"
             value={supabaseAnonKey}
             onChange={(e) => setSupabaseAnonKey(e.target.value)}
@@ -312,7 +314,7 @@ export function DatabaseSettings() {
                 ) : (
                   <RefreshCw className="w-4 h-4" />
                 )}
-                <span>测试连接</span>
+                <span>{t('testConnection')}</span>
               </Button>
 
               <Button
@@ -321,7 +323,7 @@ export function DatabaseSettings() {
                 disabled={!isSupabaseConfigValid}
               >
                 <TableProperties className="w-4 h-4" />
-                <span>初始化表结构</span>
+                <span>{t('initTableStructure')}</span>
               </Button>
 
               {/* 升级按钮 - 当有待执行的迁移时显示 */}
@@ -331,20 +333,20 @@ export function DatabaseSettings() {
                   onClick={() => setShowUpgradeModal(true)}
                 >
                   <ArrowUpCircle className="w-4 h-4" />
-                  <span>升级表结构</span>
+                  <span>{t('upgradeTableStructure')}</span>
                 </Button>
               )}
 
               {connectionStatus === 'success' && (
                 <span className="flex items-center gap-1 text-sm text-emerald-500 light:text-emerald-600">
                   <CheckCircle2 className="w-4 h-4" />
-                  连接成功
+                  {t('connectionSuccessText')}
                 </span>
               )}
               {connectionStatus === 'error' && (
                 <span className="flex items-center gap-1 text-sm text-rose-500 light:text-rose-600">
                   <XCircle className="w-4 h-4" />
-                  连接失败
+                  {t('connectionFailedText')}
                 </span>
               )}
             </div>
@@ -353,7 +355,7 @@ export function DatabaseSettings() {
             {checkingMigration && config.provider === 'supabase' && (
               <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>检查数据库版本...</span>
+                <span>{t('checkingDbVersion')}</span>
               </div>
             )}
 
@@ -371,16 +373,16 @@ export function DatabaseSettings() {
                   )}
                   <div className="text-sm">
                     <p className={migrationStatus.isUpToDate ? 'text-emerald-400 light:text-emerald-700' : 'text-amber-400 light:text-amber-700'}>
-                      当前版本: v{migrationStatus.currentVersion} / 最新版本: v{migrationStatus.latestVersion}
+                      {t('dbVersionCurrent')}: v{migrationStatus.currentVersion} / {t('dbVersionLatest')}: v{migrationStatus.latestVersion}
                     </p>
                     {!migrationStatus.isUpToDate && (
                       <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
-                        有 {migrationStatus.pendingMigrations.length} 个待执行的迁移。点击"升级表结构"按钮获取升级脚本。
+                        {t('pendingMigrationsHint', { count: migrationStatus.pendingMigrations.length })}
                       </p>
                     )}
                     {migrationStatus.isUpToDate && (
                       <p className="text-xs text-emerald-400/80 light:text-emerald-600 mt-1">
-                        数据库结构已是最新版本。
+                        {t('dbUpToDate')}
                       </p>
                     )}
                   </div>
@@ -389,7 +391,7 @@ export function DatabaseSettings() {
             )}
 
             <p className="text-xs text-slate-500 light:text-slate-600">
-              首次使用 Supabase 时，请点击"初始化表结构"按钮获取建表 SQL
+              {t('supabaseFirstTimeHint')}
             </p>
           </div>
         </div>
@@ -399,47 +401,47 @@ export function DatabaseSettings() {
         <div className="space-y-4 p-4 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
           <div className="p-3 bg-amber-500/10 light:bg-amber-50 border border-amber-500/20 light:border-amber-200 rounded-lg">
             <p className="text-sm font-medium text-amber-400 light:text-amber-700 mb-2">
-              使用自建 MySQL 数据库需要注意：
+              {t('mysqlWarningTitle')}
             </p>
             <ul className="text-xs text-amber-400/80 light:text-amber-600 space-y-1 list-disc list-inside">
-              <li>您需要自行部署后端服务来连接 MySQL 数据库</li>
-              <li>请参考项目 <code className="bg-amber-500/20 light:bg-amber-100 px-1 rounded">server/</code> 目录中的后端代码</li>
-              <li>如果您没有后端开发经验，建议使用 Supabase（无需后端）</li>
+              <li>{t('mysqlWarning1')}</li>
+              <li>{t('mysqlWarning2').split('server/')[0]}<code className="bg-amber-500/20 light:bg-amber-100 px-1 rounded">server/</code>{t('mysqlWarning2').split('server/')[1]}</li>
+              <li>{t('mysqlWarning3')}</li>
             </ul>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Input
-              label="主机地址"
+              label={t('host')}
               value={mysqlHost}
               onChange={(e) => setMysqlHost(e.target.value)}
-              placeholder="localhost 或 IP 地址"
+              placeholder="localhost"
             />
             <Input
-              label="端口"
+              label={t('port')}
               value={mysqlPort}
               onChange={(e) => setMysqlPort(e.target.value)}
               placeholder="3306"
             />
           </div>
           <Input
-            label="数据库名"
+            label={t('databaseName')}
             value={mysqlDatabase}
             onChange={(e) => setMysqlDatabase(e.target.value)}
-            placeholder="数据库名称"
+            placeholder=""
           />
           <div className="grid grid-cols-2 gap-4">
             <Input
-              label="用户名"
+              label={t('username')}
               value={mysqlUser}
               onChange={(e) => setMysqlUser(e.target.value)}
-              placeholder="数据库用户名"
+              placeholder=""
             />
             <Input
-              label="密码"
+              label={t('password')}
               type="password"
               value={mysqlPassword}
               onChange={(e) => setMysqlPassword(e.target.value)}
-              placeholder="数据库密码"
+              placeholder=""
             />
           </div>
 
@@ -455,7 +457,7 @@ export function DatabaseSettings() {
                 ) : (
                   <RefreshCw className="w-4 h-4" />
                 )}
-                <span>测试连接</span>
+                <span>{t('testConnection')}</span>
               </Button>
 
               <Button
@@ -468,7 +470,7 @@ export function DatabaseSettings() {
                 ) : (
                   <Database className="w-4 h-4" />
                 )}
-                <span>初始化表结构</span>
+                <span>{t('initTableStructure')}</span>
               </Button>
 
               {/* 升级按钮 - 当有待执行的迁移时显示 */}
@@ -483,20 +485,20 @@ export function DatabaseSettings() {
                   ) : (
                     <ArrowUpCircle className="w-4 h-4" />
                   )}
-                  <span>升级表结构</span>
+                  <span>{t('upgradeTableStructure')}</span>
                 </Button>
               )}
 
               {connectionStatus === 'success' && (
                 <span className="flex items-center gap-1 text-sm text-emerald-500 light:text-emerald-600">
                   <CheckCircle2 className="w-4 h-4" />
-                  连接成功
+                  {t('connectionSuccessText')}
                 </span>
               )}
               {connectionStatus === 'error' && (
                 <span className="flex items-center gap-1 text-sm text-rose-500 light:text-rose-600">
                   <XCircle className="w-4 h-4" />
-                  连接失败
+                  {t('connectionFailedText')}
                 </span>
               )}
             </div>
@@ -505,7 +507,7 @@ export function DatabaseSettings() {
             {checkingMigration && (
               <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>检查数据库版本...</span>
+                <span>{t('checkingDbVersion')}</span>
               </div>
             )}
 
@@ -523,16 +525,16 @@ export function DatabaseSettings() {
                   )}
                   <div className="text-sm">
                     <p className={migrationStatus.isUpToDate ? 'text-emerald-400 light:text-emerald-700' : 'text-amber-400 light:text-amber-700'}>
-                      当前版本: v{migrationStatus.currentVersion} / 最新版本: v{migrationStatus.latestVersion}
+                      {t('dbVersionCurrent')}: v{migrationStatus.currentVersion} / {t('dbVersionLatest')}: v{migrationStatus.latestVersion}
                     </p>
                     {!migrationStatus.isUpToDate && (
                       <p className="text-xs text-amber-400/80 light:text-amber-600 mt-1">
-                        有 {migrationStatus.pendingMigrations.length} 个待执行的迁移。点击"升级表结构"按钮进行升级。
+                        {t('mysqlPendingMigrationsHint', { count: migrationStatus.pendingMigrations.length })}
                       </p>
                     )}
                     {migrationStatus.isUpToDate && (
                       <p className="text-xs text-emerald-400/80 light:text-emerald-600 mt-1">
-                        数据库结构已是最新版本。
+                        {t('dbUpToDate')}
                       </p>
                     )}
                   </div>
@@ -541,7 +543,7 @@ export function DatabaseSettings() {
             )}
 
             <p className="text-xs text-slate-500 light:text-slate-600">
-              首次使用 MySQL 时需要初始化表结构。如果表已存在,此操作不会影响现有数据。
+              {t('mysqlFirstTimeHint')}
             </p>
           </div>
         </div>
@@ -549,7 +551,7 @@ export function DatabaseSettings() {
 
       <div className="flex justify-end pt-4 border-t border-slate-700 light:border-slate-200">
         <Button onClick={handleSave}>
-          保存配置
+          {t('saveConfiguration')}
         </Button>
       </div>
 

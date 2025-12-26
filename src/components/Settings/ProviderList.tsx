@@ -1,4 +1,5 @@
 import { Plus, Cloud, Bot, Sparkles, Cpu, Server } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Provider } from '../../types';
 
 interface ProviderListProps {
@@ -25,10 +26,11 @@ const providerColors: Record<string, string> = {
 };
 
 export function ProviderList({ providers, selectedId, onSelect, onAdd }: ProviderListProps) {
+  const { t } = useTranslation('settings');
   return (
     <div className="w-64 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col">
       <div className="p-4 border-b border-slate-700 light:border-slate-200">
-        <h2 className="text-sm font-semibold text-slate-300 light:text-slate-700">模型服务商</h2>
+        <h2 className="text-sm font-semibold text-slate-300 light:text-slate-700">{t('providerList')}</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -72,7 +74,7 @@ export function ProviderList({ providers, selectedId, onSelect, onAdd }: Provide
           className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 light:bg-white hover:bg-slate-700 light:hover:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-300 light:text-slate-700 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          <span>添加服务商</span>
+          <span>{t('addProvider')}</span>
         </button>
       </div>
     </div>

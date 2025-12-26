@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Eye,
   Clock,
@@ -57,6 +58,7 @@ function calculateStats(traces: Trace[]): TraceStats {
 }
 
 export function PromptObserver({ promptId, models }: PromptObserverProps) {
+  const { t } = useTranslation('prompts');
   const [traces, setTraces] = useState<Trace[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [loading, setLoading] = useState(true);
@@ -139,7 +141,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleString('zh-CN', {
+    return date.toLocaleString(undefined, {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -156,7 +158,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
           <div className="flex items-center gap-2">
             <Eye className="w-5 h-5 text-cyan-400 light:text-cyan-600" />
             <h3 className="text-lg font-medium text-slate-200 light:text-slate-800">
-              调用记录
+              {t('callRecords')}
             </h3>
           </div>
           <div className="flex items-center gap-3">
@@ -164,9 +166,9 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
               options={[
-                { value: 'all', label: '全部状态' },
-                { value: 'success', label: '成功' },
-                { value: 'error', label: '失败' },
+                { value: 'all', label: t('allStatus') },
+                { value: 'success', label: t('success') },
+                { value: 'error', label: t('error') },
               ]}
             />
             <Button variant="secondary" size="sm" onClick={loadTraces} disabled={loading}>
@@ -180,33 +182,33 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
             <div className="p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-1">
                 <Activity className="w-3.5 h-3.5" />
-                <span className="text-xs">调用次数</span>
+                <span className="text-xs">{t('callCount')}</span>
               </div>
               <p className="text-xl font-bold text-white light:text-slate-900">{stats.totalCalls}</p>
             </div>
             <div className="p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-1">
                 <Coins className="w-3.5 h-3.5" />
-                <span className="text-xs">Token 消耗</span>
+                <span className="text-xs">{t('tokenConsumption')}</span>
               </div>
               <p className="text-xl font-bold text-white light:text-slate-900">
                 {(stats.totalTokensIn + stats.totalTokensOut).toLocaleString()}
               </p>
               <p className="text-xs text-slate-500 mt-0.5">
-                入 {stats.totalTokensIn.toLocaleString()} / 出 {stats.totalTokensOut.toLocaleString()}
+                {t('in')} {stats.totalTokensIn.toLocaleString()} / {t('out')} {stats.totalTokensOut.toLocaleString()}
               </p>
             </div>
             <div className="p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-1">
                 <Clock className="w-3.5 h-3.5" />
-                <span className="text-xs">平均延迟</span>
+                <span className="text-xs">{t('avgLatency')}</span>
               </div>
               <p className="text-xl font-bold text-white light:text-slate-900">{stats.avgLatencyMs}ms</p>
             </div>
             <div className="p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-1">
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span className="text-xs">成功率</span>
+                <span className="text-xs">{t('successRate')}</span>
               </div>
               <p className={`text-xl font-bold ${stats.successRate >= 90 ? 'text-green-400' : stats.successRate >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
                 {stats.successRate}%
@@ -226,10 +228,10 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
             <Eye className="w-12 h-12 text-slate-600 light:text-slate-400 mb-4" />
             <h4 className="text-lg font-medium text-slate-300 light:text-slate-700 mb-2">
-              暂无调用记录
+              {t('noCallRecords')}
             </h4>
             <p className="text-sm text-slate-500 light:text-slate-500 max-w-md">
-              运行此 Prompt 后，调用记录将在此显示。
+              {t('runPromptToShowRecords')}
             </p>
           </div>
         ) : (
@@ -277,32 +279,32 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
       <Modal
         isOpen={!!selectedTrace}
         onClose={() => setSelectedTrace(null)}
-        title="调用详情"
+        title={t('callDetails')}
         size="lg"
       >
         {selectedTrace && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">状态</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('status')}</p>
                 <Badge variant={selectedTrace.status === 'success' ? 'success' : 'error'}>
-                  {selectedTrace.status === 'success' ? '成功' : '失败'}
+                  {selectedTrace.status === 'success' ? t('success') : t('error')}
                 </Badge>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">延迟</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('latency')}</p>
                 <p className="text-sm font-medium text-slate-200 light:text-slate-800">
                   {selectedTrace.latency_ms}ms
                 </p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输入 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('inputTokens')}</p>
                 <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">
                   {selectedTrace.tokens_input}
                 </p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输出 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('outputTokens')}</p>
                 <p className="text-sm font-medium text-teal-400 light:text-teal-600">
                   {selectedTrace.tokens_output}
                 </p>
@@ -310,7 +312,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
             </div>
 
             <div>
-              <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">输入</h4>
+              <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">{t('input')}</h4>
               <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
                 <pre className="text-sm text-slate-300 light:text-slate-700 whitespace-pre-wrap font-mono">
                   {selectedTrace.input}
@@ -319,10 +321,10 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
             </div>
 
             <div>
-              <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">输出</h4>
+              <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">{t('output')}</h4>
               <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
                 <pre className="text-sm text-slate-300 light:text-slate-700 whitespace-pre-wrap font-mono">
-                  {selectedTrace.output || '(空)'}
+                  {selectedTrace.output || t('empty')}
                 </pre>
               </div>
             </div>
@@ -330,7 +332,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
             {selectedTrace.error_message && (
               <div>
                 <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">
-                  错误信息
+                  {t('errorMessage')}
                 </h4>
                 <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
                   <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
@@ -346,14 +348,14 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
                 <div className="flex items-center gap-2 mb-2">
                   <Paperclip className="w-4 h-4 text-slate-400" />
                   <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
-                    附件 ({getAttachmentCount(selectedTrace)})
+                    {t('attachments')} ({getAttachmentCount(selectedTrace)})
                   </h4>
                 </div>
                 <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
                   {attachmentsLoading ? (
                     <div className="flex items-center gap-2 text-slate-400 light:text-slate-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="text-sm">正在加载附件...</span>
+                      <span className="text-sm">{t('loadingAttachments')}</span>
                     </div>
                   ) : selectedTrace.attachments && selectedTrace.attachments.length > 0 ? (
                     <AttachmentList
@@ -364,7 +366,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
                     />
                   ) : (
                     <div className="flex items-center gap-2 text-slate-500 light:text-slate-400">
-                      <span className="text-sm">附件加载失败</span>
+                      <span className="text-sm">{t('attachmentLoadFailed')}</span>
                     </div>
                   )}
                 </div>
@@ -373,7 +375,7 @@ export function PromptObserver({ promptId, models }: PromptObserverProps) {
 
             <div className="pt-4 border-t border-slate-700 light:border-slate-200">
               <p className="text-xs text-slate-500 light:text-slate-600">
-                创建时间: {new Date(selectedTrace.created_at).toLocaleString('zh-CN')}
+                {t('createdAt')}: {new Date(selectedTrace.created_at).toLocaleString()}
               </p>
             </div>
           </div>

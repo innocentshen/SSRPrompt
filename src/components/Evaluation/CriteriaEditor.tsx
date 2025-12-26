@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Plus, Trash2, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { Button, Toggle } from '../ui';
 import type { EvaluationCriterion } from '../../types';
@@ -25,6 +26,7 @@ function EditableCriterion({
   onUpdate,
   onDelete,
 }: EditableCriterionProps) {
+  const { t } = useTranslation('evaluation');
   const [localName, setLocalName] = useState(criterion.name);
   const [localDescription, setLocalDescription] = useState(criterion.description);
   const [localPrompt, setLocalPrompt] = useState(criterion.prompt);
@@ -97,7 +99,7 @@ function EditableCriterion({
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 light:text-slate-600">权重</span>
+            <span className="text-xs text-slate-500 light:text-slate-600">{t('weight')}</span>
             <input
               type="number"
               min="0"
@@ -122,7 +124,7 @@ function EditableCriterion({
       {isExpanded && (
         <div className="p-4 pt-0 space-y-3 border-t border-slate-700/50 light:border-slate-200">
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">标准名称</label>
+            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('criterionName')}</label>
             <input
               type="text"
               value={localName}
@@ -132,22 +134,22 @@ function EditableCriterion({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">描述</label>
+            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('criterionDescription')}</label>
             <input
               type="text"
               value={localDescription}
               onChange={(e) => setLocalDescription(e.target.value)}
               onBlur={() => handleBlur('description')}
-              placeholder="简要描述这个评价标准"
+              placeholder={t('criterionDescPlaceholder')}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              评价提示词
+              {t('evaluationPrompt')}
             </label>
             <p className="text-xs text-slate-500 light:text-slate-600 mb-2">
-              可用变量: {'{{input}}'} (输入), {'{{output}}'} (输出), {'{{expected}}'} (期望输出)
+              {t('promptVariablesHint')}
             </p>
             <textarea
               value={localPrompt}
@@ -165,69 +167,24 @@ function EditableCriterion({
 
 const DEFAULT_CRITERIA_TEMPLATES = [
   {
-    name: '准确性',
-    description: '评估输出内容的准确性和正确性',
-    prompt: `请评估以下AI输出的准确性。
-
-输入: {{input}}
-{{#expected}}期望输出: {{expected}}{{/expected}}
-实际输出: {{output}}
-
-请从以下角度评估：
-1. 信息是否准确无误
-2. 是否存在事实性错误
-3. 逻辑是否正确
-
-请给出1-10分的评分，并简要说明理由。
-格式: {"score": 数字, "reason": "理由"}`,
+    nameKey: 'accuracy',
+    descKey: 'accuracyDesc',
+    promptKey: 'criteriaPromptAccuracy',
   },
   {
-    name: '相关性',
-    description: '评估输出是否切题和相关',
-    prompt: `请评估以下AI输出的相关性。
-
-输入: {{input}}
-实际输出: {{output}}
-
-请从以下角度评估：
-1. 输出是否回答了问题
-2. 内容是否与主题相关
-3. 是否存在离题内容
-
-请给出1-10分的评分，并简要说明理由。
-格式: {"score": 数字, "reason": "理由"}`,
+    nameKey: 'relevance',
+    descKey: 'relevanceDesc',
+    promptKey: 'criteriaPromptRelevance',
   },
   {
-    name: '清晰度',
-    description: '评估输出的清晰度和可读性',
-    prompt: `请评估以下AI输出的清晰度。
-
-实际输出: {{output}}
-
-请从以下角度评估：
-1. 表达是否清晰易懂
-2. 结构是否合理
-3. 语言是否流畅
-
-请给出1-10分的评分，并简要说明理由。
-格式: {"score": 数字, "reason": "理由"}`,
+    nameKey: 'clarity',
+    descKey: 'clarityDesc',
+    promptKey: 'criteriaPromptClarity',
   },
   {
-    name: '完整性',
-    description: '评估输出的完整性',
-    prompt: `请评估以下AI输出的完整性。
-
-输入: {{input}}
-{{#expected}}期望输出: {{expected}}{{/expected}}
-实际输出: {{output}}
-
-请从以下角度评估：
-1. 回答是否完整
-2. 是否遗漏重要信息
-3. 深度是否足够
-
-请给出1-10分的评分，并简要说明理由。
-格式: {"score": 数字, "reason": "理由"}`,
+    nameKey: 'completeness',
+    descKey: 'completenessDesc',
+    promptKey: 'criteriaPromptCompleteness',
   },
 ];
 
@@ -237,14 +194,15 @@ export function CriteriaEditor({
   onUpdate,
   onDelete,
 }: CriteriaEditorProps) {
+  const { t } = useTranslation('evaluation');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
 
   const handleAddFromTemplate = (template: typeof DEFAULT_CRITERIA_TEMPLATES[0]) => {
     onAdd({
-      name: template.name,
-      description: template.description,
-      prompt: template.prompt,
+      name: t(template.nameKey),
+      description: t(template.descKey),
+      prompt: t(template.promptKey),
       weight: 1.0,
       enabled: true,
     });
@@ -253,16 +211,9 @@ export function CriteriaEditor({
 
   const handleAddCustom = () => {
     onAdd({
-      name: '自定义标准',
+      name: t('customCriterionName'),
       description: '',
-      prompt: `请评估以下AI输出。
-
-输入: {{input}}
-{{#expected}}期望输出: {{expected}}{{/expected}}
-实际输出: {{output}}
-
-请给出1-10分的评分，并简要说明理由。
-格式: {"score": 数字, "reason": "理由"}`,
+      prompt: t('criteriaPromptCustom'),
       weight: 1.0,
       enabled: true,
     });
@@ -273,28 +224,28 @@ export function CriteriaEditor({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-slate-300 light:text-slate-700 flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-amber-400 light:text-amber-500" />
-          AI 评价标准
+          {t('aiCriteria')}
         </h3>
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => setShowTemplates(!showTemplates)}>
             <Plus className="w-4 h-4" />
-            <span>添加标准</span>
+            <span>{t('addCriterion')}</span>
           </Button>
         </div>
       </div>
 
       {showTemplates && (
         <div className="p-4 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg space-y-2">
-          <p className="text-xs text-slate-500 light:text-slate-600 mb-3">选择预设模板或创建自定义标准</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mb-3">{t('selectTemplateOrCustom')}</p>
           <div className="grid grid-cols-2 gap-2">
             {DEFAULT_CRITERIA_TEMPLATES.map((template) => (
               <button
-                key={template.name}
+                key={template.nameKey}
                 onClick={() => handleAddFromTemplate(template)}
                 className="p-3 text-left bg-slate-700/50 light:bg-white hover:bg-slate-700 light:hover:bg-slate-100 border border-slate-600 light:border-slate-200 rounded-lg transition-colors"
               >
-                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{template.name}</p>
-                <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{template.description}</p>
+                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{t(template.nameKey)}</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t(template.descKey)}</p>
               </button>
             ))}
           </div>
@@ -302,15 +253,15 @@ export function CriteriaEditor({
             onClick={handleAddCustom}
             className="w-full p-3 text-left bg-slate-700/30 light:bg-slate-100 hover:bg-slate-700/50 light:hover:bg-slate-200 border border-dashed border-slate-600 light:border-slate-300 rounded-lg transition-colors mt-2"
           >
-            <p className="text-sm font-medium text-slate-400 light:text-slate-600">+ 自定义标准</p>
-            <p className="text-xs text-slate-500 light:text-slate-500 mt-1">创建自己的评价提示词</p>
+            <p className="text-sm font-medium text-slate-400 light:text-slate-600">{t('customCriterion')}</p>
+            <p className="text-xs text-slate-500 light:text-slate-500 mt-1">{t('createOwnPrompt')}</p>
           </button>
         </div>
       )}
 
       {criteria.length === 0 ? (
         <div className="text-center py-8 text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
-          暂未配置评价标准，点击上方按钮添加
+          {t('noCriteriaConfigured')}
         </div>
       ) : (
         <div className="space-y-2">
@@ -334,11 +285,11 @@ export function CriteriaEditor({
               <Sparkles className="w-4 h-4 text-cyan-400 light:text-cyan-600" />
             </div>
             <div className="text-xs text-slate-400 light:text-slate-600 space-y-1">
-              <p className="font-medium text-slate-300 light:text-slate-700">权重说明：</p>
+              <p className="font-medium text-slate-300 light:text-slate-700">{t('weightExplanation')}</p>
               <ul className="space-y-0.5 pl-3">
-                <li>权重用于计算加权平均分，权重越高影响越大</li>
-                <li>建议将重要标准设置为 1.5-2.0，次要标准设置为 0.5-1.0</li>
-                <li>可以通过右侧开关临时禁用某个标准，被禁用的标准不参与评测</li>
+                <li>{t('weightTip1')}</li>
+                <li>{t('weightTip2')}</li>
+                <li>{t('weightTip3')}</li>
               </ul>
             </div>
           </div>

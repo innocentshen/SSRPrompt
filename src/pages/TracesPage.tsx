@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Eye,
   Clock,
@@ -37,6 +38,8 @@ interface PromptStats {
 
 export function TracesPage() {
   const { showToast } = useToast();
+  const { t } = useTranslation('traces');
+  const { t: tCommon } = useTranslation('common');
   const [traces, setTraces] = useState<Trace[]>([]);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -75,14 +78,14 @@ export function TracesPage() {
 
       if (tracesRes.error) {
         console.error('Failed to load traces:', tracesRes.error);
-        showToast('error', '加载历史记录失败: ' + tracesRes.error.message);
+        showToast('error', t('loadFailed') + ': ' + tracesRes.error.message);
       }
       if (tracesRes.data) setTraces(tracesRes.data);
       if (promptsRes.data) setPrompts(promptsRes.data);
       if (modelsRes.data) setModels(modelsRes.data);
     } catch (e) {
       console.error('Failed to load data:', e);
-      showToast('error', '请先在设置中配置数据库连接');
+      showToast('error', t('configureDbFirst'));
     }
     setLoading(false);
   };
@@ -102,12 +105,12 @@ export function TracesPage() {
         await query.eq('prompt_id', selectedPromptId);
       }
 
-      showToast('success', '历史记录已删除');
+      showToast('success', t('historyDeleted'));
       setShowDeleteConfirm(false);
       setSelectedPromptId(null);
       await loadData();
     } catch {
-      showToast('error', '删除失败');
+      showToast('error', t('deleteFailed'));
     }
     setDeleting(false);
   };
@@ -117,20 +120,20 @@ export function TracesPage() {
     try {
       const { error } = await getDatabase().from('traces').delete().eq('id', traceId);
       if (error) {
-        showToast('error', '删除失败');
+        showToast('error', t('deleteFailed'));
         return;
       }
       setTraces((prev) => prev.filter((t) => t.id !== traceId));
       if (selectedTrace?.id === traceId) {
         setSelectedTrace(null);
       }
-      showToast('success', '记录已删除');
+      showToast('success', t('recordDeleted'));
     } catch {
-      showToast('error', '删除失败');
+      showToast('error', t('deleteFailed'));
     }
   };
 
-  const getPromptName = (id: string | null) => prompts.find((p) => p.id === id)?.name || '未关联';
+  const getPromptName = (id: string | null) => prompts.find((p) => p.id === id)?.name || t('notLinked');
   const getModelName = (id: string | null) => models.find((m) => m.id === id)?.name || '-';
 
   const handleCopy = async (text: string, field: 'input' | 'output') => {
@@ -139,7 +142,7 @@ export function TracesPage() {
       setCopiedField(field);
       setTimeout(() => setCopiedField(null), 2000);
     } catch {
-      showToast('error', '复制失败');
+      showToast('error', t('copyFailed'));
     }
   };
 
@@ -194,7 +197,7 @@ export function TracesPage() {
     // Initialize with "all" option
     statsMap.set('__all__', {
       promptId: '__all__',
-      promptName: '全部',
+      promptName: t('all'),
       count: traces.length,
       totalTokens: traces.reduce((acc, t) => acc + t.tokens_input + t.tokens_output, 0),
       avgLatency: traces.length
@@ -291,13 +294,13 @@ export function TracesPage() {
       {/* Left sidebar - Prompt list */}
       <div className="w-64 flex-shrink-0 border-r border-slate-700 light:border-slate-200 flex flex-col overflow-hidden">
         <div className="p-4 border-b border-slate-700 light:border-slate-200">
-          <h3 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">按 Prompt 筛选</h3>
+          <h3 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t("filterByPrompt")}</h3>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索 Prompt..."
+              placeholder={t("searchPlaceholder")}
               className="pl-9"
             />
           </div>
@@ -338,7 +341,7 @@ export function TracesPage() {
                   <span>{stats.totalTokens.toLocaleString()} tokens</span>
                   <span>{stats.avgLatency}ms</span>
                   {stats.errorCount > 0 && (
-                    <span className="text-rose-400">{stats.errorCount} 错误</span>
+                    <span className="text-rose-400">{stats.errorCount} {t('errors')}</span>
                   )}
                 </div>
               )}
@@ -346,7 +349,7 @@ export function TracesPage() {
           ))}
           {filteredPromptStats.length === 1 && filteredPromptStats[0].promptId === '__all__' && (
             <div className="p-4 text-center text-sm text-slate-500">
-              暂无历史记录
+              {t('noRecords')}
             </div>
           )}
         </div>
@@ -357,7 +360,7 @@ export function TracesPage() {
         <div className="flex-shrink-0 p-6 border-b border-slate-700 light:border-slate-200">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-xl font-semibold text-white light:text-slate-900">历史记录</h2>
+              <h2 className="text-xl font-semibold text-white light:text-slate-900">{t("title")}</h2>
               {selectedPromptId && selectedPromptId !== '__all__' && (
                 <p className="text-sm text-slate-400 light:text-slate-600 mt-1">
                   {currentStats.promptName}
@@ -372,21 +375,21 @@ export function TracesPage() {
                   onClick={() => setShowDeleteConfirm(true)}
                 >
                   <Trash2 className="w-4 h-4" />
-                  <span>删除全部</span>
+                  <span>{tCommon("delete")}</span>
                 </Button>
               )}
               <Select
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
                 options={[
-                  { value: 'all', label: '全部状态' },
-                  { value: 'success', label: '成功' },
-                  { value: 'error', label: '失败' },
+                  { value: 'all', label: t('allStatus') },
+                  { value: 'success', label: t('success') },
+                  { value: 'error', label: t('failed') },
                 ]}
               />
               <Button variant="secondary" onClick={loadData} loading={loading}>
                 <RefreshCw className="w-4 h-4" />
-                <span>刷新</span>
+                <span>{tCommon("refresh")}</span>
               </Button>
             </div>
           </div>
@@ -395,28 +398,28 @@ export function TracesPage() {
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
                 <Activity className="w-4 h-4" />
-                <span className="text-xs">请求数</span>
+                <span className="text-xs">{t("allRecords")}</span>
               </div>
               <p className="text-2xl font-bold text-white light:text-slate-900">{currentStats.count}</p>
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
                 <Coins className="w-4 h-4" />
-                <span className="text-xs">Token 消耗</span>
+                <span className="text-xs">{t("tokens")}</span>
               </div>
               <p className="text-2xl font-bold text-white light:text-slate-900">{currentStats.totalTokens.toLocaleString()}</p>
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
                 <Clock className="w-4 h-4" />
-                <span className="text-xs">平均延迟</span>
+                <span className="text-xs">{t("latency")}</span>
               </div>
               <p className="text-2xl font-bold text-white light:text-slate-900">{currentStats.avgLatency}ms</p>
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
                 <AlertCircle className="w-4 h-4" />
-                <span className="text-xs">错误率</span>
+                <span className="text-xs">{tCommon("error")}</span>
               </div>
               <p className="text-2xl font-bold text-white light:text-slate-900">{errorRate}%</p>
             </div>
@@ -428,21 +431,13 @@ export function TracesPage() {
             <table className="w-full">
               <thead className="sticky top-0 bg-slate-900 light:bg-slate-100 border-b border-slate-700 light:border-slate-200">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
-                    状态
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
-                    时间
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
-                    模型
-                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("status")}</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("timestamp")}</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("model")}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
                     Tokens
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
-                    延迟
-                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("latency")}</th>
                   <th className="px-6 py-3"></th>
                 </tr>
               </thead>
@@ -479,7 +474,7 @@ export function TracesPage() {
                         <button
                           onClick={(e) => handleDeleteSingleTrace(trace.id, e)}
                           className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-                          title="删除此记录"
+                          title={t("deleteThisRecord")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -492,8 +487,8 @@ export function TracesPage() {
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-slate-500 light:text-slate-600">
                       <Eye className="w-12 h-12 mx-auto mb-3 text-slate-700 light:text-slate-400" />
-                      <p>暂无历史记录</p>
-                      <p className="text-xs mt-1">运行 Prompt 测试后将在此显示记录</p>
+                      <p>{t("noRecords")}</p>
+                      <p className="text-xs mt-1"></p>
                     </td>
                   </tr>
                 )}
@@ -506,28 +501,28 @@ export function TracesPage() {
       <Modal
         isOpen={!!selectedTrace}
         onClose={() => setSelectedTrace(null)}
-        title="Trace 详情"
+        title={t("traceDetail")}
         size="lg"
       >
         {selectedTrace && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">状态</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("status")}</p>
                 <Badge variant={selectedTrace.status === 'success' ? 'success' : 'error'}>
-                  {selectedTrace.status === 'success' ? '成功' : '失败'}
+                  {selectedTrace.status === 'success' ? t('success') : t('failed')}
                 </Badge>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">延迟</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("latency")}</p>
                 <p className="text-sm font-medium text-slate-200 light:text-slate-800">{selectedTrace.latency_ms}ms</p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输入 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("input")} Tokens</p>
                 <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{selectedTrace.tokens_input}</p>
               </div>
               <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">输出 Tokens</p>
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("output")} Tokens</p>
                 <p className="text-sm font-medium text-teal-400 light:text-teal-600">{selectedTrace.tokens_output}</p>
               </div>
             </div>
@@ -541,19 +536,19 @@ export function TracesPage() {
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">输入</h4>
+                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t("input")}</h4>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleExpand(selectedTrace.input, 'input')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="放大查看"
+                    title={t("enlarge")}
                   >
                     <Maximize2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleCopy(selectedTrace.input, 'input')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="复制"
+                    title={t("copy")}
                   >
                     {copiedField === 'input' ? (
                       <Check className="w-4 h-4 text-emerald-400" />
@@ -570,19 +565,19 @@ export function TracesPage() {
 
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">输出</h4>
+                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t("output")}</h4>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleExpand(selectedTrace.output || '', 'output')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="放大查看"
+                    title={t("enlarge")}
                   >
                     <Maximize2 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleCopy(selectedTrace.output || '', 'output')}
                     className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title="复制"
+                    title={t("copy")}
                   >
                     {copiedField === 'output' ? (
                       <Check className="w-4 h-4 text-emerald-400" />
@@ -596,7 +591,7 @@ export function TracesPage() {
                 {selectedTrace.output ? (
                   <MarkdownRenderer content={selectedTrace.output} />
                 ) : (
-                  <span className="text-sm text-slate-500 light:text-slate-400">(空)</span>
+                  <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
                 )}
               </div>
             </div>
@@ -606,14 +601,14 @@ export function TracesPage() {
                 <div className="flex items-center gap-2 mb-2">
                   <Paperclip className="w-4 h-4 text-slate-400" />
                   <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
-                    附件 ({getAttachmentCount(selectedTrace)})
+                    {t('attachments')} ({getAttachmentCount(selectedTrace)})
                   </h4>
                 </div>
                 <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
                   {attachmentsLoading ? (
                     <div className="flex items-center gap-2 text-slate-400 light:text-slate-500">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="text-sm">正在加载附件...</span>
+                      <span className="text-sm">{t('loadingAttachments')}</span>
                     </div>
                   ) : selectedTrace.attachments && selectedTrace.attachments.length > 0 ? (
                     <AttachmentList
@@ -624,7 +619,7 @@ export function TracesPage() {
                     />
                   ) : (
                     <div className="flex items-center gap-2 text-slate-500 light:text-slate-400">
-                      <span className="text-sm">附件加载失败</span>
+                      <span className="text-sm">{t('attachmentLoadFailed')}</span>
                     </div>
                   )}
                 </div>
@@ -633,7 +628,7 @@ export function TracesPage() {
 
             {selectedTrace.error_message && (
               <div>
-                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">错误信息</h4>
+                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{tCommon("error")}</h4>
                 <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
                   <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
                     {selectedTrace.error_message}
@@ -644,7 +639,7 @@ export function TracesPage() {
 
             <div className="pt-4 border-t border-slate-700 light:border-slate-200">
               <p className="text-xs text-slate-500 light:text-slate-600">
-                创建时间: {new Date(selectedTrace.created_at).toLocaleString('zh-CN')}
+                {t('createdAt')}: {new Date(selectedTrace.created_at).toLocaleString()}
               </p>
             </div>
           </div>
@@ -655,23 +650,23 @@ export function TracesPage() {
       <Modal
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
-        title="确认删除"
+        title={t("confirmDelete")}
         size="sm"
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-300 light:text-slate-700">
-            确定要删除 <span className="font-medium text-white light:text-slate-900">{currentStats.promptName}</span> 的所有历史记录吗？
+            {t('confirmDeletePromptHistory', { name: currentStats.promptName })}
           </p>
           <p className="text-sm text-slate-500 light:text-slate-600">
-            共 {currentStats.count} 条记录将被永久删除，此操作不可恢复。
+            {t('recordsWillBeDeleted', { count: currentStats.count })}
           </p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>
-              取消
+              {tCommon('cancel')}
             </Button>
             <Button variant="danger" onClick={handleDeleteTraces} loading={deleting}>
               <Trash2 className="w-4 h-4" />
-              确认删除
+              {t('confirmDeleteBtn')}
             </Button>
           </div>
         </div>
@@ -684,7 +679,7 @@ export function TracesPage() {
           setExpandedField(null);
           setExpandedContent('');
         }}
-        title={expandedField === 'input' ? '输入内容' : '输出内容'}
+        title={expandedField === 'input' ? t('inputContent') : t('outputContent')}
         size="xl"
       >
         <div className="space-y-4">
@@ -696,12 +691,12 @@ export function TracesPage() {
               {copiedField === expandedField ? (
                 <>
                   <Check className="w-4 h-4 text-emerald-400" />
-                  <span>已复制</span>
+                  <span>{tCommon("copied")}</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-4 h-4" />
-                  <span>复制</span>
+                  <span>{t("copy")}</span>
                 </>
               )}
             </button>
@@ -710,7 +705,7 @@ export function TracesPage() {
             {expandedContent ? (
               <MarkdownRenderer content={expandedContent} />
             ) : (
-              <span className="text-sm text-slate-500 light:text-slate-400">(空)</span>
+              <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
             )}
           </div>
         </div>

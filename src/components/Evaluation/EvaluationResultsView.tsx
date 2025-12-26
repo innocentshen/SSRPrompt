@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File } from 'lucide-react';
 import { Badge, MarkdownRenderer, Modal } from '../ui';
+import { AttachmentModal } from '../Prompt/AttachmentModal';
 import type { TestCase, TestCaseResult, EvaluationCriterion, FileAttachmentData } from '../../types';
-import { isImageFile, isPdfFile, isTextFile, readTextContent, getSyntaxLanguage, getFileIconType } from '../../lib/file-utils';
+import { getFileIconType } from '../../lib/file-utils';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
@@ -19,27 +21,35 @@ export function EvaluationResultsView({
   overallScores,
   summary,
 }: EvaluationResultsViewProps) {
+  const { t } = useTranslation('evaluation');
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachmentData | null>(null);
 
+  // 使用 Map 索引优化查询性能，避免 O(n²) 的查找问题
+  const testCaseMap = useMemo(() => {
+    return new Map(testCases.map(tc => [tc.id, tc]));
+  }, [testCases]);
+
+  const getTestCase = (testCaseId: string) => testCaseMap.get(testCaseId);
+
   const getTestCaseName = (testCaseId: string, index: number) => {
-    const testCase = testCases.find((tc) => tc.id === testCaseId);
-    return testCase?.name || `测试用例 #${index + 1}`;
+    const testCase = getTestCase(testCaseId);
+    return testCase?.name || t('testCaseNum', { num: index + 1 });
   };
 
   const getExpectedOutput = (testCaseId: string) => {
-    const testCase = testCases.find((tc) => tc.id === testCaseId);
+    const testCase = getTestCase(testCaseId);
     return testCase?.expected_output || null;
   };
 
   const getTestCaseNotes = (testCaseId: string) => {
-    const testCase = testCases.find((tc) => tc.id === testCaseId);
+    const testCase = getTestCase(testCaseId);
     return testCase?.notes || null;
   };
 
   const getTestCaseAttachments = (testCaseId: string) => {
-    const testCase = testCases.find((tc) => tc.id === testCaseId);
+    const testCase = getTestCase(testCaseId);
     return testCase?.attachments || [];
   };
 
@@ -57,45 +67,6 @@ export function EvaluationResultsView({
       default:
         return File;
     }
-  };
-
-  const renderAttachmentPreview = (attachment: FileAttachmentData) => {
-    if (isImageFile(attachment)) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <img
-            src={`data:${attachment.type};base64,${attachment.base64}`}
-            alt={attachment.name}
-            className="max-w-full max-h-[70vh] object-contain"
-          />
-        </div>
-      );
-    }
-    if (isPdfFile(attachment)) {
-      return (
-        <iframe
-          src={`data:application/pdf;base64,${attachment.base64}`}
-          className="w-full h-[70vh]"
-          title={attachment.name}
-        />
-      );
-    }
-    if (isTextFile(attachment)) {
-      const textContent = readTextContent(attachment.base64);
-      const language = getSyntaxLanguage(attachment);
-      return (
-        <div className="h-[70vh] overflow-auto">
-          <pre className="p-4 bg-slate-900 light:bg-slate-100 rounded-lg text-sm font-mono text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
-            <code className={`language-${language}`}>{textContent}</code>
-          </pre>
-        </div>
-      );
-    }
-    return (
-      <div className="flex items-center justify-center h-[200px] text-slate-500 light:text-slate-600">
-        无法预览此文件类型
-      </div>
-    );
   };
 
   const toggleOutputExpanded = (resultId: string) => {
@@ -121,39 +92,39 @@ export function EvaluationResultsView({
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <div className="p-4 bg-slate-800/50 light:bg-emerald-50 border border-slate-700 light:border-emerald-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-emerald-400 light:text-emerald-600">{passedCount}</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">通过</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('passed')}</p>
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-rose-50 border border-slate-700 light:border-rose-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-rose-400 light:text-rose-600">{totalCount - passedCount}</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">失败</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('failed')}</p>
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-cyan-50 border border-slate-700 light:border-cyan-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-cyan-400 light:text-cyan-600">{passRate.toFixed(0)}%</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">通过率</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('passRate')}</p>
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-teal-50 border border-slate-700 light:border-teal-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-teal-400 light:text-teal-600">
             {results.reduce((sum, r) => sum + r.tokens_input, 0).toLocaleString()}
           </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">输入 Token</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('inputTokens')}</p>
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-sky-50 border border-slate-700 light:border-sky-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-sky-400 light:text-sky-600">
             {results.reduce((sum, r) => sum + r.tokens_output, 0).toLocaleString()}
           </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">输出 Token</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('outputTokens')}</p>
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-amber-50 border border-slate-700 light:border-amber-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-amber-400 light:text-amber-600">
             {(results.reduce((sum, r) => sum + r.latency_ms, 0) / 1000).toFixed(1)}s
           </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">总耗时</p>
+          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('totalTime')}</p>
         </div>
       </div>
 
       {Object.keys(overallScores).length > 0 && (
         <div>
-          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">评分概览</h4>
+          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t('scoreOverview')}</h4>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.entries(overallScores).map(([key, value]) => (
               <div
@@ -180,13 +151,13 @@ export function EvaluationResultsView({
 
       {summary && (
         <div className="p-4 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg">
-          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">评测总结</h4>
+          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">{t('evaluationSummary')}</h4>
           <p className="text-sm text-slate-400 light:text-slate-600">{summary}</p>
         </div>
       )}
 
       <div>
-        <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">详细结果</h4>
+        <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t('detailedResults')}</h4>
         <div className="space-y-2">
           {results.map((result, index) => (
             <div
@@ -239,7 +210,7 @@ export function EvaluationResultsView({
                       onClick={() => toggleOutputExpanded(result.id)}
                       className="w-full flex items-center justify-between p-2 bg-slate-800/50 light:bg-slate-100 rounded-t border border-slate-700 light:border-slate-200 hover:bg-slate-800 light:hover:bg-slate-200 transition-colors"
                     >
-                      <span className="text-xs font-medium text-slate-400 light:text-slate-600">输出对比</span>
+                      <span className="text-xs font-medium text-slate-400 light:text-slate-600">{t('outputComparison')}</span>
                       {expandedOutputs.has(result.id) ? (
                         <ChevronDown className="w-4 h-4 text-slate-500 light:text-slate-400" />
                       ) : (
@@ -250,25 +221,25 @@ export function EvaluationResultsView({
                       <div className="grid grid-cols-2 gap-0 border border-t-0 border-slate-700 light:border-slate-200 rounded-b overflow-hidden">
                         <div className="border-r border-slate-700 light:border-slate-200">
                           <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200">
-                            <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">期望输出</span>
+                            <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">{t('expectedOutput')}</span>
                           </div>
                           <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
                             {getExpectedOutput(result.test_case_id) ? (
                               <MarkdownRenderer content={getExpectedOutput(result.test_case_id)!} />
                             ) : (
-                              <span className="text-slate-500 light:text-slate-400 text-xs">未设置期望输出</span>
+                              <span className="text-slate-500 light:text-slate-400 text-xs">{t('noExpectedOutput')}</span>
                             )}
                           </div>
                         </div>
                         <div>
                           <div className="px-3 py-1.5 bg-slate-800 light:bg-cyan-50 border-b border-slate-700 light:border-slate-200">
-                            <span className="text-xs font-medium text-cyan-400 light:text-cyan-600">模型输出</span>
+                            <span className="text-xs font-medium text-cyan-400 light:text-cyan-600">{t('modelOutput')}</span>
                           </div>
                           <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
                             {result.model_output ? (
                               <MarkdownRenderer content={result.model_output} />
                             ) : (
-                              <span className="text-slate-500 light:text-slate-400 text-xs">(无输出)</span>
+                              <span className="text-slate-500 light:text-slate-400 text-xs">{t('noOutput')}</span>
                             )}
                           </div>
                         </div>
@@ -278,7 +249,7 @@ export function EvaluationResultsView({
 
                   {result.error_message && (
                     <div>
-                      <p className="text-xs text-rose-400 light:text-rose-600 mb-1">错误信息</p>
+                      <p className="text-xs text-rose-400 light:text-rose-600 mb-1">{t('errorMessage')}</p>
                       <div className="p-3 bg-rose-950/30 light:bg-rose-50 rounded border border-rose-900/50 light:border-rose-200 text-sm text-rose-300 light:text-rose-700">
                         {result.error_message}
                       </div>
@@ -287,7 +258,7 @@ export function EvaluationResultsView({
 
                   {enabledCriteria.length > 0 && Object.keys(result.scores).length > 0 && (
                     <div>
-                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">评分详情</p>
+                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('scoreDetails')}</p>
                       <div className="space-y-2">
                         {enabledCriteria.map((criterion) => (
                           <div
@@ -323,7 +294,7 @@ export function EvaluationResultsView({
 
                   {getTestCaseNotes(result.test_case_id) && (
                     <div>
-                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">测试备注</p>
+                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('testNotes')}</p>
                       <div className="p-3 bg-slate-800/50 light:bg-amber-50 rounded border border-slate-700 light:border-amber-200">
                         <p className="text-sm text-slate-400 light:text-amber-700 whitespace-pre-wrap">
                           {getTestCaseNotes(result.test_case_id)}
@@ -336,7 +307,7 @@ export function EvaluationResultsView({
                     <div>
                       <p className="text-xs text-slate-500 light:text-slate-600 mb-2 flex items-center gap-1">
                         <Paperclip className="w-3 h-3" />
-                        附件 ({getTestCaseAttachments(result.test_case_id).length})
+                        {t('attachments')} ({getTestCaseAttachments(result.test_case_id).length})
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {getTestCaseAttachments(result.test_case_id).map((attachment, i) => {
@@ -346,7 +317,7 @@ export function EvaluationResultsView({
                               key={i}
                               onClick={() => setPreviewAttachment(attachment)}
                               className="flex items-center gap-2 px-3 py-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200 hover:border-cyan-500 light:hover:border-cyan-400 transition-colors"
-                              title="点击预览"
+                              title={t('clickToPreview')}
                             >
                               <Icon className="w-4 h-4 text-slate-400 light:text-slate-500" />
                               <span className="text-sm text-slate-300 light:text-slate-700 max-w-[150px] truncate">
@@ -367,14 +338,11 @@ export function EvaluationResultsView({
       </div>
 
       {/* Attachment Preview Modal */}
-      <Modal
+      <AttachmentModal
+        attachment={previewAttachment}
         isOpen={!!previewAttachment}
         onClose={() => setPreviewAttachment(null)}
-        title={previewAttachment?.name || '附件预览'}
-        size="xl"
-      >
-        {previewAttachment && renderAttachmentPreview(previewAttachment)}
-      </Modal>
+      />
     </div>
   );
 }

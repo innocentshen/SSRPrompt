@@ -15,6 +15,9 @@ export function buildWhereClause(filters: FilterCondition[]): { sql: string; val
       const placeholders = arr.map(() => '?').join(', ');
       conditions.push(`${col} IN (${placeholders})`);
       values.push(...arr);
+    } else if (filter.operator === 'IS' && filter.value === null) {
+      // Handle IS NULL
+      conditions.push(`${col} IS NULL`);
     } else {
       conditions.push(`${col} ${filter.operator} ?`);
       values.push(filter.value);
