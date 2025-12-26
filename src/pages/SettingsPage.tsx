@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Database, Sparkles, FlaskConical } from 'lucide-react';
+import { Bot, Database, Sparkles } from 'lucide-react';
+// import { FlaskConical } from 'lucide-react'; // 能力测试图标暂时注释
 import { ProviderList } from '../components/Settings/ProviderList';
 import { ProviderForm } from '../components/Settings/ProviderForm';
 import { AddProviderModal } from '../components/Settings/AddProviderModal';
 import { DatabaseSettings } from '../components/Settings/DatabaseSettings';
 import { OptimizationSettings } from '../components/Settings/OptimizationSettings';
-import { ModelCapabilityTest } from '../components/Settings/ModelCapabilityTest';
+// import { ModelCapabilityTest } from '../components/Settings/ModelCapabilityTest';
 import { useToast } from '../components/ui';
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import type { Provider, Model, ProviderType } from '../types';
@@ -259,6 +260,7 @@ export function SettingsPage() {
           <Sparkles className="w-4 h-4" />
           {t('optimization')}
         </button>
+        {/* 能力测试入口暂时注释
         <button
           onClick={() => setActiveTab('capability-test')}
           className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -270,6 +272,7 @@ export function SettingsPage() {
           <FlaskConical className="w-4 h-4" />
           {t('capabilityTest')}
         </button>
+        */}
       </div>
 
       {activeTab === 'providers' ? (
@@ -308,13 +311,16 @@ export function SettingsPage() {
             <OptimizationSettings />
           </div>
         </div>
-      ) : activeTab === 'capability-test' ? (
+      ) : null}
+      {/* 能力测试内容暂时注释
+      {activeTab === 'capability-test' ? (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl">
             <ModelCapabilityTest models={models} providers={providers} />
           </div>
         </div>
       ) : null}
+      */}
     </div>
   );
 }
