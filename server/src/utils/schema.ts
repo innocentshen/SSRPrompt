@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
   error_message TEXT,
   total_tokens_input INT DEFAULT 0,
   total_tokens_output INT DEFAULT 0,
+  model_parameters JSON,
   started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   completed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

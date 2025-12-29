@@ -3,6 +3,7 @@ import { Settings2, RotateCcw } from 'lucide-react';
 import { PromptConfig, DEFAULT_PROMPT_CONFIG, ReasoningEffort } from '../../types/database';
 import { Slider, Collapsible, Button } from '../ui';
 import { ReasoningSelector } from '../Common/ReasoningSelector';
+import { inferReasoningSupport } from '../../lib/model-capabilities';
 
 interface ParameterPanelProps {
   config: PromptConfig;
@@ -110,8 +111,8 @@ export function ParameterPanel({ config, onChange, disabled = false, defaultOpen
           disabled={disabled}
         />
 
-        {/* 推理/思考配置 */}
-        {modelId && (
+        {/* 推理/思考配置 - 仅在模型支持时显示 */}
+        {modelId && inferReasoningSupport(modelId) && (
           <div className="pt-2 border-t border-slate-700 light:border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-300 light:text-slate-700">{t('reasoningEffort')}</span>

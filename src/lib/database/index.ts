@@ -1,6 +1,7 @@
 import { SupabaseAdapter } from './supabase-adapter';
 import { MySQLAdapter, type EvaluationDetailsResponse } from './mysql-adapter';
 import type { DatabaseConfig, DatabaseProvider, DatabaseService } from './types';
+import { isDemoMode, getDemoDbConfig } from '../tenant';
 
 export type { DatabaseConfig, DatabaseProvider, DatabaseService, QueryBuilder, QueryResult, SupabaseConfig, MySQLConfig } from './types';
 export type { EvaluationDetailsResponse } from './mysql-adapter';
@@ -39,6 +40,16 @@ export function getCurrentProvider(): DatabaseProvider {
  * 检查数据库是否已配置
  */
 export function isDatabaseConfigured(): boolean {
+  // Demo 模式：检查 Demo 数据库配置
+  if (isDemoMode()) {
+    const demoConfig = getDemoDbConfig();
+    if (demoConfig.provider === 'mysql') {
+      return !!(demoConfig.mysql?.host && demoConfig.mysql?.database);
+    }
+    return !!(demoConfig.supabase?.url && demoConfig.supabase?.anonKey);
+  }
+
+  // 个人空间：检查用户配置
   const config = getStoredConfig();
 
   if (config.provider === 'mysql') {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Database, Sparkles } from 'lucide-react';
+import { Bot, Database, Sparkles, Lock, AlertCircle } from 'lucide-react';
 // import { FlaskConical } from 'lucide-react'; // 能力测试图标暂时注释
 import { ProviderList } from '../components/Settings/ProviderList';
 import { ProviderForm } from '../components/Settings/ProviderForm';
@@ -8,14 +8,18 @@ import { AddProviderModal } from '../components/Settings/AddProviderModal';
 import { DatabaseSettings } from '../components/Settings/DatabaseSettings';
 import { OptimizationSettings } from '../components/Settings/OptimizationSettings';
 // import { ModelCapabilityTest } from '../components/Settings/ModelCapabilityTest';
-import { useToast } from '../components/ui';
+import { useToast, Button, Input } from '../components/ui';
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
+import { isDemoMode, verifyDemoSettingsPassword } from '../lib/tenant';
 import type { Provider, Model, ProviderType } from '../types';
 
 type SettingsTab = 'providers' | 'database' | 'optimization' | 'capability-test';
 
+const DEMO_SETTINGS_UNLOCKED_KEY = 'demo_settings_unlocked';
+
 export function SettingsPage() {
   const { t } = useTranslation('settings');
+  const { t: tLogin } = useTranslation('login');
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers');
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -23,6 +27,27 @@ export function SettingsPage() {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Demo 模式密码验证状态
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    // 检查本次会话是否已解锁
+    if (!isDemoMode()) return true;
+    return sessionStorage.getItem(DEMO_SETTINGS_UNLOCKED_KEY) === 'true';
+  });
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const handleAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (verifyDemoSettingsPassword(authPassword)) {
+      sessionStorage.setItem(DEMO_SETTINGS_UNLOCKED_KEY, 'true');
+      setIsUnlocked(true);
+      setAuthError('');
+    } else {
+      setAuthError(tLogin('demoSettingsPasswordWrong'));
+      setAuthPassword('');
+    }
+  };
 
   const selectedProvider = providers.find((p) => p.id === selectedProviderId) || null;
   const selectedModels = models.filter((m) => m.provider_id === selectedProviderId);
@@ -122,7 +147,36 @@ export function SettingsPage() {
   const handleDeleteProvider = async () => {
     if (!selectedProviderId) return;
     try {
-      const { error } = await getDatabase()
+      const db = getDatabase();
+
+      // 获取该服务商下的所有模型 ID
+      const providerModelIds = models
+        .filter((m) => m.provider_id === selectedProviderId)
+        .map((m) => m.id);
+
+      if (providerModelIds.length > 0) {
+        // 先清除 evaluations 表中对这些模型的引用（设为 NULL）
+        // 清除 model_id 引用
+        await db
+          .from('evaluations')
+          .update({ model_id: null })
+          .in('model_id', providerModelIds);
+
+        // 清除 judge_model_id 引用
+        await db
+          .from('evaluations')
+          .update({ judge_model_id: null })
+          .in('judge_model_id', providerModelIds);
+
+        // 删除该服务商下的所有模型
+        await db
+          .from('models')
+          .delete()
+          .eq('provider_id', selectedProviderId);
+      }
+
+      // 删除服务商
+      const { error } = await db
         .from('providers')
         .delete()
         .eq('id', selectedProviderId);
@@ -223,6 +277,60 @@ export function SettingsPage() {
       return false;
     }
   };
+
+  // Demo 模式密码验证界面
+  if (isDemoMode() && !isUnlocked) {
+    return (
+      <div className="h-full flex items-center justify-center bg-slate-950 light:bg-slate-50">
+        <div className="w-full max-w-md p-8">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500/10 rounded-2xl mb-4">
+              <Lock className="w-8 h-8 text-amber-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-white light:text-slate-900 mb-2">
+              {tLogin('demoSettingsAuth')}
+            </h2>
+            <p className="text-slate-400 light:text-slate-600">
+              {tLogin('demoSettingsAuthDesc')}
+            </p>
+          </div>
+
+          <div className="bg-slate-800/50 light:bg-white/80 backdrop-blur-sm border border-slate-700 light:border-slate-200 rounded-xl p-6">
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
+                  {tLogin('demoSettingsPassword')}
+                </label>
+                <Input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder={tLogin('demoSettingsPasswordPlaceholder')}
+                  className="w-full"
+                  autoFocus
+                />
+              </div>
+
+              {authError && (
+                <div className="flex items-center gap-2 p-3 bg-rose-950/30 light:bg-rose-50 border border-rose-900/50 light:border-rose-200 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-rose-400 light:text-rose-500 flex-shrink-0" />
+                  <p className="text-sm text-rose-300 light:text-rose-600">{authError}</p>
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={!authPassword}
+              >
+                {tLogin('demoSettingsEnter')}
+              </Button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-950 light:bg-slate-50">

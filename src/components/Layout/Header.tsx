@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { User, LogOut, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../../contexts';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { GitHubStar } from './GitHubStar';
 
 interface HeaderProps {
   title: string;
@@ -19,6 +20,7 @@ export function Header({ title, onLogout }: HeaderProps) {
       <h1 className="text-lg font-medium text-white dark:text-white light:text-slate-900">{title}</h1>
 
       <div className="flex items-center gap-2">
+        <GitHubStar />
         <LanguageSwitcher />
 
         <button

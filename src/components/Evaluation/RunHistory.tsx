@@ -1,4 +1,4 @@
-import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, Zap, Square, Trash2 } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, Zap, Square, Trash2, Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button } from '../ui';
 import type { EvaluationRun, EvaluationStatus } from '../../types';
@@ -143,6 +143,43 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onStopRun, onDele
                   <div>
                     <p className="text-xs text-slate-500 light:text-slate-600">{t('duration')}</p>
                     <p className="text-sm text-slate-300 light:text-slate-700">{formatDuration(run.started_at, run.completed_at)}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* 显示执行时的模型参数 */}
+              {run.model_parameters && (
+                <div className="mt-3 pt-3 border-t border-slate-700/50 light:border-slate-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Settings2 className="w-3 h-3 text-slate-500 light:text-slate-400" />
+                    <span className="text-xs text-slate-500 light:text-slate-600">{t('modelParameters')}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {run.model_parameters.temperature !== undefined && (
+                      <span className="px-2 py-0.5 text-xs bg-slate-700/50 light:bg-slate-100 text-slate-300 light:text-slate-600 rounded">
+                        temp: {run.model_parameters.temperature}
+                      </span>
+                    )}
+                    {run.model_parameters.max_tokens !== undefined && (
+                      <span className="px-2 py-0.5 text-xs bg-slate-700/50 light:bg-slate-100 text-slate-300 light:text-slate-600 rounded">
+                        max: {run.model_parameters.max_tokens}
+                      </span>
+                    )}
+                    {run.model_parameters.top_p !== undefined && (
+                      <span className="px-2 py-0.5 text-xs bg-slate-700/50 light:bg-slate-100 text-slate-300 light:text-slate-600 rounded">
+                        top_p: {run.model_parameters.top_p}
+                      </span>
+                    )}
+                    {run.model_parameters.frequency_penalty !== undefined && run.model_parameters.frequency_penalty !== 0 && (
+                      <span className="px-2 py-0.5 text-xs bg-slate-700/50 light:bg-slate-100 text-slate-300 light:text-slate-600 rounded">
+                        freq: {run.model_parameters.frequency_penalty}
+                      </span>
+                    )}
+                    {run.model_parameters.presence_penalty !== undefined && run.model_parameters.presence_penalty !== 0 && (
+                      <span className="px-2 py-0.5 text-xs bg-slate-700/50 light:bg-slate-100 text-slate-300 light:text-slate-600 rounded">
+                        pres: {run.model_parameters.presence_penalty}
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

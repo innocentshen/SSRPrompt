@@ -6,7 +6,8 @@ import { ThemeProvider } from './contexts';
 import { SettingsPage, PromptsPage, EvaluationPage, TracesPage, HomePage, PromptWizardPage } from './pages';
 import { LoginPage } from './pages/LoginPage';
 import { SetupWizard } from './components/Setup';
-import { getStoredConfig, initializeDatabase, getDatabase } from './lib/database';
+import { getStoredConfig, initializeDatabase, saveConfig } from './lib/database';
+import { getTenantType, clearTenantType, isDemoMode, getDemoDbConfig, type TenantType } from './lib/tenant';
 
 const AUTH_KEY = 'ai_compass_auth';
 
@@ -19,7 +20,7 @@ function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [isCheckingDb, setIsCheckingDb] = useState(true);
 
-  // ҳ�����ӳ�䵽 i18n key
+  // 页面名称映射到 i18n key
   const getPageTitle = (page: string) => {
     const titleMap: Record<string, string> = {
       home: t('home'),
@@ -34,7 +35,10 @@ function App() {
 
   useEffect(() => {
     const storedAuth = localStorage.getItem(AUTH_KEY);
-    if (storedAuth === import.meta.env.VITE_APP_PASSWORD) {
+    const tenantType = getTenantType();
+
+    // 需要同时有认证和租户类型才算已登录
+    if (storedAuth === import.meta.env.VITE_APP_PASSWORD && tenantType) {
       setIsAuthenticated(true);
     }
     setIsCheckingAuth(false);
@@ -42,6 +46,30 @@ function App() {
 
   useEffect(() => {
     const checkDatabaseConfig = async () => {
+      const tenantType = getTenantType();
+
+      // Demo 模式：使用环境变量配置
+      if (tenantType === 'demo') {
+        try {
+          const demoConfig = getDemoDbConfig();
+          // 保存 demo 配置到 localStorage（让其他地方可以读取）
+          saveConfig(demoConfig);
+          const db = initializeDatabase(demoConfig);
+          const result = await db.testConnection();
+          if (!result.success) {
+            // Demo 数据库连接失败，回退到个人空间流程
+            console.error('Demo database connection failed:', result.error);
+            setNeedsSetup(true);
+          }
+        } catch (error) {
+          console.error('Demo database initialization failed:', error);
+          setNeedsSetup(true);
+        }
+        setIsCheckingDb(false);
+        return;
+      }
+
+      // 个人空间：检查用户配置的数据库
       const config = getStoredConfig();
 
       // Check if configuration is incomplete
@@ -84,14 +112,16 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  const handleLogin = (password: string) => {
+  const handleLogin = (password: string, _tenant: TenantType) => {
     localStorage.setItem(AUTH_KEY, password);
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
     localStorage.removeItem(AUTH_KEY);
+    clearTenantType(); // 清除租户类型
     setIsAuthenticated(false);
+    setNeedsSetup(false);
     setCurrentPage('home');
   };
 
@@ -119,7 +149,8 @@ function App() {
     );
   }
 
-  if (needsSetup) {
+  // 只有个人空间才需要 SetupWizard
+  if (needsSetup && !isDemoMode()) {
     return (
       <ThemeProvider>
         <ToastProvider>

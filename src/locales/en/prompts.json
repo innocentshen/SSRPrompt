@@ -290,5 +290,12 @@
   "wizardTemplateInitialTranslator": "I want to create a translation assistant that can perform accurate multi-language translations.",
   "wizardTemplateInitialDataAnalyzer": "I want to create a data analysis assistant that helps analyze data and provide insights.",
   "wizardTemplateInitialCustomerService": "I want to create a customer service assistant that can answer customer questions in a friendly manner.",
-  "reasoningEffort": "Reasoning Effort"
+  "reasoningEffort": "Reasoning Effort",
+  "stop": "Stop",
+  "noResults": "No results",
+  "reasoning": "Reasoning",
+  "default": "Default",
+  "low": "Low",
+  "medium": "Medium",
+  "high": "High"
 }

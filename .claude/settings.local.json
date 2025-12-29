@@ -50,7 +50,8 @@
       "Bash(node migrate-provider-form.cjs:*)",
       "Bash(wc:*)",
       "WebFetch(domain:developers.googleblog.com)",
-      "WebFetch(domain:deepmind.google)"
+      "WebFetch(domain:deepmind.google)",
+      "Bash(ls:*)"
     ]
   }
 }

@@ -290,5 +290,12 @@
   "wizardTemplateInitialTranslator": "我想创建一个翻译助手，能够进行准确的多语言翻译。",
   "wizardTemplateInitialDataAnalyzer": "我想创建一个数据分析助手，帮助分析数据并提供洞察。",
   "wizardTemplateInitialCustomerService": "我想创建一个客服助手，能够友好地回答客户问题。",
-  "reasoningEffort": "推理强度"
+  "reasoningEffort": "推理强度",
+  "stop": "停止",
+  "noResults": "暂无结果",
+  "reasoning": "推理",
+  "default": "默认",
+  "low": "低",
+  "medium": "中",
+  "high": "高"
 }

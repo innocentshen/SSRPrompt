@@ -170,5 +170,7 @@
   "criteriaPromptRelevance": "请评估以下AI输出的相关性。\n\n输入: {{input}}\n实际输出: {{output}}\n\n请从以下角度评估：\n1. 输出是否回答了问题\n2. 内容是否与主题相关\n3. 是否存在离题内容\n\n请给出1-10分的评分，并简要说明理由。\n格式: {\"score\": 数字, \"reason\": \"理由\"}",
   "criteriaPromptClarity": "请评估以下AI输出的清晰度。\n\n实际输出: {{output}}\n\n请从以下角度评估：\n1. 表达是否清晰易懂\n2. 结构是否合理\n3. 语言是否流畅\n\n请给出1-10分的评分，并简要说明理由。\n格式: {\"score\": 数字, \"reason\": \"理由\"}",
   "criteriaPromptCompleteness": "请评估以下AI输出的完整性。\n\n输入: {{input}}\n{{#expected}}期望输出: {{expected}}{{/expected}}\n实际输出: {{output}}\n\n请从以下角度评估：\n1. 回答是否完整\n2. 是否遗漏重要信息\n3. 深度是否足够\n\n请给出1-10分的评分，并简要说明理由。\n格式: {\"score\": 数字, \"reason\": \"理由\"}",
-  "criteriaPromptCustom": "请评估以下AI输出。\n\n输入: {{input}}\n{{#expected}}期望输出: {{expected}}{{/expected}}\n实际输出: {{output}}\n\n请给出1-10分的评分，并简要说明理由。\n格式: {\"score\": 数字, \"reason\": \"理由\"}"
+  "criteriaPromptCustom": "请评估以下AI输出。\n\n输入: {{input}}\n{{#expected}}期望输出: {{expected}}{{/expected}}\n实际输出: {{output}}\n\n请给出1-10分的评分，并简要说明理由。\n格式: {\"score\": 数字, \"reason\": \"理由\"}",
+  "inheritedFromPrompt": "参数已从关联 Prompt 继承",
+  "modelParameters": "模型参数"
 }

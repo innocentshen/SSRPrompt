@@ -9,5 +9,21 @@
   "enterSystem": "Enter System",
   "keepPasswordSafe": "Please keep your access password safe",
   "starOnGithub": "Star on GitHub",
-  "likeItStarIt": "If you like it, please give me a Star"
+  "likeItStarIt": "If you like it, please give me a Star",
+  "selectTenant": "Select Workspace",
+  "demoTenant": "Demo Space",
+  "demoTenantDesc": "Quick experience, no database setup required",
+  "personalTenant": "Personal Space",
+  "personalTenantDesc": "Private data, requires your own database",
+  "enterDemo": "Enter Demo",
+  "enterPersonal": "Enter Personal",
+  "demoNotConfigured": "Demo space is not available",
+  "switchTenant": "Switch Workspace",
+  "demoSettingsAuth": "Settings Access Verification",
+  "demoSettingsAuthDesc": "Settings in Demo space requires password",
+  "demoSettingsPassword": "Settings Password",
+  "demoSettingsPasswordPlaceholder": "Enter settings password",
+  "demoSettingsPasswordWrong": "Wrong password",
+  "demoSettingsEnter": "Enter Settings",
+  "demoSettingsCancel": "Cancel"
 }

@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
   error_message text,
   total_tokens_input integer DEFAULT 0,
   total_tokens_output integer DEFAULT 0,
+  model_parameters jsonb,
   started_at timestamptz DEFAULT now(),
   completed_at timestamptz,
   created_at timestamptz DEFAULT now()

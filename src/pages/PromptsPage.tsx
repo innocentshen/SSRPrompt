@@ -26,17 +26,20 @@ import {
   CloudOff,
   Copy,
   Maximize2,
+  Square,
+  Settings2,
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentModal } from '../components/Prompt';
+import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { DebugRun } from '../components/Prompt';
 import { getDatabase, isDatabaseConfigured } from '../lib/database';
 import { callAIModel, streamAIModel, fileToBase64, extractThinking, type AICallOptions, type FileAttachment, type StreamUsage } from '../lib/ai-service';
 import { analyzePrompt, type PromptAnalysisResult } from '../lib/prompt-analyzer';
 import { toResponseFormat } from '../lib/schema-utils';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
-import { getFileUploadCapabilities, isFileTypeAllowed } from '../lib/model-capabilities';
-import type { Prompt, Model, Provider, PromptVersion, PromptMessage, PromptConfig, PromptVariable } from '../types';
+import { getFileUploadCapabilities, isFileTypeAllowed, inferReasoningSupport } from '../lib/model-capabilities';
+import type { Prompt, Model, Provider, PromptVersion, PromptMessage, PromptConfig, PromptVariable, ReasoningEffort } from '../types';
 import { DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
@@ -87,11 +90,19 @@ export function PromptsPage() {
   const [compareVersions, setCompareVersions] = useState<[string, string]>(['', '']);
   const [compareInput, setCompareInput] = useState('');
   const [compareFiles, setCompareFiles] = useState<FileAttachment[]>([]);
-  const [compareRunning, setCompareRunning] = useState(false);
+  const [compareRunning, setCompareRunning] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
   const [compareResults, setCompareResults] = useState<{
-    left: { content: string; latency: number; tokensIn: number; tokensOut: number; error?: string } | null;
-    right: { content: string; latency: number; tokensIn: number; tokensOut: number; error?: string } | null;
+    left: { content: string; thinking: string; latency: number; tokensIn: number; tokensOut: number; error?: string; isThinking?: boolean } | null;
+    right: { content: string; thinking: string; latency: number; tokensIn: number; tokensOut: number; error?: string; isThinking?: boolean } | null;
   }>({ left: null, right: null });
+  const [compareParams, setCompareParams] = useState<{
+    left: { temperature: number; top_p: number; max_tokens: number; frequency_penalty: number; presence_penalty: number; reasoning?: { enabled: boolean; effort: ReasoningEffort } };
+    right: { temperature: number; top_p: number; max_tokens: number; frequency_penalty: number; presence_penalty: number; reasoning?: { enabled: boolean; effort: ReasoningEffort } };
+  }>({
+    left: { temperature: 0.7, top_p: 1, max_tokens: 4096, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
+    right: { temperature: 0.7, top_p: 1, max_tokens: 4096, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
+  });
+  const compareAbortControllersRef = useRef<{ left: AbortController | null; right: AbortController | null }>({ left: null, right: null });
   const [searchQuery, setSearchQuery] = useState('');
   const [promptContent, setPromptContent] = useState('');
   const [promptName, setPromptName] = useState('');
@@ -952,6 +963,17 @@ export function PromptsPage() {
     return File;
   };
 
+  const handleStopComparison = (side: 'left' | 'right' | 'both') => {
+    if (side === 'both' || side === 'left') {
+      compareAbortControllersRef.current.left?.abort();
+      compareAbortControllersRef.current.left = null;
+    }
+    if (side === 'both' || side === 'right') {
+      compareAbortControllersRef.current.right?.abort();
+      compareAbortControllersRef.current.right = null;
+    }
+  };
+
   const handleRunComparison = async () => {
     if (compareMode === 'models') {
       if (!compareVersion || !compareModels[0] || !compareModels[1]) {
@@ -965,77 +987,264 @@ export function PromptsPage() {
       }
     }
 
-    setCompareRunning(true);
+    // 中止之前的请求
+    handleStopComparison('both');
+
+    // 创建新的 AbortController
+    const leftController = new AbortController();
+    const rightController = new AbortController();
+    compareAbortControllersRef.current = { left: leftController, right: rightController };
+
+    setCompareRunning({ left: true, right: true });
     setCompareResults({ left: null, right: null });
 
-    try {
-      if (compareMode === 'models') {
-        const version = versions.find((v) => v.id === compareVersion);
-        if (!version) return;
+    // 记录开始时间
+    const startTimeLeft = Date.now();
+    const startTimeRight = Date.now();
 
-        const model1 = models.find((m) => m.id === compareModels[0]);
-        const model2 = models.find((m) => m.id === compareModels[1]);
-        const provider1 = providers.find((p) => p.id === model1?.provider_id);
-        const provider2 = providers.find((p) => p.id === model2?.provider_id);
+    // 准备运行参数
+    let leftPrompt = '';
+    let rightPrompt = '';
+    let leftModel: typeof models[0] | undefined;
+    let rightModel: typeof models[0] | undefined;
+    let leftProvider: typeof providers[0] | undefined;
+    let rightProvider: typeof providers[0] | undefined;
 
-        if (!model1 || !model2 || !provider1 || !provider2) {
-          showToast('error', t('modelConfigError'));
-          return;
-        }
+    if (compareMode === 'models') {
+      const version = versions.find((v) => v.id === compareVersion);
+      if (!version) return;
 
-        const [result1, result2] = await Promise.allSettled([
-          callAIModel(provider1, model1.model_id, version.content, compareInput, compareFiles.length > 0 ? compareFiles : undefined),
-          callAIModel(provider2, model2.model_id, version.content, compareInput, compareFiles.length > 0 ? compareFiles : undefined),
-        ]);
+      leftPrompt = version.content;
+      rightPrompt = version.content;
+      leftModel = models.find((m) => m.id === compareModels[0]);
+      rightModel = models.find((m) => m.id === compareModels[1]);
+      leftProvider = providers.find((p) => p.id === leftModel?.provider_id);
+      rightProvider = providers.find((p) => p.id === rightModel?.provider_id);
+    } else {
+      const version1 = versions.find((v) => v.id === compareVersions[0]);
+      const version2 = versions.find((v) => v.id === compareVersions[1]);
+      if (!version1 || !version2) return;
 
-        setCompareResults({
-          left:
-            result1.status === 'fulfilled'
-              ? { content: result1.value.content, latency: result1.value.latencyMs, tokensIn: result1.value.tokensInput, tokensOut: result1.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || t('executionFailed') },
-          right:
-            result2.status === 'fulfilled'
-              ? { content: result2.value.content, latency: result2.value.latencyMs, tokensIn: result2.value.tokensInput, tokensOut: result2.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || t('executionFailed') },
-        });
-      } else {
-        const model = models.find((m) => m.id === compareModel);
-        const provider = providers.find((p) => p.id === model?.provider_id);
-
-        if (!model || !provider) {
-          showToast('error', t('modelConfigError'));
-          return;
-        }
-
-        const version1 = versions.find((v) => v.id === compareVersions[0]);
-        const version2 = versions.find((v) => v.id === compareVersions[1]);
-
-        if (!version1 || !version2) return;
-
-        const [result1, result2] = await Promise.allSettled([
-          callAIModel(provider, model.model_id, version1.content, compareInput, compareFiles.length > 0 ? compareFiles : undefined),
-          callAIModel(provider, model.model_id, version2.content, compareInput, compareFiles.length > 0 ? compareFiles : undefined),
-        ]);
-
-        setCompareResults({
-          left:
-            result1.status === 'fulfilled'
-              ? { content: result1.value.content, latency: result1.value.latencyMs, tokensIn: result1.value.tokensInput, tokensOut: result1.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result1.reason?.message || t('executionFailed') },
-          right:
-            result2.status === 'fulfilled'
-              ? { content: result2.value.content, latency: result2.value.latencyMs, tokensIn: result2.value.tokensInput, tokensOut: result2.value.tokensOutput }
-              : { content: '', latency: 0, tokensIn: 0, tokensOut: 0, error: result2.reason?.message || t('executionFailed') },
-        });
-      }
-
-      showToast('success', t('compareComplete'));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : t('unknownError');
-      showToast('error', t('compareFailed') + ': ' + errorMessage);
-    } finally {
-      setCompareRunning(false);
+      leftPrompt = version1.content;
+      rightPrompt = version2.content;
+      const model = models.find((m) => m.id === compareModel);
+      const provider = providers.find((p) => p.id === model?.provider_id);
+      leftModel = rightModel = model;
+      leftProvider = rightProvider = provider;
     }
+
+    if (!leftModel || !rightModel || !leftProvider || !rightProvider) {
+      showToast('error', t('modelConfigError'));
+      setCompareRunning({ left: false, right: false });
+      return;
+    }
+
+    // 运行左侧
+    const runLeft = async () => {
+      let fullContent = '';
+      let accumulatedThinking = '';
+      let isCurrentlyThinking = false;
+      let tokensIn = 0;
+      let tokensOut = 0;
+
+      try {
+        await streamAIModel(
+          leftProvider!,
+          leftModel!.model_id,
+          leftPrompt,
+          {
+            onToken: (token) => {
+              fullContent += token;
+
+              // 收到正文内容时，结束思考状态
+              if (isCurrentlyThinking) {
+                isCurrentlyThinking = false;
+              }
+
+              // 实时检测思考内容 (用于文本标签格式如 <think>)
+              const { thinking, content } = extractThinking(fullContent);
+
+              if (thinking && thinking !== accumulatedThinking) {
+                accumulatedThinking = thinking;
+              }
+
+              flushSync(() => {
+                setCompareResults((prev) => ({
+                  ...prev,
+                  left: { content, thinking: accumulatedThinking, latency: Date.now() - startTimeLeft, tokensIn, tokensOut, isThinking: isCurrentlyThinking },
+                }));
+              });
+            },
+            onThinkingToken: (token) => {
+              // 流式思考内容 (用于 OpenRouter reasoning 字段)
+              if (!isCurrentlyThinking) {
+                isCurrentlyThinking = true;
+              }
+              accumulatedThinking += token;
+              flushSync(() => {
+                setCompareResults((prev) => ({
+                  ...prev,
+                  left: { content: fullContent, thinking: accumulatedThinking, latency: Date.now() - startTimeLeft, tokensIn, tokensOut, isThinking: true },
+                }));
+              });
+            },
+            onComplete: (_finalContent, _thinkingContent, usage) => {
+              if (usage) {
+                tokensIn = usage.tokensInput;
+                tokensOut = usage.tokensOutput;
+              }
+              // 提取最终的思考内容
+              const { thinking, content } = extractThinking(fullContent);
+              setCompareResults((prev) => ({
+                ...prev,
+                left: { content, thinking: thinking || accumulatedThinking, latency: Date.now() - startTimeLeft, tokensIn, tokensOut },
+              }));
+              setCompareRunning((prev) => ({ ...prev, left: false }));
+            },
+            onError: (error) => {
+              setCompareResults((prev) => ({
+                ...prev,
+                left: { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error },
+              }));
+              setCompareRunning((prev) => ({ ...prev, left: false }));
+            },
+            onAbort: () => {
+              setCompareResults((prev) => ({
+                ...prev,
+                left: prev.left ? { ...prev.left, error: t('runStopped') } : { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error: t('runStopped') },
+              }));
+              setCompareRunning((prev) => ({ ...prev, left: false }));
+            },
+          },
+          compareInput || undefined,
+          compareFiles.length > 0 ? compareFiles : undefined,
+          {
+            parameters: {
+              temperature: compareParams.left.temperature,
+              top_p: compareParams.left.top_p,
+              max_tokens: compareParams.left.max_tokens,
+              frequency_penalty: compareParams.left.frequency_penalty,
+              presence_penalty: compareParams.left.presence_penalty,
+            },
+            reasoning: compareParams.left.reasoning,
+            signal: leftController.signal,
+          }
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name !== 'AbortError') {
+          setCompareResults((prev) => ({
+            ...prev,
+            left: { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error: error.message },
+          }));
+          setCompareRunning((prev) => ({ ...prev, left: false }));
+        }
+      }
+    };
+
+    // 运行右侧
+    const runRight = async () => {
+      let fullContent = '';
+      let accumulatedThinking = '';
+      let isCurrentlyThinking = false;
+      let tokensIn = 0;
+      let tokensOut = 0;
+
+      try {
+        await streamAIModel(
+          rightProvider!,
+          rightModel!.model_id,
+          rightPrompt,
+          {
+            onToken: (token) => {
+              fullContent += token;
+
+              // 收到正文内容时，结束思考状态
+              if (isCurrentlyThinking) {
+                isCurrentlyThinking = false;
+              }
+
+              // 实时检测思考内容 (用于文本标签格式如 <think>)
+              const { thinking, content } = extractThinking(fullContent);
+
+              if (thinking && thinking !== accumulatedThinking) {
+                accumulatedThinking = thinking;
+              }
+
+              flushSync(() => {
+                setCompareResults((prev) => ({
+                  ...prev,
+                  right: { content, thinking: accumulatedThinking, latency: Date.now() - startTimeRight, tokensIn, tokensOut, isThinking: isCurrentlyThinking },
+                }));
+              });
+            },
+            onThinkingToken: (token) => {
+              // 流式思考内容 (用于 OpenRouter reasoning 字段)
+              if (!isCurrentlyThinking) {
+                isCurrentlyThinking = true;
+              }
+              accumulatedThinking += token;
+              flushSync(() => {
+                setCompareResults((prev) => ({
+                  ...prev,
+                  right: { content: fullContent, thinking: accumulatedThinking, latency: Date.now() - startTimeRight, tokensIn, tokensOut, isThinking: true },
+                }));
+              });
+            },
+            onComplete: (_finalContent, _thinkingContent, usage) => {
+              if (usage) {
+                tokensIn = usage.tokensInput;
+                tokensOut = usage.tokensOutput;
+              }
+              // 提取最终的思考内容
+              const { thinking, content } = extractThinking(fullContent);
+              setCompareResults((prev) => ({
+                ...prev,
+                right: { content, thinking: thinking || accumulatedThinking, latency: Date.now() - startTimeRight, tokensIn, tokensOut },
+              }));
+              setCompareRunning((prev) => ({ ...prev, right: false }));
+            },
+            onError: (error) => {
+              setCompareResults((prev) => ({
+                ...prev,
+                right: { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error },
+              }));
+              setCompareRunning((prev) => ({ ...prev, right: false }));
+            },
+            onAbort: () => {
+              setCompareResults((prev) => ({
+                ...prev,
+                right: prev.right ? { ...prev.right, error: t('runStopped') } : { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error: t('runStopped') },
+              }));
+              setCompareRunning((prev) => ({ ...prev, right: false }));
+            },
+          },
+          compareInput || undefined,
+          compareFiles.length > 0 ? compareFiles : undefined,
+          {
+            parameters: {
+              temperature: compareParams.right.temperature,
+              top_p: compareParams.right.top_p,
+              max_tokens: compareParams.right.max_tokens,
+              frequency_penalty: compareParams.right.frequency_penalty,
+              presence_penalty: compareParams.right.presence_penalty,
+            },
+            reasoning: compareParams.right.reasoning,
+            signal: rightController.signal,
+          }
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name !== 'AbortError') {
+          setCompareResults((prev) => ({
+            ...prev,
+            right: { content: '', thinking: '', latency: 0, tokensIn: 0, tokensOut: 0, error: error.message },
+          }));
+          setCompareRunning((prev) => ({ ...prev, right: false }));
+        }
+      }
+    };
+
+    // 并行运行两侧
+    await Promise.all([runLeft(), runRight()]);
   };
 
   const handleCompareFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1831,12 +2040,212 @@ export function PromptsPage() {
             )}
           </div>
 
-          <Button className="w-full" onClick={handleRunComparison} loading={compareRunning}>
-            <Play className="w-4 h-4" />
-            <span>{t('run')}{t('compare')}</span>
-          </Button>
+          {/* 模型参数配置 */}
+          <Collapsible
+            title={t('modelParameters')}
+            icon={<Settings2 className="w-4 h-4 text-cyan-400 light:text-cyan-600" />}
+            defaultOpen={false}
+          >
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
+                <p className="text-xs font-medium text-slate-400 light:text-slate-600">
+                  {compareMode === 'models' ? (models.find((m) => m.id === compareModels[0])?.name || t('modelA')) : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
+                </p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('temperature')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.left.temperature}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, temperature: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('topP')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={compareParams.left.top_p}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, top_p: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.left.frequency_penalty}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.left.presence_penalty}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, presence_penalty: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('maxTokens')}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="32000"
+                      step="1"
+                      value={compareParams.left.max_tokens}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                      className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  {/* 推理配置 - 仅在模型支持时显示 */}
+                  {(() => {
+                    const leftModelId = compareMode === 'models'
+                      ? models.find((m) => m.id === compareModels[0])?.model_id
+                      : models.find((m) => m.id === selectedModel)?.model_id;
+                    return leftModelId && inferReasoningSupport(leftModelId) && (
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
+                        <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
+                        <ReasoningSelector
+                          modelId={leftModelId}
+                          value={compareParams.left.reasoning?.effort || 'default'}
+                          onChange={(effort) => {
+                            setCompareParams((prev) => ({
+                              ...prev,
+                              left: {
+                                ...prev.left,
+                                reasoning: effort === 'default' ? undefined : { enabled: true, effort },
+                              },
+                            }));
+                          }}
+                        />
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+              <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
+                <p className="text-xs font-medium text-slate-400 light:text-slate-600">
+                  {compareMode === 'models' ? (models.find((m) => m.id === compareModels[1])?.name || t('modelB')) : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
+                </p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('temperature')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.right.temperature}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, temperature: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('topP')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={compareParams.right.top_p}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, top_p: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.right.frequency_penalty}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={compareParams.right.presence_penalty}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, presence_penalty: parseFloat(e.target.value) || 0 } }))}
+                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">{t('maxTokens')}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="32000"
+                      step="1"
+                      value={compareParams.right.max_tokens}
+                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                      className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                    />
+                  </div>
+                  {/* 推理配置 - 仅在模型支持时显示 */}
+                  {(() => {
+                    const rightModelId = compareMode === 'models'
+                      ? models.find((m) => m.id === compareModels[1])?.model_id
+                      : models.find((m) => m.id === selectedModel)?.model_id;
+                    return rightModelId && inferReasoningSupport(rightModelId) && (
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
+                        <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
+                        <ReasoningSelector
+                          modelId={rightModelId}
+                          value={compareParams.right.reasoning?.effort || 'default'}
+                          onChange={(effort) => {
+                            setCompareParams((prev) => ({
+                              ...prev,
+                              right: {
+                                ...prev.right,
+                                reasoning: effort === 'default' ? undefined : { enabled: true, effort },
+                              },
+                            }));
+                          }}
+                        />
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </Collapsible>
 
-          {(compareResults.left || compareResults.right) && (
+          <div className="flex gap-2">
+            <Button className="flex-1" onClick={handleRunComparison} loading={compareRunning.left || compareRunning.right}>
+              <Play className="w-4 h-4" />
+              <span>{t('run')}{t('compare')}</span>
+            </Button>
+            {(compareRunning.left || compareRunning.right) && (
+              <Button variant="danger" onClick={() => handleStopComparison('both')}>
+                <Square className="w-4 h-4" />
+                <span>{t('stop')}</span>
+              </Button>
+            )}
+          </div>
+
+          {(compareResults.left || compareResults.right || compareRunning.left || compareRunning.right) && (
             <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-700 light:border-slate-200">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -1846,6 +2255,15 @@ export function PromptsPage() {
                         ? models.find((m) => m.id === compareModels[0])?.name || 'A'
                         : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
                     </Badge>
+                    {compareRunning.left && (
+                      <button
+                        onClick={() => handleStopComparison('left')}
+                        className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                        title={t('stop')}
+                      >
+                        <Square className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                   {compareResults.left && !compareResults.left.error && (
                     <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
@@ -1862,12 +2280,26 @@ export function PromptsPage() {
                       <p className="font-medium">{t('error')}</p>
                       <p className="mt-1 text-xs">{compareResults.left.error}</p>
                     </div>
-                  ) : compareResults.left ? (
-                    <MarkdownRenderer content={compareResults.left.content} />
                   ) : (
-                    <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{t('running')}</span>
+                    <div className="space-y-3">
+                      {(compareResults.left?.thinking || compareResults.left?.isThinking) && (
+                        <ThinkingBlock
+                          thinking={compareResults.left.thinking}
+                          isStreaming={compareResults.left.isThinking}
+                        />
+                      )}
+                      {compareResults.left?.content ? (
+                        <MarkdownRenderer content={compareResults.left.content} />
+                      ) : compareRunning.left ? (
+                        !compareResults.left?.isThinking && (
+                          <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>{t('running')}</span>
+                          </div>
+                        )
+                      ) : (
+                        <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1881,6 +2313,15 @@ export function PromptsPage() {
                         ? models.find((m) => m.id === compareModels[1])?.name || 'B'
                         : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
                     </Badge>
+                    {compareRunning.right && (
+                      <button
+                        onClick={() => handleStopComparison('right')}
+                        className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                        title={t('stop')}
+                      >
+                        <Square className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                   {compareResults.right && !compareResults.right.error && (
                     <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
@@ -1897,12 +2338,26 @@ export function PromptsPage() {
                       <p className="font-medium">{t('error')}</p>
                       <p className="mt-1 text-xs">{compareResults.right.error}</p>
                     </div>
-                  ) : compareResults.right ? (
-                    <MarkdownRenderer content={compareResults.right.content} />
                   ) : (
-                    <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{t('running')}</span>
+                    <div className="space-y-3">
+                      {(compareResults.right?.thinking || compareResults.right?.isThinking) && (
+                        <ThinkingBlock
+                          thinking={compareResults.right.thinking}
+                          isStreaming={compareResults.right.isThinking}
+                        />
+                      )}
+                      {compareResults.right?.content ? (
+                        <MarkdownRenderer content={compareResults.right.content} />
+                      ) : compareRunning.right ? (
+                        !compareResults.right?.isThinking && (
+                          <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>{t('running')}</span>
+                          </div>
+                        )
+                      ) : (
+                        <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
+                      )}
                     </div>
                   )}
                 </div>

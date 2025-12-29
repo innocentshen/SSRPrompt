@@ -17,9 +17,11 @@ import {
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, useToast, ModelSelector } from '../components/ui';
 import { TestCaseList, CriteriaEditor, EvaluationResultsView, RunHistory } from '../components/Evaluation';
+import { ParameterPanel } from '../components/Prompt/ParameterPanel';
 import { getDatabase, isDatabaseConfigured, getMySQLAdapter, getCurrentProvider } from '../lib/database';
 import { callAIModel, type FileAttachment } from '../lib/ai-service';
 import { getFileUploadCapabilities } from '../lib/model-capabilities';
+import { DEFAULT_PROMPT_CONFIG } from '../types/database';
 import type {
   Evaluation,
   Prompt,
@@ -31,6 +33,8 @@ import type {
   TestCaseResult,
   PromptVariable,
   EvaluationRun,
+  PromptConfig,
+  ModelParameters,
 } from '../types';
 
 const statusConfig: Record<EvaluationStatus, { labelKey: string; variant: 'info' | 'warning' | 'success' | 'error' }> = {
@@ -93,6 +97,9 @@ export function EvaluationPage() {
   const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState('');
+  // 评测模型参数配置
+  const [evalModelConfig, setEvalModelConfig] = useState<PromptConfig>(DEFAULT_PROMPT_CONFIG);
+  const [showParamsModal, setShowParamsModal] = useState(false);
   const abortControllersRef = useRef<Map<string, { aborted: boolean }>>(new Map());
   const selectedEvaluationIdRef = useRef<string | null>(null);
 
@@ -290,6 +297,23 @@ export function EvaluationPage() {
       setSelectedRun(null);
     }
   }, [selectedEvaluationId, loadEvaluationDetails]);
+
+  // 同步评测配置中的模型参数到 evalModelConfig
+  useEffect(() => {
+    if (selectedEvaluation?.config?.model_parameters) {
+      const params = selectedEvaluation.config.model_parameters;
+      setEvalModelConfig({
+        temperature: params.temperature ?? DEFAULT_PROMPT_CONFIG.temperature,
+        top_p: params.top_p ?? DEFAULT_PROMPT_CONFIG.top_p,
+        frequency_penalty: params.frequency_penalty ?? DEFAULT_PROMPT_CONFIG.frequency_penalty,
+        presence_penalty: params.presence_penalty ?? DEFAULT_PROMPT_CONFIG.presence_penalty,
+        max_tokens: params.max_tokens ?? DEFAULT_PROMPT_CONFIG.max_tokens,
+        reasoning: DEFAULT_PROMPT_CONFIG.reasoning,
+      });
+    } else {
+      setEvalModelConfig(DEFAULT_PROMPT_CONFIG);
+    }
+  }, [selectedEvaluationId]);
 
   const loadData = async () => {
     // 检查数据库是否已配置
@@ -639,6 +663,8 @@ export function EvaluationPage() {
     const judgeModelId = selectedEvaluation.judge_model_id;
     const currentTestCases = [...testCases];
     const enabledCriteria = criteria.filter((c) => c.enabled);
+    // 获取当前的模型参数
+    const modelParams = evalConfig.model_parameters;
 
     showToast('info', t('evaluationStarted'));
     setActiveTab('history');
@@ -650,6 +676,7 @@ export function EvaluationPage() {
         evaluation_id: evalId,
         status: 'running',
         results: {},
+        model_parameters: modelParams || null,
       })
       .select()
       .single();
@@ -730,7 +757,16 @@ export function EvaluationPage() {
             model.model_id,
             finalPrompt,
             undefined,
-            files.length > 0 ? files : undefined
+            files.length > 0 ? files : undefined,
+            modelParams ? {
+              parameters: {
+                temperature: modelParams.temperature,
+                top_p: modelParams.top_p,
+                max_tokens: modelParams.max_tokens,
+                frequency_penalty: modelParams.frequency_penalty,
+                presence_penalty: modelParams.presence_penalty,
+              }
+            } : undefined
           );
 
           const scores: Record<string, number> = {};
@@ -1395,7 +1431,7 @@ export function EvaluationPage() {
     );
   };
 
-  const handleUpdateConfig = async (key: string, value: number) => {
+  const handleUpdateConfig = async (key: string, value: number | ModelParameters | boolean) => {
     if (!selectedEvaluation) return;
 
     const newConfig = { ...selectedEvaluation.config, [key]: value };
@@ -1414,6 +1450,49 @@ export function EvaluationPage() {
     setEvaluations((prev) =>
       prev.map((e) => (e.id === selectedEvaluation.id ? { ...e, config: newConfig } : e))
     );
+  };
+
+  // 处理模型参数变更
+  const handleModelParametersChange = async (newConfig: PromptConfig) => {
+    setEvalModelConfig(newConfig);
+    const modelParams: ModelParameters = {
+      temperature: newConfig.temperature,
+      top_p: newConfig.top_p,
+      frequency_penalty: newConfig.frequency_penalty,
+      presence_penalty: newConfig.presence_penalty,
+      max_tokens: newConfig.max_tokens,
+    };
+    await handleUpdateConfig('model_parameters', modelParams);
+    await handleUpdateConfig('inherited_from_prompt', false);
+  };
+
+  // 处理关联 Prompt 变更时继承参数
+  const handlePromptChange = async (promptId: string | null) => {
+    await handleUpdateEvaluation('prompt_id', promptId);
+
+    if (promptId) {
+      const prompt = prompts.find(p => p.id === promptId);
+      if (prompt?.config) {
+        const newConfig: PromptConfig = {
+          temperature: prompt.config.temperature ?? DEFAULT_PROMPT_CONFIG.temperature,
+          top_p: prompt.config.top_p ?? DEFAULT_PROMPT_CONFIG.top_p,
+          frequency_penalty: prompt.config.frequency_penalty ?? DEFAULT_PROMPT_CONFIG.frequency_penalty,
+          presence_penalty: prompt.config.presence_penalty ?? DEFAULT_PROMPT_CONFIG.presence_penalty,
+          max_tokens: prompt.config.max_tokens ?? DEFAULT_PROMPT_CONFIG.max_tokens,
+          reasoning: prompt.config.reasoning ?? DEFAULT_PROMPT_CONFIG.reasoning,
+        };
+        setEvalModelConfig(newConfig);
+        const modelParams: ModelParameters = {
+          temperature: newConfig.temperature,
+          top_p: newConfig.top_p,
+          frequency_penalty: newConfig.frequency_penalty,
+          presence_penalty: newConfig.presence_penalty,
+          max_tokens: newConfig.max_tokens,
+        };
+        await handleUpdateConfig('model_parameters', modelParams);
+        await handleUpdateConfig('inherited_from_prompt', true);
+      }
+    }
   };
 
   const startEditingName = () => {
@@ -1582,7 +1661,7 @@ export function EvaluationPage() {
                   <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('linkedPrompt')}</p>
                   <Select
                     value={selectedEvaluation.prompt_id || ''}
-                    onChange={(e) => handleUpdateEvaluation('prompt_id', e.target.value || null)}
+                    onChange={(e) => handlePromptChange(e.target.value || null)}
                     options={[
                       { value: '', label: t('noLinkedPrompt') },
                       ...prompts.map((p) => ({ value: p.id, label: `${p.name} (v${p.current_version})` })),
@@ -1595,7 +1674,16 @@ export function EvaluationPage() {
                   )}
                 </div>
                 <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('targetModel')}</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-slate-500 light:text-slate-600">{t('targetModel')}</p>
+                    <button
+                      onClick={() => setShowParamsModal(true)}
+                      className="p-1 text-slate-400 hover:text-cyan-400 light:text-slate-500 light:hover:text-cyan-600 transition-colors rounded hover:bg-slate-700/50 light:hover:bg-slate-100"
+                      title={t('modelParameters')}
+                    >
+                      <Settings2 className="w-4 h-4" />
+                    </button>
+                  </div>
                   <ModelSelector
                     models={models}
                     providers={providers}
@@ -1603,6 +1691,11 @@ export function EvaluationPage() {
                     onSelect={(modelId) => handleUpdateEvaluation('model_id', modelId || null)}
                     placeholder={t('selectModel')}
                   />
+                  {selectedEvaluation.config.inherited_from_prompt && (
+                    <p className="text-xs text-cyan-400 light:text-cyan-600 mt-1">
+                      {t('inheritedFromPrompt')}
+                    </p>
+                  )}
                 </div>
                 <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
                   <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('judgeModel')}</p>
@@ -1761,11 +1854,26 @@ export function EvaluationPage() {
                   results.length > 0 && selectedRun ? (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <span className="text-sm text-slate-400 light:text-slate-600">{t('currentViewing')}</span>
                           <Badge variant={statusConfig[selectedRun.status].variant}>
                             {new Date(selectedRun.started_at).toLocaleString()}
                           </Badge>
+                          {/* 紧凑的模型参数标签 */}
+                          {selectedRun.model_parameters && (
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500 light:text-slate-500">
+                              <Settings2 className="w-3 h-3" />
+                              <span>T:{selectedRun.model_parameters.temperature}</span>
+                              <span>•</span>
+                              <span>Max:{selectedRun.model_parameters.max_tokens}</span>
+                              {selectedRun.model_parameters.top_p !== undefined && (
+                                <>
+                                  <span>•</span>
+                                  <span>P:{selectedRun.model_parameters.top_p}</span>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                         {runs.length > 1 && (
                           <button
@@ -1860,6 +1968,23 @@ export function EvaluationPage() {
             </Button>
             <Button onClick={handleCreateEvaluation} disabled={!newEvalName.trim()}>
               {tCommon('create')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 模型参数配置 Modal */}
+      <Modal isOpen={showParamsModal} onClose={() => setShowParamsModal(false)} title={t('modelParameters')}>
+        <div className="space-y-4">
+          <ParameterPanel
+            config={evalModelConfig}
+            onChange={handleModelParametersChange}
+            modelId={models.find(m => m.id === selectedEvaluation?.model_id)?.model_id}
+            defaultOpen={true}
+          />
+          <div className="flex justify-end pt-4 border-t border-slate-700 light:border-slate-200">
+            <Button onClick={() => setShowParamsModal(false)}>
+              {tCommon('confirm')}
             </Button>
           </div>
         </div>

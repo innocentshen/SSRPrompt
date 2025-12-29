@@ -9,5 +9,21 @@
   "enterSystem": "进入系统",
   "keepPasswordSafe": "请妥善保管您的访问密码",
   "starOnGithub": "Star on GitHub",
-  "likeItStarIt": "如果觉得不错，请给我一个 Star"
+  "likeItStarIt": "如果觉得不错，请给我一个 Star",
+  "selectTenant": "选择空间",
+  "demoTenant": "Demo 空间",
+  "demoTenantDesc": "快速体验，无需配置数据库",
+  "personalTenant": "个人空间",
+  "personalTenantDesc": "私有数据，需配置自己的数据库",
+  "enterDemo": "进入 Demo",
+  "enterPersonal": "进入个人空间",
+  "demoNotConfigured": "Demo 空间暂未开放",
+  "switchTenant": "切换空间",
+  "demoSettingsAuth": "设置访问验证",
+  "demoSettingsAuthDesc": "Demo 空间的设置需要密码验证",
+  "demoSettingsPassword": "设置密码",
+  "demoSettingsPasswordPlaceholder": "请输入设置密码",
+  "demoSettingsPasswordWrong": "密码错误",
+  "demoSettingsEnter": "进入设置",
+  "demoSettingsCancel": "取消"
 }

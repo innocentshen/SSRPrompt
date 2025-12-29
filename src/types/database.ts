@@ -131,8 +131,21 @@ export interface Evaluation {
   completed_at: string | null;
 }
 
+// 模型参数类型（用于评测配置）
+export interface ModelParameters {
+  temperature?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  max_tokens?: number;
+}
+
 export interface EvaluationConfig {
   pass_threshold?: number;
+  // 模型参数配置
+  model_parameters?: ModelParameters;
+  // 是否继承自关联 Prompt
+  inherited_from_prompt?: boolean;
 }
 
 export interface EvaluationResults {
@@ -196,6 +209,8 @@ export interface EvaluationRun {
   error_message: string | null;
   total_tokens_input: number;
   total_tokens_output: number;
+  // 运行时使用的模型参数快照
+  model_parameters?: ModelParameters;
   started_at: string;
   completed_at: string | null;
   created_at: string;
