@@ -1128,7 +1128,7 @@ export function EvaluationPage() {
           }
 
           // 判断是否通过
-          const passThreshold = (evalConfig?.passThreshold || 6) / 10;
+          const passThreshold = evalConfig?.pass_threshold || 0.6;
           const avgScore =
             Object.values(scores).length > 0
               ? Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length
@@ -1168,9 +1168,9 @@ export function EvaluationPage() {
       }
 
       const evalResults = {
-        passedCount: passed ? 1 : 0,
-        totalCount: 1,
-        overallScores,
+        passed_cases: passed ? 1 : 0,
+        total_cases: 1,
+        scores: overallScores,
         summary: t('singleTestComplete') + ', ' + (passed ? t('passed') : t('notPassed')),
       };
 
