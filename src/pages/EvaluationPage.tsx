@@ -1006,6 +1006,8 @@ export function EvaluationPage() {
     const evalConfig = selectedEvaluation.config;
     const judgeModelId = selectedEvaluation.judge_model_id;
     const enabledCriteria = criteria.filter((c) => c.enabled);
+    // 获取当前的模型参数
+    const modelParams = evalConfig.model_parameters;
 
     setRunningTestCaseId(testCase.id);
 
@@ -1016,6 +1018,7 @@ export function EvaluationPage() {
         evaluation_id: evalId,
         status: 'running',
         results: {},
+        model_parameters: modelParams || null,
       })
       .select()
       .single();
@@ -1072,7 +1075,16 @@ export function EvaluationPage() {
         model.model_id,
         finalPrompt,
         undefined,
-        files.length > 0 ? files : undefined
+        files.length > 0 ? files : undefined,
+        modelParams ? {
+          parameters: {
+            temperature: modelParams.temperature,
+            top_p: modelParams.top_p,
+            max_tokens: modelParams.max_tokens,
+            frequency_penalty: modelParams.frequency_penalty,
+            presence_penalty: modelParams.presence_penalty,
+          }
+        } : undefined
       );
 
       const latency = Date.now() - startTime;
@@ -1080,60 +1092,54 @@ export function EvaluationPage() {
       let aiFeedback: Record<string, string> = {};
       let passed = true;
 
-      // AI 评判
+      // AI 评判（与批量评测逻辑保持一致）
       if (enabledCriteria.length > 0 && judgeModelId) {
         const judgeModel = models.find((m) => m.id === judgeModelId);
         const judgeProvider = providers.find((p) => p.id === judgeModel?.provider_id);
 
         if (judgeModel && judgeProvider) {
           for (const criterion of enabledCriteria) {
-            const criterionDescription = criterion.description ? t('judgeDescriptionPrefix') + criterion.description : '';
-            const criterionPrompt = criterion.prompt ? t('judgePromptPrefix') + criterion.prompt : '';
-            const expectedOutput = testCase.expected_output ? t('judgeExpectedOutputPrefix') + testCase.expected_output : '';
-
-            const judgePrompt = t('judgePromptTemplate', {
-              criterionName: criterion.name,
-              criterionDescription,
-              criterionPrompt,
-              userInput: testCase.input_text,
-              modelOutput: aiResult.content,
-              expectedOutput,
-            });
-
             try {
-              const judgeResult = await callAIModel(
+              let evalPrompt = criterion.prompt;
+              evalPrompt = evalPrompt.replace(/{{input}}/g, testCase.input_text || '');
+              evalPrompt = evalPrompt.replace(/{{output}}/g, aiResult.content);
+              if (testCase.expected_output) {
+                evalPrompt = evalPrompt.replace(/{{#expected}}[\s\S]*?{{\/expected}}/g,
+                  evalPrompt.match(/{{#expected}}([\s\S]*?){{\/expected}}/)?.[1]?.replace(/{{expected}}/g, testCase.expected_output) || ''
+                );
+                evalPrompt = evalPrompt.replace(/{{expected}}/g, testCase.expected_output);
+              } else {
+                evalPrompt = evalPrompt.replace(/{{#expected}}[\s\S]*?{{\/expected}}/g, '');
+              }
+
+              const evalResponse = await callAIModel(
                 judgeProvider,
                 judgeModel.model_id,
-                judgePrompt
+                evalPrompt
               );
 
-              const scorePattern = t('judgeScorePattern');
-              const reasonPattern = t('judgeReasonPattern');
-              const scoreRegex = new RegExp(`${scorePattern}[：:]\\s*(\\d+(?:\\.\\d+)?)`);
-              const reasonRegex = new RegExp(`${reasonPattern}[：:]\\s*(.+?)(?:\\n|$)`, 's');
-
-              const scoreMatch = judgeResult.content.match(scoreRegex);
-              const reasonMatch = judgeResult.content.match(reasonRegex);
-
-              if (scoreMatch) {
-                const score = Math.min(10, Math.max(0, parseFloat(scoreMatch[1]))) / 10;
+              const jsonMatch = evalResponse.content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
+              if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                const score = Math.min(1, Math.max(0, (parsed.score || 0) / 10));
                 scores[criterion.name] = score;
-                if (reasonMatch) {
-                  aiFeedback[criterion.name] = reasonMatch[1].trim();
-                }
+                aiFeedback[criterion.name] = parsed.reason || '';
               }
             } catch (error) {
               console.error('Judge error:', error);
+              scores[criterion.name] = 0;
+              aiFeedback[criterion.name] = t('evaluationFailed');
             }
           }
 
-          // 判断是否通过
-          const passThreshold = evalConfig?.pass_threshold || 0.6;
-          const avgScore =
-            Object.values(scores).length > 0
-              ? Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length
-              : 1;
-          passed = avgScore >= passThreshold;
+          // 判断是否通过（使用加权平均，与批量评测一致）
+          const avgScore = Object.keys(scores).length > 0
+            ? Object.keys(scores).reduce((sum, name) => {
+                const criterion = enabledCriteria.find(c => c.name === name);
+                return sum + scores[name] * (criterion?.weight || 1);
+              }, 0) / enabledCriteria.reduce((sum, c) => sum + c.weight, 0)
+            : 1;
+          passed = avgScore >= (evalConfig?.pass_threshold || 0.6);
         }
       }
 
