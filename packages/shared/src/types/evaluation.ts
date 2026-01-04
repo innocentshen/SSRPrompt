@@ -1,4 +1,7 @@
 // Evaluation Types
+import type { FileAttachment } from './trace';
+export type { FileAttachment };
+
 export type EvaluationStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface ModelParameters {
@@ -49,12 +52,6 @@ export interface UpdateEvaluationDto {
 }
 
 // Test Case Types
-export interface FileAttachment {
-  name: string;
-  type: string;
-  base64: string;
-}
-
 export interface TestCase {
   id: string;
   evaluationId: string;

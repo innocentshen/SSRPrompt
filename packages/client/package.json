@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ssrprompt/shared": "workspace:*",
+    "@supabase/supabase-js": "^2.89.0",
     "i18next": "^25.7.3",
     "i18next-browser-languagedetector": "^8.2.0",
     "lucide-react": "^0.344.0",

@@ -1,8 +1,19 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { ZodError } from 'zod';
 import { AppError, ErrorCodes } from '@ssrprompt/shared';
 import { Prisma } from '@prisma/client';
 import { env } from '../config/env.js';
+
+/**
+ * Wrapper for async route handlers to catch errors
+ */
+export function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
 
 /**
  * Global error handling middleware

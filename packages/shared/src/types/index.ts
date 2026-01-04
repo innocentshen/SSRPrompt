@@ -1,8 +1,8 @@
 // Re-export all types
 export * from './provider';
 export * from './prompt';
-export * from './evaluation';
 export * from './trace';
+export * from './evaluation';
 
 // Common API Response Types
 export interface ApiResponse<T> {

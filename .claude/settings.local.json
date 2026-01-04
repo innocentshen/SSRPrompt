@@ -53,7 +53,17 @@
       "WebFetch(domain:deepmind.google)",
       "Bash(ls:*)",
       "Bash(git -C:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(pnpm run dev:all)",
+      "Bash(npx pnpm run dev:all)",
+      "Bash(npx pnpm install:*)",
+      "Bash(npx pnpm run build)",
+      "Bash(npx pnpm run db:generate:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(node:*)",
+      "Bash(npx pnpm add:*)",
+      "Bash(if [ -d \"F:/ssrprompt/node_modules\" ])",
+      "Bash(npx pnpm:*)"
     ]
   }
 }
