@@ -1,0 +1,256 @@
+// Prisma Schema for SSRPrompt
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ Enums ============
+
+enum ProviderType {
+  openai
+  anthropic
+  gemini
+  custom
+  openrouter
+}
+
+enum EvaluationStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum TraceStatus {
+  success
+  error
+}
+
+// ============ Configuration Models ============
+
+model Provider {
+  id        String       @id @default(uuid())
+  userId    String       @default("default") @map("user_id")
+  name      String
+  type      ProviderType
+  apiKey    String       @map("api_key_encrypted") // AES-256-GCM encrypted
+  baseUrl   String?      @map("base_url")
+  enabled   Boolean      @default(false)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  models Model[]
+
+  @@index([userId])
+  @@map("providers")
+}
+
+model Model {
+  id                      String   @id @default(uuid())
+  providerId              String   @map("provider_id")
+  modelId                 String   @map("model_id")
+  name                    String
+  capabilities            Json     @default("[]")
+  supportsVision          Boolean  @default(true) @map("supports_vision")
+  supportsReasoning       Boolean  @default(false) @map("supports_reasoning")
+  supportsFunctionCalling Boolean  @default(false) @map("supports_function_calling")
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  provider    Provider     @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  prompts     Prompt[]     @relation("DefaultModel")
+  evaluations Evaluation[] @relation("EvaluationModel")
+  judgeEvals  Evaluation[] @relation("JudgeModel")
+  traces      Trace[]
+
+  @@index([providerId])
+  @@map("models")
+}
+
+// ============ Prompt Management ============
+
+model Prompt {
+  id             String   @id @default(uuid())
+  userId         String   @default("default") @map("user_id")
+  name           String
+  description    String?
+  content        String?
+  variables      Json     @default("[]")
+  messages       Json     @default("[]")
+  config         Json     @default("{}")
+  currentVersion Int      @default(1) @map("current_version")
+  defaultModelId String?  @map("default_model_id")
+  orderIndex     Int      @default(0) @map("order_index")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  defaultModel Model?          @relation("DefaultModel", fields: [defaultModelId], references: [id], onDelete: SetNull)
+  versions     PromptVersion[]
+  evaluations  Evaluation[]
+  traces       Trace[]
+
+  @@index([userId])
+  @@index([orderIndex])
+  @@map("prompts")
+}
+
+model PromptVersion {
+  id            String   @id @default(uuid())
+  promptId      String   @map("prompt_id")
+  version       Int
+  content       String
+  commitMessage String?  @map("commit_message")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@unique([promptId, version])
+  @@index([promptId])
+  @@map("prompt_versions")
+}
+
+// ============ Evaluation System ============
+
+model Evaluation {
+  id           String           @id @default(uuid())
+  userId       String           @default("default") @map("user_id")
+  name         String
+  promptId     String?          @map("prompt_id")
+  modelId      String?          @map("model_id")
+  judgeModelId String?          @map("judge_model_id")
+  status       EvaluationStatus @default(pending)
+  config       Json             @default("{}")
+  results      Json             @default("{}")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  completedAt  DateTime?        @map("completed_at")
+
+  prompt         Prompt?               @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  model          Model?                @relation("EvaluationModel", fields: [modelId], references: [id], onDelete: SetNull)
+  judgeModel     Model?                @relation("JudgeModel", fields: [judgeModelId], references: [id], onDelete: SetNull)
+  testCases      TestCase[]
+  criteria       EvaluationCriterion[]
+  runs           EvaluationRun[]
+  testCaseResults TestCaseResult[]
+
+  @@index([userId])
+  @@index([promptId])
+  @@index([status])
+  @@map("evaluations")
+}
+
+model TestCase {
+  id             String   @id @default(uuid())
+  evaluationId   String   @map("evaluation_id")
+  name           String   @default("")
+  inputText      String   @map("input_text")
+  inputVariables Json     @default("{}") @map("input_variables")
+  attachments    Json     @default("[]")
+  expectedOutput String?  @map("expected_output")
+  notes          String?
+  orderIndex     Int      @default(0) @map("order_index")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation       @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  results    TestCaseResult[]
+
+  @@index([evaluationId])
+  @@index([evaluationId, orderIndex])
+  @@map("test_cases")
+}
+
+model EvaluationCriterion {
+  id           String   @id @default(uuid())
+  evaluationId String   @map("evaluation_id")
+  name         String
+  description  String?
+  prompt       String?
+  weight       Decimal  @default(1.0) @db.Decimal(5, 2)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId])
+  @@map("evaluation_criteria")
+}
+
+model EvaluationRun {
+  id                String           @id @default(uuid())
+  evaluationId      String           @map("evaluation_id")
+  status            EvaluationStatus @default(pending)
+  results           Json             @default("{}")
+  errorMessage      String?          @map("error_message")
+  totalTokensInput  Int              @default(0) @map("total_tokens_input")
+  totalTokensOutput Int              @default(0) @map("total_tokens_output")
+  modelParameters   Json?            @map("model_parameters")
+  startedAt         DateTime         @default(now()) @map("started_at")
+  completedAt       DateTime?        @map("completed_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  evaluation      Evaluation       @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  testCaseResults TestCaseResult[]
+
+  @@index([evaluationId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("evaluation_runs")
+}
+
+model TestCaseResult {
+  id           String   @id @default(uuid())
+  evaluationId String   @map("evaluation_id")
+  testCaseId   String   @map("test_case_id")
+  runId        String?  @map("run_id")
+  modelOutput  String?  @map("model_output")
+  scores       Json     @default("{}")
+  aiFeedback   Json     @default("{}") @map("ai_feedback")
+  latencyMs    Int      @default(0) @map("latency_ms")
+  tokensInput  Int      @default(0) @map("tokens_input")
+  tokensOutput Int      @default(0) @map("tokens_output")
+  passed       Boolean  @default(false)
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation     @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  testCase   TestCase       @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  run        EvaluationRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId])
+  @@index([testCaseId])
+  @@index([runId])
+  @@map("test_case_results")
+}
+
+// ============ Traces ============
+
+model Trace {
+  id              String      @id @default(uuid())
+  userId          String      @default("default") @map("user_id")
+  promptId        String?     @map("prompt_id")
+  modelId         String?     @map("model_id")
+  input           String
+  output          String?
+  tokensInput     Int         @default(0) @map("tokens_input")
+  tokensOutput    Int         @default(0) @map("tokens_output")
+  latencyMs       Int         @default(0) @map("latency_ms")
+  status          TraceStatus @default(success)
+  errorMessage    String?     @map("error_message")
+  metadata        Json        @default("{}")
+  attachments     Json?
+  thinkingContent String?     @map("thinking_content")
+  thinkingTimeMs  Int?        @map("thinking_time_ms")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  prompt Prompt? @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  model  Model?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([promptId])
+  @@index([createdAt(sort: Desc)])
+  @@map("traces")
+}

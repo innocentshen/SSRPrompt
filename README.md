@@ -6,10 +6,20 @@
 
 [English](./README_EN.md) | [日本語](./README_JA.md) | 简体中文 | [官网](https://www.ssrprompt.com)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/innocentshen/ssrprompt)
 [![License](https://img.shields.io/badge/license-GPL-blue.svg)](./LICENSE)
 
 </div>
+
+## v2.0 架构升级
+
+SSRPrompt v2.0 采用全新的前后端分离架构，带来更好的安全性、可维护性和扩展性：
+
+- **Monorepo 架构** - 使用 pnpm workspace 管理多包项目
+- **API Key 加密存储** - AES-256-GCM 加密保护敏感信息
+- **后端 AI 代理** - 所有 AI 调用通过后端代理，前端不接触 API Key
+- **SSE 流式响应** - 支持实时流式输出，优化用户体验
+- **多租户隔离** - 强制用户数据隔离，保障数据安全
+- **PostgreSQL** - 统一使用 PostgreSQL 数据库
 
 ## 功能特性
 
@@ -23,190 +33,243 @@
 
 ### 高级特性
 
-- **多模型支持** - 支持 OpenAI、Anthropic、Google Gemini、Azure OpenAI、DeepSeek 等多种 AI 服务商
-- **推理模型支持** - 支持 Claude 3.5、DeepSeek R1 等推理模型的 Thinking 输出展示
+- **多模型支持** - 支持 OpenAI、Anthropic、Google Gemini、OpenRouter 等多种 AI 服务商
+- **推理模型支持** - 支持 Claude、DeepSeek R1 等推理模型的 Thinking 输出展示
 - **附件支持** - 支持图片、PDF、文档等多种文件类型作为上下文（视觉模型）
 - **版本管理** - Prompt 版本历史和对比功能
-- **数据库迁移** - 自动检测和升级数据库结构，支持平滑升级
+- **实时流式输出** - SSE 流式响应，支持中断和重试
 
 ### 平台特性
 
-- **Demo 空间** - 无需配置数据库即可快速体验系统（租户隔离模式）
-- **多数据库支持** - 支持 Supabase（云端）和 MySQL（自建）两种数据库
+- **Demo 模式** - 无需配置即可快速体验系统（7天有效期）
 - **多语言支持** - 支持简体中文、繁体中文、英文、日文
-- **前端配置** - 无需修改代码，直接在设置页面配置数据库和 AI 服务商
 - **主题切换** - 支持明暗主题切换
-- **访问控制** - 密码保护确保数据安全
-- **首次配置向导** - 引导用户完成初始设置
+- **JWT 认证** - 安全的用户认证机制
 
 ## 技术栈
 
-### 前端
+### 前端 (packages/client)
 - **框架**: React 18 + TypeScript
 - **构建工具**: Vite 5
 - **样式**: Tailwind CSS 3
 - **状态管理**: Zustand
-- **国际化**: i18next + react-i18next
-- **UI 组件**: 自定义组件库 + Lucide React 图标
-- **数据库客户端**: Supabase JS
+- **国际化**: i18next
+- **UI 组件**: 自定义组件库 + Lucide React
 
-### 后端
+### 后端 (packages/server)
 - **框架**: Express.js + TypeScript
-- **数据库**: MySQL 8 / PostgreSQL (Supabase)
-- **开发工具**: tsx + nodemon
+- **ORM**: Prisma
+- **数据库**: PostgreSQL
+- **认证**: JWT
+- **加密**: AES-256-GCM
+
+### 共享 (packages/shared)
+- **类型定义**: TypeScript
+- **验证**: Zod
+- **错误码**: 统一错误处理
 
 ## 快速开始
 
 ### 环境要求
 
 - Node.js >= 18
-- npm >= 9
+- pnpm >= 8
+- PostgreSQL >= 14
 
-### 安装依赖
+### 安装
 
 ```bash
-# 安装前端依赖
-npm install
+# 克隆项目
+git clone https://github.com/innocentshen/ssrprompt.git
+cd ssrprompt
 
-# 安装后端依赖（如需使用 MySQL）
-cd server && npm install
+# 安装依赖
+pnpm install
 ```
 
-### 启动项目
+### 配置
+
+```bash
+# 复制环境变量模板
+cp packages/server/.env.example packages/server/.env
+
+# 编辑配置文件
+# 设置 DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY
+```
+
+**必需的环境变量：**
+
+```env
+# 数据库连接
+DATABASE_URL=postgresql://postgres:password@localhost:5432/ssrprompt
+
+# JWT 密钥（至少32字符）
+JWT_SECRET=your-jwt-secret-at-least-32-characters-long
+
+# 加密密钥（64位十六进制字符串）
+ENCRYPTION_KEY=your-64-character-hex-string-for-aes-256-encryption
+
+# 生成 ENCRYPTION_KEY:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### 初始化数据库
+
+```bash
+# 生成 Prisma Client
+pnpm db:generate
+
+# 推送数据库 Schema
+pnpm db:push
+
+# 可选：打开 Prisma Studio
+pnpm db:studio
+```
+
+### 启动开发服务器
 
 ```bash
 # 同时启动前端和后端（推荐）
-npm run dev:all
+pnpm dev:all
 
-# 或仅启动前端（使用 Supabase 或 Demo 模式）
-npm run dev
+# 或分别启动
+pnpm dev          # 前端 http://localhost:5173
+pnpm dev:server   # 后端 http://localhost:3001
 ```
-
-### 访问应用
-
-- **前端**: http://localhost:5173
-- **后端 API**: http://localhost:3001
-
-默认密码：`admin123`
-
-## 使用模式
-
-项目支持两种使用模式：
-
-### Demo 空间（快速体验）
-
-无需任何配置即可立即开始使用。Demo 空间使用预配置的数据库，每个用户的数据通过唯一 ID 进行隔离。
-
-**适用场景**：
-- 快速了解产品功能
-- 临时测试和演示
-- 无需长期保存数据的使用
-
-### 个人空间（私有部署）
-
-使用自己的数据库配置，完全控制数据存储。
-
-**适用场景**：
-- 生产环境使用
-- 数据安全性要求高
-- 需要长期保存和管理数据
-
-## 数据库配置
-
-项目支持两种数据库方案，可以在应用的 **设置 > 数据库** 页面直接配置。
-
-### 方案 1：Supabase（推荐快速开始）
-
-**优点**：
-- 免费额度充足，适合个人和小团队
-- 零配置，无需本地数据库和后端服务
-- 自动备份和高可用
-- 提供可视化管理界面
-
-**配置步骤**：
-1. 在 [supabase.com](https://supabase.com) 创建免费项目
-2. 从 Settings > API 获取 Project URL 和 Anon Key
-3. 在应用设置页面选择 Supabase，填入连接信息
-4. 点击 **初始化表结构**，复制 SQL 到 Supabase SQL Editor 执行
-5. 点击 **测试连接**，成功后保存配置
-
-### 方案 2：MySQL（推荐私有部署）
-
-**优点**：
-- 完全控制数据
-- 无带宽限制
-- 适合企业内网部署
-
-**配置步骤**：
-1. 确保后端服务已启动：`npm run dev:all`
-2. 在应用设置页面选择 MySQL，填入连接信息
-3. 点击 **测试连接** 验证配置
-4. 点击 **初始化表结构** 创建数据表
-5. 保存配置
-
-### 数据库升级
-
-当项目更新涉及数据库结构变更时：
-
-- **MySQL 用户**：测试连接后会自动检测版本，点击"升级表结构"按钮一键升级
-- **Supabase 用户**：测试连接后如有更新，点击"升级表结构"获取升级 SQL，手动执行
 
 ## 项目结构
 
 ```
-.
-├── src/                          # 前端源码
-│   ├── components/              # React 组件
-│   │   ├── Common/             # 通用组件
-│   │   ├── Evaluation/         # 评测相关组件
-│   │   ├── Layout/             # 布局组件
-│   │   ├── Prompt/             # Prompt 编辑相关组件
-│   │   ├── Settings/           # 设置相关组件
-│   │   ├── Setup/              # 初始化向导组件
-│   │   └── ui/                 # 通用 UI 组件
-│   ├── contexts/               # React Context
-│   ├── lib/                    # 工具库
-│   │   ├── database/           # 数据库抽象层
-│   │   │   ├── migrations/     # 数据库迁移文件
-│   │   │   ├── index.ts        # 数据库初始化
-│   │   │   ├── types.ts        # 类型定义
-│   │   │   ├── supabase-adapter.ts
-│   │   │   └── mysql-adapter.ts
-│   │   ├── ai-service.ts       # AI 服务调用
-│   │   ├── tenant.ts           # 租户/空间管理
-│   │   └── prompt-analyzer.ts  # Prompt 分析器
-│   ├── locales/                # 多语言翻译文件
-│   │   ├── en/                 # 英文
-│   │   ├── ja/                 # 日文
-│   │   ├── zh-CN/              # 简体中文
-│   │   └── zh-TW/              # 繁体中文
-│   ├── pages/                  # 页面组件
-│   │   ├── HomePage.tsx        # 首页引导
-│   │   ├── PromptsPage.tsx     # Prompt 开发
-│   │   ├── PromptWizardPage.tsx # Prompt 创建向导
-│   │   ├── EvaluationPage.tsx  # 评测中心
-│   │   ├── TracesPage.tsx      # 历史记录
-│   │   ├── SettingsPage.tsx    # 设置
-│   │   └── LoginPage.tsx       # 登录/空间选择
-│   └── types/                  # TypeScript 类型
-├── server/                      # 后端源码（MySQL 代理）
-│   └── src/
-│       ├── routes/             # API 路由
-│       ├── services/           # 数据库服务
-│       └── utils/              # 工具函数
-├── public/                      # 静态资源
-└── package.json
+ssrprompt/
+├── packages/
+│   ├── client/                    # 前端 React 应用
+│   │   ├── src/
+│   │   │   ├── api/               # API Client
+│   │   │   │   ├── client.ts      # HTTP 客户端
+│   │   │   │   ├── providers.ts   # 服务商 API
+│   │   │   │   ├── prompts.ts     # Prompt API
+│   │   │   │   ├── evaluations.ts # 评测 API
+│   │   │   │   ├── traces.ts      # 追踪 API
+│   │   │   │   └── chat.ts        # 流式聊天 API
+│   │   │   ├── components/        # UI 组件
+│   │   │   ├── pages/             # 页面组件
+│   │   │   ├── store/             # Zustand Store
+│   │   │   └── locales/           # 多语言文件
+│   │   ├── public/                # 静态资源
+│   │   ├── index.html
+│   │   ├── vite.config.ts
+│   │   └── package.json
+│   │
+│   ├── server/                    # 后端 Express 应用
+│   │   ├── src/
+│   │   │   ├── config/            # 配置
+│   │   │   │   ├── env.ts         # 环境变量验证
+│   │   │   │   └── database.ts    # 数据库连接
+│   │   │   ├── controllers/       # 控制器
+│   │   │   ├── services/          # 业务逻辑
+│   │   │   ├── repositories/      # 数据访问层
+│   │   │   ├── routes/            # 路由定义
+│   │   │   ├── middleware/        # 中间件
+│   │   │   │   ├── auth.ts        # JWT 认证
+│   │   │   │   ├── cors.ts        # CORS 配置
+│   │   │   │   └── error-handler.ts
+│   │   │   └── utils/             # 工具函数
+│   │   │       ├── crypto.ts      # 加密工具
+│   │   │       └── transform.ts   # 数据转换
+│   │   ├── prisma/
+│   │   │   └── schema.prisma      # 数据库 Schema
+│   │   ├── scripts/
+│   │   │   └── migrate-data.ts    # 数据迁移脚本
+│   │   └── package.json
+│   │
+│   └── shared/                    # 共享代码
+│       └── src/
+│           ├── types/             # 类型定义
+│           ├── schemas/           # Zod 验证 Schema
+│           ├── errors/            # 错误码定义
+│           └── constants/         # 常量
+│
+├── package.json                   # Monorepo 根配置
+├── pnpm-workspace.yaml            # pnpm workspace
+└── tsconfig.base.json             # 共享 TS 配置
 ```
 
-## 数据库表结构
+## API 文档
 
-项目包含 11 张数据表：
+### 认证
+
+```
+POST /api/v1/auth/demo-token    # 获取 Demo Token
+```
+
+### 服务商和模型
+
+```
+GET    /api/v1/providers              # 获取服务商列表
+POST   /api/v1/providers              # 创建服务商
+GET    /api/v1/providers/:id          # 获取服务商详情
+PUT    /api/v1/providers/:id          # 更新服务商
+DELETE /api/v1/providers/:id          # 删除服务商
+
+GET    /api/v1/models                 # 获取所有模型
+GET    /api/v1/providers/:id/models   # 获取服务商的模型
+POST   /api/v1/providers/:id/models   # 添加模型
+PUT    /api/v1/models/:id             # 更新模型
+DELETE /api/v1/models/:id             # 删除模型
+```
+
+### Prompts
+
+```
+GET    /api/v1/prompts                # 获取 Prompt 列表
+POST   /api/v1/prompts                # 创建 Prompt
+GET    /api/v1/prompts/:id            # 获取 Prompt 详情
+PUT    /api/v1/prompts/:id            # 更新 Prompt
+DELETE /api/v1/prompts/:id            # 删除 Prompt
+
+GET    /api/v1/prompts/:id/versions   # 获取版本历史
+POST   /api/v1/prompts/:id/versions   # 创建新版本
+```
+
+### 评测
+
+```
+GET    /api/v1/evaluations            # 获取评测列表
+POST   /api/v1/evaluations            # 创建评测
+GET    /api/v1/evaluations/:id        # 获取评测详情
+PUT    /api/v1/evaluations/:id        # 更新评测
+DELETE /api/v1/evaluations/:id        # 删除评测
+POST   /api/v1/evaluations/:id/copy   # 复制评测
+
+POST   /api/v1/evaluations/:id/test-cases   # 创建测试用例
+POST   /api/v1/evaluations/:id/criteria     # 创建评价标准
+POST   /api/v1/evaluations/:id/runs         # 创建运行记录
+```
+
+### 聊天（流式）
+
+```
+POST   /api/v1/chat/completions       # 聊天补全（支持 SSE 流式）
+```
+
+### 追踪和统计
+
+```
+GET    /api/v1/traces                 # 获取追踪列表（分页）
+POST   /api/v1/traces                 # 创建追踪记录
+DELETE /api/v1/traces/:id             # 删除追踪
+
+GET    /api/v1/stats/usage            # 获取使用统计
+```
+
+## 数据库 Schema
+
+项目使用 Prisma ORM，包含以下数据表：
 
 | 表名 | 说明 |
 |------|------|
-| `schema_migrations` | 迁移版本记录 |
-| `providers` | AI 服务商配置 |
-| `models` | 模型信息（含视觉/推理能力标识） |
+| `providers` | AI 服务商配置（API Key 加密存储） |
+| `models` | 模型信息 |
 | `prompts` | Prompt 管理 |
 | `prompt_versions` | Prompt 版本历史 |
 | `evaluations` | 评测项目 |
@@ -220,57 +283,91 @@ npm run dev
 
 ```bash
 # 开发
-npm run dev          # 启动前端开发服务器
-npm run dev:server   # 启动后端开发服务器
-npm run dev:all      # 同时启动前后端
+pnpm dev              # 启动前端
+pnpm dev:server       # 启动后端
+pnpm dev:all          # 同时启动前后端
 
 # 构建
-npm run build        # 构建前端
-npm run build:server # 构建后端
+pnpm build            # 构建前端
+pnpm build:server     # 构建后端
+pnpm build:all        # 构建全部
+
+# 数据库
+pnpm db:generate      # 生成 Prisma Client
+pnpm db:push          # 推送 Schema 到数据库
+pnpm db:migrate       # 运行数据库迁移
+pnpm db:studio        # 打开 Prisma Studio
 
 # 代码质量
-npm run lint         # ESLint 检查
-npm run typecheck    # TypeScript 类型检查
+pnpm lint             # ESLint 检查
+pnpm typecheck        # TypeScript 类型检查
 ```
 
-## 环境变量
+## 数据迁移
 
-复制 `.env.example` 到 `.env`（可选，也可在设置页面配置）：
+从旧版本迁移数据：
 
-```env
-# 访问密码（默认：admin123，生产环境请修改）
-VITE_APP_PASSWORD=admin123
+```bash
+# 设置环境变量
+export OLD_DATABASE_URL="mysql://..."    # 旧数据库
+export DATABASE_URL="postgresql://..."   # 新数据库
+export ENCRYPTION_KEY="..."              # 加密密钥
 
-# MySQL 代理服务器配置（使用 MySQL 时需要）
-VITE_MYSQL_PROXY_URL=http://localhost:3001/api/mysql-proxy
-VITE_MYSQL_PROXY_API_KEY=your_secure_api_key_here
+# 运行迁移脚本
+cd packages/server
+npx tsx scripts/migrate-data.ts
+```
 
-# Demo 空间数据库配置（可选，用于快速体验功能）
-# Supabase 配置
-VITE_DEMO_DB_PROVIDER=supabase
-VITE_DEMO_SUPABASE_URL=your_supabase_url
-VITE_DEMO_SUPABASE_ANON_KEY=your_supabase_anon_key
+迁移脚本会：
+- 迁移所有实体（Providers, Models, Prompts, Evaluations, Traces）
+- 使用 AES-256-GCM 加密 API Keys
+- 保留外键关系
+- 生成迁移报告
 
-# 或 MySQL 配置
-# VITE_DEMO_DB_PROVIDER=mysql
-# VITE_DEMO_MYSQL_HOST=localhost
-# VITE_DEMO_MYSQL_PORT=3306
-# VITE_DEMO_MYSQL_DATABASE=ssrprompt_demo
-# VITE_DEMO_MYSQL_USER=root
-# VITE_DEMO_MYSQL_PASSWORD=password
+## 安全特性
+
+### API Key 加密
+
+所有 API Key 使用 AES-256-GCM 对称加密存储：
+
+```typescript
+// 加密格式: iv:authTag:encrypted (十六进制)
+const encrypted = encrypt(apiKey);
+const decrypted = decrypt(encrypted);
+```
+
+### JWT 认证
+
+- Token 有效期：7 天
+- 支持 Demo 和 Personal 两种租户类型
+- Token 过期自动刷新（Demo 模式）
+
+### 多租户隔离
+
+所有数据查询强制包含 `userId` 过滤：
+
+```typescript
+// TenantRepository 基类强制用户隔离
+async findAll(userId: string) {
+  return this.prisma.findMany({
+    where: { userId }
+  });
+}
+```
+
+### 环境变量验证
+
+服务器启动时使用 Zod 验证必需的环境变量：
+
+```typescript
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  JWT_SECRET: z.string().min(32),
+  ENCRYPTION_KEY: z.string().length(64),
+});
 ```
 
 ## 部署
-
-### Vercel 一键部署（推荐）
-
-点击下方按钮即可一键部署到 Vercel：
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/innocentshen/ssrprompt)
-
-### Zeabur 部署
-
-项目已适配 Zeabur 平台，支持一键部署。
 
 ### Docker 部署
 
@@ -278,35 +375,35 @@ VITE_DEMO_SUPABASE_ANON_KEY=your_supabase_anon_key
 docker-compose up -d
 ```
 
-详细部署指南请参考 [DEPLOYMENT.md](./DEPLOYMENT.md)
+### 环境变量配置
 
-## 安全提示
+生产环境必须配置：
 
-- 默认密码 `admin123` 仅用于开发环境，生产环境务必修改
-- API Key 应使用强随机字符串
-- 建议在生产环境启用 HTTPS
-- Supabase Anon Key 是公开密钥，通过 RLS 策略保护数据安全
-- Demo 空间数据通过用户唯一 ID 进行隔离，但不保证数据隐私性
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://...
+JWT_SECRET=<强随机字符串，至少32字符>
+ENCRYPTION_KEY=<64位十六进制字符串>
+CORS_ORIGINS=https://your-domain.com
+```
 
 ## 开发指南
 
-### 数据库迁移
+### 添加新 API
 
-当需要修改数据库表结构时，请参考 [CLAUDE.md](./CLAUDE.md) 中的数据库迁移规范。
-
-当前迁移版本：
-- 001: 初始表结构
-- 003: 模型视觉能力支持
-- 004: 推理模型支持（Thinking）
-- 005: 评测模型参数扩展
+1. 在 `packages/shared/src/types/` 添加类型定义
+2. 在 `packages/shared/src/schemas/` 添加 Zod 验证
+3. 在 `packages/server/src/repositories/` 添加数据访问层
+4. 在 `packages/server/src/services/` 添加业务逻辑
+5. 在 `packages/server/src/controllers/` 添加控制器
+6. 在 `packages/server/src/routes/` 添加路由
+7. 在 `packages/client/src/api/` 添加前端 API 客户端
 
 ### 代码规范
 
-项目使用 ESLint + TypeScript 进行代码质量检查：
-
 ```bash
-npm run lint
-npm run typecheck
+pnpm lint        # ESLint 检查
+pnpm typecheck   # TypeScript 类型检查
 ```
 
 ## 许可证
@@ -319,6 +416,5 @@ GPL
 
 ## 相关链接
 
-- [Supabase 配置指南](./SUPABASE.md)
-- [服务器部署指南](./DEPLOYMENT.md)
+- [部署指南](./DEPLOYMENT.md)
 - [开发规范](./CLAUDE.md)

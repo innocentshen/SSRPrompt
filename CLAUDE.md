@@ -61,6 +61,10 @@ export const migration = {
    - [ ] 更新 TypeScript 类型 (src/types/database.ts)
    - [ ] 在 migrations/index.ts 中注册迁移
 
+## 工作流规范
+
+1. **代码变更前确认分支**：在进行任何代码变更前，必须先提示用户当前所在的分支名称，确保用户知悉变更将应用到哪个分支
+
 ## 代码风格
 
 - 使用 TypeScript

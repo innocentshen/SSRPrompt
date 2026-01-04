@@ -51,7 +51,9 @@
       "Bash(wc:*)",
       "WebFetch(domain:developers.googleblog.com)",
       "WebFetch(domain:deepmind.google)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git -C:*)",
+      "Bash(git mv:*)"
     ]
   }
 }

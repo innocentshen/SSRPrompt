@@ -27,6 +27,8 @@ dist-ssr
 .env.production
 .env.backup
 .env.*.local
+packages/*/.env
+packages/*/.env.local
 
 # 数据库备份
 backups/
@@ -43,3 +45,11 @@ ssl/
 
 # Docker volumes
 mysql_data/
+postgres_data/
+
+# Prisma
+packages/server/prisma/migrations/*_migration.sql
+
+# Old files to remove
+package.json.old
+package-lock.json

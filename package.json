@@ -1,45 +1,29 @@
 {
-  "name": "vite-react-typescript-starter",
+  "name": "ssrprompt",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:server": "cd server && npm run dev",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
-    "build": "vite build",
-    "build:server": "cd server && npm run build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.57.4",
-    "@types/react-window": "^1.8.8",
-    "i18next": "^25.7.3",
-    "i18next-browser-languagedetector": "^8.2.0",
-    "lucide-react": "^0.344.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-i18next": "^16.5.0",
-    "react-window": "^1.8.10",
-    "zustand": "^5.0.9"
+    "dev": "pnpm --filter @ssrprompt/client dev",
+    "dev:server": "pnpm --filter @ssrprompt/server dev",
+    "dev:all": "pnpm run --parallel dev dev:server",
+    "build": "pnpm --filter @ssrprompt/client build",
+    "build:server": "pnpm --filter @ssrprompt/server build",
+    "build:all": "pnpm run build && pnpm run build:server",
+    "lint": "pnpm --filter '*' lint",
+    "typecheck": "pnpm --filter '*' typecheck",
+    "db:generate": "pnpm --filter @ssrprompt/server prisma generate",
+    "db:push": "pnpm --filter @ssrprompt/server prisma db push",
+    "db:migrate": "pnpm --filter @ssrprompt/server prisma migrate dev",
+    "db:studio": "pnpm --filter @ssrprompt/server prisma studio"
   },
   "devDependencies": {
-    "@eslint/js": "^9.9.1",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.18",
     "concurrently": "^8.2.2",
-    "eslint": "^9.9.1",
-    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
-    "eslint-plugin-react-refresh": "^0.4.11",
-    "globals": "^15.9.0",
-    "postcss": "^8.4.35",
-    "tailwindcss": "^3.4.1",
-    "typescript": "^5.5.3",
-    "typescript-eslint": "^8.3.0",
-    "vite": "^5.4.2"
-  }
+    "typescript": "^5.5.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
 }
