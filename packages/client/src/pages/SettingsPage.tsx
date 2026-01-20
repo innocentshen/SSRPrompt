@@ -127,7 +127,7 @@ export function SettingsPage() {
   const handleAddModel = async (
     modelId: string,
     name: string,
-    options?: { supportsVision?: boolean; maxContextLength?: number }
+    options?: { supportsVision?: boolean; supportsReasoning?: boolean; maxContextLength?: number }
   ) => {
     if (!selectedProviderId) return;
     try {
@@ -136,6 +136,7 @@ export function SettingsPage() {
         name,
         capabilities: ['chat'],
         supportsVision: options?.supportsVision,
+        supportsReasoning: options?.supportsReasoning,
         maxContextLength: options?.maxContextLength,
       });
 
@@ -153,6 +154,21 @@ export function SettingsPage() {
   const handleToggleVision = async (modelId: string, supportsVision: boolean) => {
     try {
       const updated = await modelsApi.update(modelId, { supportsVision });
+      setModels((prev) =>
+        prev.map((m) => (m.id === modelId ? updated : m))
+      );
+      // Sync to global store for other pages
+      refreshGlobalStore(true);
+      invalidateModelsCache(updated);
+    } catch (err) {
+      console.error('Failed to update model:', err);
+      showToast('error', t('updateModelFailed'));
+    }
+  };
+
+  const handleToggleReasoning = async (modelId: string, supportsReasoning: boolean) => {
+    try {
+      const updated = await modelsApi.update(modelId, { supportsReasoning });
       setModels((prev) =>
         prev.map((m) => (m.id === modelId ? updated : m))
       );
@@ -273,6 +289,7 @@ export function SettingsPage() {
             onAddModel={handleAddModel}
             onRemoveModel={handleRemoveModel}
             onToggleVision={handleToggleVision}
+            onToggleReasoning={handleToggleReasoning}
             onTestConnection={handleTestConnection}
           />
           <AddProviderModal

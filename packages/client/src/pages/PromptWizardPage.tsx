@@ -901,6 +901,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                         disabled={isLoading}
                         defaultOpen={true}
                         modelId={models.find(m => m.id === selectedModelId)?.modelId}
+                        supportsReasoning={models.find(m => m.id === selectedModelId)?.supportsReasoning}
                       />
                       <div className="mt-3 pt-3 border-t border-slate-700 light:border-slate-200 space-y-2">
                         <Select

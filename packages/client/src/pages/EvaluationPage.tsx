@@ -271,6 +271,8 @@ export function EvaluationPage() {
   const [evalModelConfig, setEvalModelConfig] = useState<PromptConfig>(DEFAULT_PROMPT_CONFIG);
   const [showParamsModal, setShowParamsModal] = useState(false);
   const abortControllersRef = useRef<Map<string, RunAbortController>>(new Map());
+  const retryOutputAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const retryAiEvaluationAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const isFinalizingEvaluationDragRef = useRef(false);
   const selectedEvaluationIdRef = useRef<string | null>(null);
   const runPollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1977,6 +1979,8 @@ export function EvaluationPage() {
         userContent = contentParts;
       }
 
+      const abortController = chatApi.createAbortController();
+      retryOutputAbortControllersRef.current.set(testCaseId, abortController);
       const aiResponse = await chatApi.complete({
         modelId: model.id,
         messages: [{ role: 'user', content: userContent }],
@@ -1989,7 +1993,7 @@ export function EvaluationPage() {
         isEvalCase: true,
         fileProcessing,
         ocrProvider: (runConfig?.ocrProviderResolved as EvaluationConfig['ocr_provider']) || (runConfig?.ocrProvider as EvaluationConfig['ocr_provider']) || evalConfig.ocr_provider,
-      });
+      }, abortController.signal);
 
       const payload = {
         testCaseId,
@@ -2018,14 +2022,25 @@ export function EvaluationPage() {
       await recomputeAndPersistRunResults(nextResults);
       showToast('success', t('retryOutputSuccess'));
     } catch (e) {
+      if (isAbortError(e)) {
+        return;
+      }
       console.error('Retry output failed:', e);
       showToast('error', t('retryOutputFailed'));
     } finally {
+      retryOutputAbortControllersRef.current.delete(testCaseId);
       setRetryingOutputTestCaseId(null);
     }
   };
 
-  const runAiEvaluationForTestCase = async (testCase: TestCase, modelOutput: string) => {
+  const handleAbortRetryOutput = (testCaseId: string) => {
+    const controller = retryOutputAbortControllersRef.current.get(testCaseId);
+    if (controller) {
+      controller.abort();
+    }
+  };
+
+  const runAiEvaluationForTestCase = async (testCase: TestCase, modelOutput: string, signal?: AbortSignal) => {
     if (!selectedEvaluation?.judgeModelId) {
       throw new Error(t('selectJudgeModelFirst'));
     }
@@ -2044,6 +2059,9 @@ export function EvaluationPage() {
     const aiFeedback: Record<string, string> = {};
 
     for (const criterion of enabledCriteria) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
       try {
         let evalPrompt = criterion.prompt || '';
         evalPrompt = evalPrompt.replace(/{{input}}/g, testCase.inputText || '');
@@ -2062,7 +2080,7 @@ export function EvaluationPage() {
           messages: [{ role: 'user', content: evalPrompt }],
           saveTrace: false,
           isEvalCase: true,
-        });
+        }, signal);
 
         const jsonMatch = evalResponse.content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
         if (jsonMatch) {
@@ -2072,6 +2090,9 @@ export function EvaluationPage() {
           aiFeedback[criterion.name] = parsed.reason || '';
         }
       } catch (error) {
+        if (isAbortError(error)) {
+          throw error;
+        }
         console.error('AI evaluation error:', error);
         scores[criterion.name] = 0;
         aiFeedback[criterion.name] = t('evaluationFailed');
@@ -2098,7 +2119,13 @@ export function EvaluationPage() {
 
     setRetryingAiEvaluationTestCaseId(testCaseId);
     try {
-      const { scores, aiFeedback, passed } = await runAiEvaluationForTestCase(testCase, currentResult.modelOutput);
+      const abortController = chatApi.createAbortController();
+      retryAiEvaluationAbortControllersRef.current.set(testCaseId, abortController);
+      const { scores, aiFeedback, passed } = await runAiEvaluationForTestCase(
+        testCase,
+        currentResult.modelOutput,
+        abortController.signal
+      );
       const saved = await runsApi.addResult(selectedRun.id, { testCaseId, scores, aiFeedback, passed });
 
       let nextResults: TestCaseResult[] = [];
@@ -2113,10 +2140,21 @@ export function EvaluationPage() {
       await recomputeAndPersistRunResults(nextResults);
       showToast('success', t('aiEvaluationComplete'));
     } catch (e) {
+      if (isAbortError(e)) {
+        return;
+      }
       console.error('AI evaluation failed:', e);
       showToast('error', e instanceof Error ? e.message : t('aiEvaluationFailed'));
     } finally {
+      retryAiEvaluationAbortControllersRef.current.delete(testCaseId);
       setRetryingAiEvaluationTestCaseId(null);
+    }
+  };
+
+  const handleAbortAiEvaluation = (testCaseId: string) => {
+    const controller = retryAiEvaluationAbortControllersRef.current.get(testCaseId);
+    if (controller) {
+      controller.abort();
     }
   };
 
@@ -2395,10 +2433,6 @@ export function EvaluationPage() {
       <div className="w-80 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col overflow-hidden">
         <div className="p-4 border-b border-slate-700 light:border-slate-200 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <Button size="sm" className="shrink-0" onClick={() => setShowNewEval(true)}>
-              <Plus className="w-4 h-4" />
-              <span>{t('newEvaluation')}</span>
-            </Button>
             <div className="relative flex-1 min-w-0">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
               <input
@@ -2422,6 +2456,10 @@ export function EvaluationPage() {
               <option value="completed">{t('completed')}</option>
               <option value="failed">{t('failed')}</option>
             </select>
+            <Button size="sm" className="shrink-0" onClick={() => setShowNewEval(true)}>
+              <Plus className="w-4 h-4" />
+              <span>{t('newEvaluation')}</span>
+            </Button>
           </div>
         </div>
 
@@ -2698,17 +2736,6 @@ export function EvaluationPage() {
                       />
                     </div>
                   )}
-                  <div className="mt-2">
-                    <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('executionMode')}</p>
-                    <Select
-                      value={selectedEvaluation.config.execution_mode || 'sequential'}
-                      onChange={(e) => handleUpdateConfig('execution_mode', e.target.value as EvaluationConfig['execution_mode'])}
-                      options={[
-                        { value: 'sequential', label: t('executionModeSequential') },
-                        { value: 'parallel', label: t('executionModeParallel') },
-                      ]}
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -2900,6 +2927,8 @@ export function EvaluationPage() {
                         ocrProvider={selectedRunOcrProvider}
                         onRetryOutput={handleRetryOutput}
                         onRunAiEvaluation={selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
+                        onAbortRetryOutput={handleAbortRetryOutput}
+                        onAbortAiEvaluation={handleAbortAiEvaluation}
                         retryingOutputTestCaseId={retryingOutputTestCaseId}
                         retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
                       />
@@ -2991,6 +3020,7 @@ export function EvaluationPage() {
             config={evalModelConfig}
             onChange={handleModelParametersChange}
             modelId={models.find(m => m.id === selectedEvaluation?.modelId)?.modelId}
+            supportsReasoning={models.find(m => m.id === selectedEvaluation?.modelId)?.supportsReasoning}
             defaultOpen={true}
           />
           <div className="flex justify-end pt-4 border-t border-slate-700 light:border-slate-200">

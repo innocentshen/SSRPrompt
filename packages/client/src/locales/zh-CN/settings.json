@@ -41,6 +41,8 @@
   "enabled": "已启用",
   "disabled": "已禁用",
   "supportsVision": "支持视觉",
+  "supportsReasoning": "支持推理",
+  "supportsFunctionCalling": "支持函数调用",
   "visionEnabled": "已开启",
   "noModels": "暂无模型",
   "addYourFirstModel": "点击下方按钮添加第一个模型",

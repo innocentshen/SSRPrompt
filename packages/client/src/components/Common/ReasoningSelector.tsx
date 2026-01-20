@@ -7,6 +7,7 @@ interface ReasoningSelectorProps {
   value: ReasoningEffort;
   onChange: (effort: ReasoningEffort) => void;
   modelId: string;
+  supportsReasoning?: boolean;
   disabled?: boolean;
 }
 
@@ -22,12 +23,13 @@ export function ReasoningSelector({
   value,
   onChange,
   modelId,
+  supportsReasoning,
   disabled,
 }: ReasoningSelectorProps) {
   const { t } = useTranslation('common');
-  const supportsReasoning = inferReasoningSupport(modelId);
+  const resolvedSupportsReasoning = supportsReasoning ?? inferReasoningSupport(modelId);
 
-  if (!supportsReasoning) {
+  if (!resolvedSupportsReasoning) {
     return null;
   }
 

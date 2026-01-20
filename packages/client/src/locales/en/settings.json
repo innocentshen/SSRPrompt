@@ -41,6 +41,8 @@
   "enabled": "Enabled",
   "disabled": "Disabled",
   "supportsVision": "Vision Support",
+  "supportsReasoning": "Reasoning Support",
+  "supportsFunctionCalling": "Function Calling Support",
   "visionEnabled": "Enabled",
   "noModels": "No models yet",
   "addYourFirstModel": "Click the button below to add your first model",

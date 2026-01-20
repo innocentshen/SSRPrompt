@@ -11,10 +11,19 @@ interface ParameterPanelProps {
   disabled?: boolean;
   defaultOpen?: boolean;
   modelId?: string;  // 模型ID，用于推理能力检测
+  supportsReasoning?: boolean;
 }
 
-export function ParameterPanel({ config, onChange, disabled = false, defaultOpen = false, modelId }: ParameterPanelProps) {
+export function ParameterPanel({
+  config,
+  onChange,
+  disabled = false,
+  defaultOpen = false,
+  modelId,
+  supportsReasoning,
+}: ParameterPanelProps) {
   const { t } = useTranslation('prompts');
+  const resolvedSupportsReasoning = supportsReasoning ?? (modelId ? inferReasoningSupport(modelId) : false);
 
   const handleChange = (key: keyof PromptConfig, value: number) => {
     onChange({ ...config, [key]: value });
@@ -112,12 +121,13 @@ export function ParameterPanel({ config, onChange, disabled = false, defaultOpen
         />
 
         {/* 推理/思考配置 - 仅在模型支持时显示 */}
-        {modelId && inferReasoningSupport(modelId) && (
+        {modelId && resolvedSupportsReasoning && (
           <div className="pt-2 border-t border-slate-700 light:border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-300 light:text-slate-700">{t('reasoningEffort')}</span>
               <ReasoningSelector
                 modelId={modelId}
+                supportsReasoning={resolvedSupportsReasoning}
                 value={config.reasoning?.effort || 'default'}
                 onChange={handleReasoningChange}
                 disabled={disabled}

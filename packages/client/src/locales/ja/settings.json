@@ -42,6 +42,8 @@
   "enabled": "有効",
   "disabled": "無効",
   "supportsVision": "ビジョン対応",
+  "supportsReasoning": "推論対応",
+  "supportsFunctionCalling": "関数呼び出し対応",
   "visionEnabled": "有効",
   "noModels": "モデルがありません",
   "addYourFirstModel": "下のボタンをクリックして最初のモデルを追加",

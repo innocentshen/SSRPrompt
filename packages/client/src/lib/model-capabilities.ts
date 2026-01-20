@@ -56,6 +56,7 @@ const REASONING_MODEL_PATTERNS = [
   'o3',           // OpenAI o3
   'o4',           // OpenAI o4 (future)
   'gpt-5',        // OpenAI GPT-5
+  'gpt-oss',      // OpenAI GPT-OSS
   'claude-3.7',   // Claude 3.7+ 支持 extended thinking
   'claude-sonnet-4',  // Claude Sonnet 4
   'claude-opus-4',    // Claude Opus 4

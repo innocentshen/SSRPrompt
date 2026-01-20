@@ -549,6 +549,10 @@ export class RunsService {
 
     const totalCases = selectedTestCaseIds.length;
 
+    const caseConcurrency = Number(process.env.EVALUATION_CASE_CONCURRENCY || '1');
+    const executionMode =
+      Number.isFinite(caseConcurrency) && caseConcurrency > 1 ? 'parallel' : 'sequential';
+
     // Build runConfig snapshot
     const runConfig: Record<string, unknown> = {
       promptId: evaluation.promptId,
@@ -559,7 +563,7 @@ export class RunsService {
       judgeModelId: evaluation.judgeModelId,
       judgeModelName: evaluation.judgeModel?.name || null,
       passThreshold: (evaluation.config as Record<string, unknown>)?.pass_threshold,
-      executionMode: (evaluation.config as Record<string, unknown>)?.execution_mode || 'sequential',
+      executionMode,
       fileProcessing: ((evaluation.config as Record<string, unknown>)?.file_processing as string | undefined) || 'auto',
       ocrProvider: (evaluation.config as Record<string, unknown>)?.ocr_provider,
       testCaseIds: selectedTestCaseIds,

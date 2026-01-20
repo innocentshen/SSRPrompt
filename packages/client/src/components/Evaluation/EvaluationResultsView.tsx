@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File, RotateCcw, Scale, Copy, Check } from 'lucide-react';
+import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File, RotateCcw, Scale, Copy, Check, Square } from 'lucide-react';
 import { Badge, Button, MarkdownRenderer } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
@@ -16,6 +16,8 @@ interface EvaluationResultsViewProps {
   ocrProvider?: OcrProvider | null;
   onRetryOutput?: (testCaseId: string) => void;
   onRunAiEvaluation?: (testCaseId: string) => void;
+  onAbortRetryOutput?: (testCaseId: string) => void;
+  onAbortAiEvaluation?: (testCaseId: string) => void;
   retryingOutputTestCaseId?: string | null;
   retryingAiEvaluationTestCaseId?: string | null;
 }
@@ -29,6 +31,8 @@ export function EvaluationResultsView({
   ocrProvider,
   onRetryOutput,
   onRunAiEvaluation,
+  onAbortRetryOutput,
+  onAbortAiEvaluation,
   retryingOutputTestCaseId,
   retryingAiEvaluationTestCaseId,
 }: EvaluationResultsViewProps) {
@@ -261,30 +265,58 @@ export function EvaluationResultsView({
                   {(onRetryOutput || onRunAiEvaluation) && (
                     <div className="flex items-center justify-end gap-2 pt-2">
                       {onRunAiEvaluation && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onRunAiEvaluation(result.testCaseId)}
-                          loading={retryingAiEvaluationTestCaseId === result.testCaseId}
-                          disabled={retryingOutputTestCaseId === result.testCaseId}
-                          title={t('runAiEvaluation')}
-                        >
-                          <Scale className="w-3.5 h-3.5" />
-                          <span>{t('runAiEvaluation')}</span>
-                        </Button>
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRunAiEvaluation(result.testCaseId)}
+                            loading={retryingAiEvaluationTestCaseId === result.testCaseId}
+                            disabled={retryingOutputTestCaseId === result.testCaseId}
+                            title={t('runAiEvaluation')}
+                          >
+                            <Scale className="w-3.5 h-3.5" />
+                            <span>{t('runAiEvaluation')}</span>
+                          </Button>
+                          {retryingAiEvaluationTestCaseId === result.testCaseId && onAbortAiEvaluation && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onAbortAiEvaluation(result.testCaseId)}
+                              title={t('abort')}
+                              aria-label={t('abort')}
+                              className="px-2"
+                            >
+                              <Square className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </>
                       )}
                       {onRetryOutput && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onRetryOutput(result.testCaseId)}
-                          loading={retryingOutputTestCaseId === result.testCaseId}
-                          disabled={retryingAiEvaluationTestCaseId === result.testCaseId}
-                          title={t('retryOutput')}
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>{t('retryOutput')}</span>
-                        </Button>
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRetryOutput(result.testCaseId)}
+                            loading={retryingOutputTestCaseId === result.testCaseId}
+                            disabled={retryingAiEvaluationTestCaseId === result.testCaseId}
+                            title={t('retryOutput')}
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>{t('retryOutput')}</span>
+                          </Button>
+                          {retryingOutputTestCaseId === result.testCaseId && onAbortRetryOutput && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onAbortRetryOutput(result.testCaseId)}
+                              title={t('abort')}
+                              aria-label={t('abort')}
+                              className="px-2"
+                            >
+                              <Square className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

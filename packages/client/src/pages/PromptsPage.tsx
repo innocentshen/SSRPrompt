@@ -1868,6 +1868,7 @@ export function PromptsPage() {
                         config={promptConfig}
                         onChange={setPromptConfig}
                         modelId={models.find(m => m.id === selectedModel)?.modelId}
+                        supportsReasoning={models.find(m => m.id === selectedModel)?.supportsReasoning}
                       />
 
                       {/* Variable editor */}
@@ -2542,14 +2543,17 @@ export function PromptsPage() {
                   </div>
                   {/* 推理配置 - 仅在模型支持时显示 */}
                   {(() => {
-                    const leftModelId = compareMode === 'models'
-                      ? models.find((m) => m.id === compareModels[0])?.modelId
-                      : models.find((m) => m.id === selectedModel)?.modelId;
-                    return leftModelId && inferReasoningSupport(leftModelId) && (
+                    const leftModel = compareMode === 'models'
+                      ? models.find((m) => m.id === compareModels[0])
+                      : models.find((m) => m.id === selectedModel);
+                    const leftModelId = leftModel?.modelId;
+                    const leftSupportsReasoning = leftModel?.supportsReasoning ?? (leftModelId ? inferReasoningSupport(leftModelId) : false);
+                    return leftModelId && leftSupportsReasoning && (
                       <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
                         <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
                         <ReasoningSelector
                           modelId={leftModelId}
+                          supportsReasoning={leftSupportsReasoning}
                           value={compareParams.left.reasoning?.effort || 'default'}
                           onChange={(effort) => {
                             setCompareParams((prev) => ({
@@ -2633,14 +2637,17 @@ export function PromptsPage() {
                   </div>
                   {/* 推理配置 - 仅在模型支持时显示 */}
                   {(() => {
-                    const rightModelId = compareMode === 'models'
-                      ? models.find((m) => m.id === compareModels[1])?.modelId
-                      : models.find((m) => m.id === selectedModel)?.modelId;
-                    return rightModelId && inferReasoningSupport(rightModelId) && (
+                    const rightModel = compareMode === 'models'
+                      ? models.find((m) => m.id === compareModels[1])
+                      : models.find((m) => m.id === selectedModel);
+                    const rightModelId = rightModel?.modelId;
+                    const rightSupportsReasoning = rightModel?.supportsReasoning ?? (rightModelId ? inferReasoningSupport(rightModelId) : false);
+                    return rightModelId && rightSupportsReasoning && (
                       <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
                         <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
                         <ReasoningSelector
                           modelId={rightModelId}
+                          supportsReasoning={rightSupportsReasoning}
                           value={compareParams.right.reasoning?.effort || 'default'}
                           onChange={(effort) => {
                             setCompareParams((prev) => ({

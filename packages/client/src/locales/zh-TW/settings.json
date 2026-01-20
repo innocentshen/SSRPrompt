@@ -42,6 +42,8 @@
   "enabled": "已啟用",
   "disabled": "已停用",
   "supportsVision": "視覺支援",
+  "supportsReasoning": "推理支援",
+  "supportsFunctionCalling": "函式呼叫支援",
   "visionEnabled": "已開啟",
   "noModels": "暫無模型",
   "addYourFirstModel": "點擊下方按鈕新增第一個模型",

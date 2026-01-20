@@ -484,7 +484,6 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
 
   const effectiveOcrProvider = (ocrProvider as OcrProvider | undefined) ?? resolvedOcrProvider ?? undefined;
 
-  const executionMode = (runConfig.executionMode as string | undefined) || evalConfig.execution_mode || 'sequential';
   const caseConcurrency =
     Number.isFinite(CASE_CONCURRENCY) && CASE_CONCURRENCY > 0 ? CASE_CONCURRENCY : 1;
   const passThreshold = evalConfig.pass_threshold ?? 0.6;
@@ -740,9 +739,9 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
   };
 
   try {
-    if (executionMode === 'parallel') {
+    const workerCount = Math.max(1, Math.min(caseConcurrency, testCases.length));
+    if (workerCount > 1) {
       const queue = [...testCases];
-      const workerCount = Math.max(1, Math.min(caseConcurrency, testCases.length));
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
           while (queue.length > 0) {

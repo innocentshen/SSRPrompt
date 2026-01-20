@@ -31,9 +31,14 @@ interface ProviderFormProps {
   models: Model[];
   onSave: (data: Partial<Provider>) => Promise<void>;
   onDelete: () => Promise<void>;
-  onAddModel: (modelId: string, name: string, options?: { supportsVision?: boolean; maxContextLength?: number }) => Promise<void>;
+  onAddModel: (
+    modelId: string,
+    name: string,
+    options?: { supportsVision?: boolean; supportsReasoning?: boolean; maxContextLength?: number }
+  ) => Promise<void>;
   onRemoveModel: (modelId: string) => Promise<void>;
   onToggleVision?: (modelId: string, enabled: boolean) => Promise<void>;
+  onToggleReasoning?: (modelId: string, enabled: boolean) => Promise<void>;
   onTestConnection: (apiKey: string, baseUrl: string, type: ProviderType) => Promise<boolean>;
 }
 
@@ -61,6 +66,7 @@ export function ProviderForm({
   onAddModel,
   onRemoveModel,
   onToggleVision,
+  onToggleReasoning,
   onTestConnection,
 }: ProviderFormProps) {
   const [name, setName] = useState('');
@@ -76,6 +82,7 @@ export function ProviderForm({
   const [newModelName, setNewModelName] = useState('');
   const [newModelMaxContextLength, setNewModelMaxContextLength] = useState('8000');
   const [newModelSupportsVision, setNewModelSupportsVision] = useState(false);
+  const [newModelSupportsReasoning, setNewModelSupportsReasoning] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -161,12 +168,14 @@ export function ProviderForm({
     const parsedMaxContext = Number.parseInt(newModelMaxContextLength, 10);
     await onAddModel(newModelId.trim(), newModelName.trim() || newModelId.trim(), {
       supportsVision: newModelSupportsVision,
+      supportsReasoning: newModelSupportsReasoning,
       maxContextLength: Number.isFinite(parsedMaxContext) ? parsedMaxContext : undefined,
     });
     setNewModelId('');
     setNewModelName('');
     setNewModelMaxContextLength('8000');
     setNewModelSupportsVision(false);
+    setNewModelSupportsReasoning(false);
   };
 
   const handleFetchModels = async () => {
@@ -224,6 +233,7 @@ export function ProviderForm({
     for (const model of modelsToAdd) {
       await onAddModel(model.id, model.name, {
         supportsVision: inferVisionSupport(model.id),
+        supportsReasoning: inferReasoningSupport(model.id),
         maxContextLength: model.maxContextLength ?? 8000,
       });
     }
@@ -376,6 +386,18 @@ export function ProviderForm({
                   />
                   <span className="text-xs whitespace-nowrap">{t('supportsVision')}</span>
                 </label>
+                <label
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800"
+                  title={t('supportsReasoning')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newModelSupportsReasoning}
+                    onChange={(e) => setNewModelSupportsReasoning(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-purple-500 focus:ring-purple-500/50"
+                  />
+                  <span className="text-xs whitespace-nowrap">{t('supportsReasoning')}</span>
+                </label>
                 <Button variant="secondary" onClick={handleAddModel} disabled={!newModelId.trim()}>
                   <Plus className="w-4 h-4" />
                 </Button>
@@ -419,11 +441,18 @@ export function ProviderForm({
                             <EyeOff className="w-3 h-3 text-slate-500" />
                           )}
                         </button>
-                        {(model.supportsReasoning ?? inferReasoningSupport(model.modelId)) && (
-                          <span title={t('supportsReasoning')} className="p-1 rounded bg-slate-700/50 light:bg-slate-200">
-                            <Brain className="w-3 h-3 text-purple-400" />
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => onToggleReasoning?.(model.id, !(model.supportsReasoning ?? inferReasoningSupport(model.modelId)))}
+                          title={t('supportsReasoning')}
+                          className={`p-1 rounded transition-colors ${
+                            (model.supportsReasoning ?? inferReasoningSupport(model.modelId))
+                              ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
+                              : 'bg-slate-800/50 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200'
+                          }`}
+                        >
+                          <Brain className={`w-3 h-3 ${(model.supportsReasoning ?? inferReasoningSupport(model.modelId)) ? 'text-purple-400' : 'text-slate-500'}`} />
+                        </button>
                         {(model.supportsFunctionCalling ?? inferFunctionCallingSupport(model.modelId)) && (
                           <span title={t('supportsFunctionCalling')} className="p-1 rounded bg-slate-700/50 light:bg-slate-200">
                             <Wrench className="w-3 h-3 text-amber-400" />
