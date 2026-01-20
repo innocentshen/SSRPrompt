@@ -70,6 +70,12 @@ export const evaluationsApi = {
    */
   copy: (id: string, name?: string) =>
     apiClient.post<EvaluationWithRelations>(`/evaluations/${id}/copy`, { name }),
+
+  /**
+   * Batch update order for multiple evaluations
+   */
+  batchUpdateOrder: (updates: { id: string; orderIndex: number }[]) =>
+    apiClient.put<{ success: boolean }>('/evaluations/batch-order', updates),
 };
 
 /**
@@ -123,13 +129,55 @@ export const runsApi = {
   /**
    * Create a run
    */
-  create: (evaluationId: string, modelParameters?: Record<string, unknown>) =>
-    apiClient.post<EvaluationRun>(`/evaluations/${evaluationId}/runs`, { modelParameters }),
+  create: (
+    evaluationId: string,
+    options?: { modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
+  ) =>
+    apiClient.post<EvaluationRun>(`/evaluations/${evaluationId}/runs`, {
+      modelParameters: options?.modelParameters,
+      testCaseIds: options?.testCaseIds,
+    }),
+
+  /**
+   * Create and execute a run on the server
+   */
+  execute: (
+    evaluationId: string,
+    options?: { modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
+  ) =>
+    apiClient.post<EvaluationRun>(`/evaluations/${evaluationId}/runs/execute`, {
+      modelParameters: options?.modelParameters,
+      testCaseIds: options?.testCaseIds,
+    }),
+
+  /**
+   * Update a run
+   */
+  update: (
+    id: string,
+    data: {
+      status?: 'pending' | 'running' | 'completed' | 'failed';
+      results?: Record<string, unknown>;
+      errorMessage?: string | null;
+      totalTokensInput?: number;
+      totalTokensOutput?: number;
+    }
+  ) => apiClient.put<EvaluationRun>(`/runs/${id}`, data),
+
+  /**
+   * Get a run by ID
+   */
+  getById: (id: string) => apiClient.get<EvaluationRun>(`/runs/${id}`),
 
   /**
    * Delete a run
    */
   delete: (id: string) => apiClient.delete<void>(`/runs/${id}`),
+
+  /**
+   * Abort a run
+   */
+  abort: (id: string) => apiClient.post<EvaluationRun>(`/runs/${id}/abort`),
 
   /**
    * Get run results
@@ -147,10 +195,30 @@ export const runsApi = {
       scores?: Record<string, number>;
       aiFeedback?: Record<string, unknown>;
       latencyMs?: number;
+      ocrLatencyMs?: number;
       tokensInput?: number;
       tokensOutput?: number;
       passed?: boolean;
-      errorMessage?: string;
+      errorMessage?: string | null;
     }
   ) => apiClient.post<TestCaseResult>(`/runs/${runId}/results`, data),
+
+  /**
+   * Add results to a run in batch
+   */
+  addResultsBatch: (
+    runId: string,
+    results: Array<{
+      testCaseId: string;
+      modelOutput?: string;
+      scores?: Record<string, number>;
+      aiFeedback?: Record<string, unknown>;
+      latencyMs?: number;
+      ocrLatencyMs?: number;
+      tokensInput?: number;
+      tokensOutput?: number;
+      passed?: boolean;
+      errorMessage?: string | null;
+    }>
+  ) => apiClient.post<TestCaseResult[]>(`/runs/${runId}/results/batch`, { results }),
 };

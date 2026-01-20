@@ -33,7 +33,7 @@ import {
   Play,
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
-import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentModal, PromptTestPanel } from '../components/Prompt';
+import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { DebugRun } from '../components/Prompt';
 import { promptsApi, promptGroupsApi, ApiError } from '../api';
@@ -44,6 +44,7 @@ import { inferReasoningSupport } from '../lib/model-capabilities';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import { formatDateTime } from '../lib/date-utils';
 import { smartReplace } from '../lib/text-utils';
+import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
 import type { Prompt, PromptVersion, PromptGroup, OcrProvider } from '../types';
 import { PromptMessage, PromptConfig, PromptVariable, ReasoningEffort, DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { useToast } from '../store/useUIStore';
@@ -61,7 +62,7 @@ const toFrontendConfig = (config: unknown): PromptConfig => {
     frequency_penalty: (c.frequency_penalty as number) ?? DEFAULT_PROMPT_CONFIG.frequency_penalty,
     presence_penalty: (c.presence_penalty as number) ?? DEFAULT_PROMPT_CONFIG.presence_penalty,
     max_tokens: (c.max_tokens as number) ?? DEFAULT_PROMPT_CONFIG.max_tokens,
-    output_schema: c.output_schema as PromptConfig['output_schema'],
+    output_schema: toFrontendOutputSchema(c.output_schema),
     reasoning: c.reasoning as PromptConfig['reasoning'],
   };
 };
@@ -82,12 +83,25 @@ const toApiConfig = (config: PromptConfig): Record<string, unknown> => ({
   frequency_penalty: config.frequency_penalty,
   presence_penalty: config.presence_penalty,
   max_tokens: config.max_tokens,
-  output_schema: config.output_schema,
+  output_schema: toApiOutputSchema(config.output_schema),
   reasoning: config.reasoning,
 });
 
 const toApiMessages = (messages: PromptMessage[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> =>
   messages.map((m) => ({ role: m.role, content: m.content }));
+
+type PromptTestCache = {
+  promptId: string;
+  testInput: string;
+  variableValues: Record<string, string>;
+  attachedFiles: FileAttachment[];
+  debugRuns: DebugRun[];
+  selectedDebugRunId: string | null;
+  testOutput: string;
+  testThinking: string;
+};
+
+let promptTestCache: PromptTestCache | null = null;
 
 export function PromptsPage() {
   const { showToast } = useToast();
@@ -143,6 +157,8 @@ export function PromptsPage() {
   const [promptVariables, setPromptVariables] = useState<PromptVariable[]>([]);
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [testInput, setTestInput] = useState('');
+  const [testOutput, setTestOutput] = useState('');
+  const [testThinking, setTestThinking] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [saving, setSaving] = useState(false);
   const [newPromptName, setNewPromptName] = useState('');
@@ -216,15 +232,55 @@ export function PromptsPage() {
       }
       loadVersions(selectedPrompt.id);
 
-      // Reset test & output states - each prompt should have independent test data
-      setVariableValues({});
-      setTestInput('');
-      setAttachedFiles([]);
-      setDebugRuns([]);
-      setSelectedDebugRun(null);
       setShowDebugDetail(null);
+
+      const cache = promptTestCache;
+      if (cache && cache.promptId === selectedPrompt.id) {
+        setVariableValues(cache.variableValues);
+        setTestInput(cache.testInput);
+        setAttachedFiles(cache.attachedFiles);
+        setDebugRuns(cache.debugRuns);
+        const cachedSelectedRun = cache.selectedDebugRunId
+          ? cache.debugRuns.find((run) => run.id === cache.selectedDebugRunId) || null
+          : null;
+        setSelectedDebugRun(cachedSelectedRun);
+        setTestOutput(cache.testOutput);
+        setTestThinking(cache.testThinking);
+      } else {
+        // Reset test & output states - each prompt should have independent test data
+        setVariableValues({});
+        setTestInput('');
+        setAttachedFiles([]);
+        setDebugRuns([]);
+        setSelectedDebugRun(null);
+        setTestOutput('');
+        setTestThinking('');
+      }
     }
   }, [selectedPrompt?.id]);
+
+  useEffect(() => {
+    if (!selectedPrompt?.id) return;
+    promptTestCache = {
+      promptId: selectedPrompt.id,
+      testInput,
+      variableValues,
+      attachedFiles,
+      debugRuns,
+      selectedDebugRunId: selectedDebugRun?.id ?? null,
+      testOutput,
+      testThinking,
+    };
+  }, [
+    attachedFiles,
+    debugRuns,
+    selectedPrompt?.id,
+    selectedDebugRun?.id,
+    testInput,
+    testOutput,
+    testThinking,
+    variableValues,
+  ]);
 
   const hasUnsavedChanges = useMemo(() => {
     if (!selectedPrompt) return false;
@@ -1859,22 +1915,28 @@ export function PromptsPage() {
                     showFileUpload={true}
                     attachedFiles={attachedFiles}
                     onAttachedFilesChange={setAttachedFiles}
+                    externalOutput={testOutput}
+                    externalThinking={testThinking}
+                    onOutputChange={setTestOutput}
+                    onThinkingChange={setTestThinking}
                     onRunComplete={(result) => {
                       const runId = `run_${Date.now()}`;
-                      const newRun: DebugRun = {
-                        id: runId,
-                        input: result.input,
-                        inputVariables: {},
-                        output: result.output,
-                        status: result.status,
-                        errorMessage: result.errorMessage,
-                        latencyMs: result.latencyMs,
-                        tokensInput: result.tokensInput,
-                        tokensOutput: result.tokensOutput,
-                        timestamp: new Date(),
-                        attachments: result.attachments,
-                        thinking: result.thinking,
-                      };
+                        const newRun: DebugRun = {
+                          id: runId,
+                          input: result.input,
+                          inputVariables: {},
+                          output: result.output,
+                          status: result.status,
+                          errorMessage: result.errorMessage,
+                          latencyMs: result.latencyMs,
+                          tokensInput: result.tokensInput,
+                          tokensOutput: result.tokensOutput,
+                          timestamp: new Date(),
+                          attachments: result.attachments,
+                          thinking: result.thinking,
+                          ocrUsed: result.ocrUsed,
+                          ocrProvider: result.ocrProvider,
+                        };
                       setDebugRuns((prev) => [newRun, ...prev.slice(0, 19)]);
                     }}
                     className="flex-1 min-w-0 basis-0 bg-slate-900/20 light:bg-slate-100"
@@ -2366,6 +2428,7 @@ export function PromptsPage() {
                     { value: 'paddle', label: 'PaddleOCR' },
                     { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
                     { value: 'datalab', label: tEval('ocrProviderDatalab') },
+                    { value: 'mineru', label: tEval('ocrProviderMineru') },
                   ]}
                 />
               )}
@@ -2826,6 +2889,32 @@ export function PromptsPage() {
                 )}
               </div>
             </div>
+
+            {showDebugDetail.attachments && showDebugDetail.attachments.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4 text-slate-400" />
+                  <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
+                    {t('attachments')} ({showDebugDetail.attachments.length})
+                  </h4>
+                </div>
+                <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
+                  <AttachmentList
+                    attachments={showDebugDetail.attachments}
+                    size="md"
+                    maxVisible={10}
+                    onPreview={setPreviewAttachment}
+                  />
+                </div>
+              </div>
+            )}
+
+            {showDebugDetail.ocrUsed && showDebugDetail.attachments && showDebugDetail.attachments.length > 0 && (
+              <OcrResultsPanel
+                attachments={showDebugDetail.attachments}
+                provider={showDebugDetail.ocrProvider}
+              />
+            )}
 
             {showDebugDetail.errorMessage && (
               <div>

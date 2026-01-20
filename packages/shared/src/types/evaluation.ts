@@ -17,6 +17,12 @@ export interface EvaluationConfig {
   model_parameters?: ModelParameters;
   inherited_from_prompt?: boolean;
   /**
+   * Execution mode for evaluation runs.
+   * - sequential: run test cases one by one (default).
+   * - parallel: run test cases concurrently.
+   */
+  execution_mode?: 'sequential' | 'parallel';
+  /**
    * How to process file attachments when sending to the model.
    * - auto: vision models send files directly; non-vision models use OCR (if available).
    * - vision: send files directly to the model (requires vision-capable model).
@@ -41,6 +47,7 @@ export interface Evaluation {
   status: EvaluationStatus;
   config: EvaluationConfig;
   results: Record<string, unknown>;
+  orderIndex: number;
   isPublic: boolean;
   createdAt: string;
   completedAt: string | null;
@@ -52,6 +59,7 @@ export interface CreateEvaluationDto {
   modelId?: string;
   judgeModelId?: string;
   config?: EvaluationConfig;
+  orderIndex?: number;
 }
 
 export interface UpdateEvaluationDto {
@@ -64,6 +72,7 @@ export interface UpdateEvaluationDto {
   results?: Record<string, unknown>;
   isPublic?: boolean;
   completedAt?: string | null;
+  orderIndex?: number;
 }
 
 // Test Case Types
@@ -128,6 +137,23 @@ export interface UpdateCriterionDto {
   enabled?: boolean;
 }
 
+// Run Config - 运行时配置快照
+export interface RunConfig {
+  promptId?: string | null;
+  promptName?: string | null;
+  promptVersion?: number | null;
+  modelId?: string | null;
+  modelName?: string | null;
+  judgeModelId?: string | null;
+  judgeModelName?: string | null;
+  passThreshold?: number;
+  executionMode?: 'sequential' | 'parallel';
+  fileProcessing?: string;
+  ocrProvider?: OcrProvider;
+  ocrProviderResolved?: OcrProvider;
+  testCaseIds?: string[];
+}
+
 // Evaluation Run Types
 export interface EvaluationRun {
   id: string;
@@ -138,6 +164,7 @@ export interface EvaluationRun {
   totalTokensInput: number;
   totalTokensOutput: number;
   modelParameters: ModelParameters | null;
+  runConfig: RunConfig | null;
   startedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -153,6 +180,7 @@ export interface TestCaseResult {
   scores: Record<string, number>;
   aiFeedback: Record<string, string>;
   latencyMs: number;
+  ocrLatencyMs: number;
   tokensInput: number;
   tokensOutput: number;
   passed: boolean;

@@ -9,6 +9,11 @@ export function transformDecimal<T>(obj: T): T {
     return obj;
   }
 
+  // Preserve Date objects (handled later by transformDates or JSON serialization)
+  if (obj instanceof Date) {
+    return obj;
+  }
+
   if (obj instanceof Decimal) {
     return obj.toNumber() as T;
   }

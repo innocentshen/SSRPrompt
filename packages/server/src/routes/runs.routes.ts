@@ -7,27 +7,9 @@ const router: IRouter = Router();
 /**
  * @swagger
  * /runs/{id}:
- *   delete:
- *     tags: [Runs]
- *     summary: 删除评测运行
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       204:
- *         description: 删除成功
- */
-router.delete('/:id', asyncHandler(runsController.delete));
-
-/**
- * @swagger
- * /runs/{id}/results:
  *   get:
  *     tags: [Runs]
- *     summary: 获取运行结果
+ *     summary: Get run by ID
  *     parameters:
  *       - in: path
  *         name: id
@@ -36,10 +18,72 @@ router.delete('/:id', asyncHandler(runsController.delete));
  *           type: string
  *     responses:
  *       200:
- *         description: 成功
+ *         description: Success
+ *   put:
+ *     tags: [Runs]
+ *     summary: Update run status
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *   delete:
+ *     tags: [Runs]
+ *     summary: Delete run
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       204:
+ *         description: Success
+ */
+router.get('/:id', asyncHandler(runsController.getById));
+router.put('/:id', asyncHandler(runsController.update));
+router.delete('/:id', asyncHandler(runsController.delete));
+
+/**
+ * @swagger
+ * /runs/{id}/abort:
  *   post:
  *     tags: [Runs]
- *     summary: 添加运行结果
+ *     summary: Abort run
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post('/:id/abort', asyncHandler(runsController.abort));
+
+/**
+ * @swagger
+ * /runs/{id}/results:
+ *   get:
+ *     tags: [Runs]
+ *     summary: Get run results
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ *   post:
+ *     tags: [Runs]
+ *     summary: Add run result
  *     parameters:
  *       - in: path
  *         name: id
@@ -48,9 +92,27 @@ router.delete('/:id', asyncHandler(runsController.delete));
  *           type: string
  *     responses:
  *       201:
- *         description: 创建成功
+ *         description: Created
  */
 router.get('/:id/results', asyncHandler(runsController.getResults));
 router.post('/:id/results', asyncHandler(runsController.addResult));
+
+/**
+ * @swagger
+ * /runs/{id}/results/batch:
+ *   post:
+ *     tags: [Runs]
+ *     summary: Add run results in batch
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       201:
+ *         description: Created
+ */
+router.post('/:id/results/batch', asyncHandler(runsController.addResultsBatch));
 
 export default router;

@@ -1,17 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Shield, Trash2 } from 'lucide-react';
+import { Users, Shield, Trash2, Search } from 'lucide-react';
 import { Button, useToast } from '../ui';
 import { usersApi, type UserListItem, type Role } from '../../api/users';
 import { formatDate } from '../../lib/date-utils';
 
 export function UserManagement() {
   const { t } = useTranslation('settings');
+  const { t: tCommon } = useTranslation('common');
   const { showToast } = useToast();
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingUser, setEditingUser] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | UserListItem['status']>('all');
+
+  const filteredUsers = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return users.filter((user) => {
+      if (statusFilter !== 'all' && user.status !== statusFilter) return false;
+      if (!normalizedQuery) return true;
+      const haystack = [
+        user.email,
+        user.name,
+        ...(user.roles || []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [users, query, statusFilter]);
 
   useEffect(() => {
     loadData();
@@ -100,7 +120,31 @@ export function UserManagement() {
       <div className="flex items-center gap-3">
         <Users className="w-5 h-5 text-cyan-400" />
         <h2 className="text-lg font-semibold text-white light:text-slate-800">{t('userManagement')}</h2>
-        <span className="text-sm text-slate-400 light:text-slate-500">({users.length})</span>
+        <span className="text-sm text-slate-400 light:text-slate-500">({filteredUsers.length})</span>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="relative w-52">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('searchUsers')}
+              aria-label={t('searchUsers')}
+              className="w-full pl-7 pr-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+            aria-label={t('status')}
+            className="px-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 focus:outline-none focus:border-cyan-500"
+          >
+            <option value="all">{tCommon('all')}</option>
+            <option value="active">{t('statusActive')}</option>
+            <option value="inactive">{t('statusInactive')}</option>
+            <option value="suspended">{t('statusSuspended')}</option>
+          </select>
+        </div>
       </div>
 
       <div className="bg-slate-800/50 light:bg-white rounded-xl border border-slate-700 light:border-slate-200 overflow-hidden">
@@ -115,7 +159,7 @@ export function UserManagement() {
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {filteredUsers.map((user) => (
               <tr key={user.id} className="border-b border-slate-700/50 light:border-slate-100 hover:bg-slate-700/30 light:hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <div>

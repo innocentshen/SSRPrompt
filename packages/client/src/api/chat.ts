@@ -79,6 +79,9 @@ export interface ChatCompletionResult {
     total_tokens: number;
   };
   latencyMs: number;
+  ocrLatencyMs?: number;
+  ocrProvider?: OcrProvider;
+  ocrFileIds?: string[];
 }
 
 export interface StreamCallbacks {
@@ -278,7 +281,7 @@ export async function streamChatCompletion(
 /**
  * Non-streaming chat completion
  */
-export async function chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+export async function chatCompletion(options: ChatCompletionOptions, signal?: AbortSignal): Promise<ChatCompletionResult> {
   const token = localStorage.getItem('auth_token');
 
   const response = await fetch(`${API_BASE_URL}/chat/completions`, {
@@ -288,6 +291,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
       Authorization: token ? `Bearer ${token}` : '',
     },
     body: JSON.stringify({ ...options, stream: false }),
+    signal,
   });
 
   if (!response.ok) {

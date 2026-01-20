@@ -924,6 +924,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                               { value: 'paddle', label: 'PaddleOCR' },
                               { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
                               { value: 'datalab', label: tEval('ocrProviderDatalab') },
+                              { value: 'mineru', label: tEval('ocrProviderMineru') },
                             ]}
                           />
                         )}

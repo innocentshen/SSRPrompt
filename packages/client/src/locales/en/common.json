@@ -77,5 +77,11 @@
   "reasoningMedium": "Medium",
   "reasoningMediumDesc": "Balance speed and depth",
   "reasoningHigh": "High",
-  "reasoningHighDesc": "Deep reasoning analysis"
+  "reasoningHighDesc": "Deep reasoning analysis",
+  "ocrResults": "OCR Results",
+  "ocrResultsLoading": "Loading OCR results...",
+  "ocrResultsMissing": "No OCR results",
+  "ocrResultsEmpty": "OCR output is empty",
+  "ocrResultsFailed": "OCR failed",
+  "ocrResultsError": "Failed to load OCR results"
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OcrProviderSchema } from './ocr.js';
 
 // File Attachment Schema
 export const FileAttachmentSchema = z.object({
@@ -22,8 +23,9 @@ export const EvaluationConfigSchema = z.object({
   pass_threshold: z.number().min(0).max(100).optional(),
   model_parameters: ModelParametersSchema.optional(),
   inherited_from_prompt: z.boolean().optional(),
+  execution_mode: z.enum(['sequential', 'parallel']).optional(),
   file_processing: z.enum(['auto', 'vision', 'ocr', 'none']).optional(),
-  ocr_provider: z.enum(['paddle', 'paddle_vl', 'datalab']).optional(),
+  ocr_provider: OcrProviderSchema.optional(),
 });
 
 // Create Evaluation Schema
@@ -33,6 +35,7 @@ export const CreateEvaluationSchema = z.object({
   modelId: z.string().uuid().optional(),
   judgeModelId: z.string().uuid().optional(),
   config: EvaluationConfigSchema.optional().default({}),
+  orderIndex: z.number().int().min(0).optional(),
 });
 
 // Update Evaluation Schema
@@ -46,6 +49,7 @@ export const UpdateEvaluationSchema = z.object({
   results: z.record(z.unknown()).optional(),
   isPublic: z.boolean().optional(),
   completedAt: z.string().datetime().nullable().optional(),
+  orderIndex: z.number().int().min(0).optional(),
 });
 
 // Create Test Case Schema
@@ -62,7 +66,7 @@ export const CreateTestCaseSchema = z.object({
 // Update Test Case Schema
 export const UpdateTestCaseSchema = z.object({
   name: z.string().optional(),
-  inputText: z.string().min(1).optional(),
+  inputText: z.string().optional(),
   inputVariables: z.record(z.string()).optional(),
   attachments: z.array(FileAttachmentSchema).optional(),
   expectedOutput: z.string().nullable().optional(),

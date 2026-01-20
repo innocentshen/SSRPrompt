@@ -425,7 +425,8 @@ export async function chatCompletion(
   model: Model,
   apiKey: string,
   messages: ChatMessage[],
-  options: ChatCompletionOptions
+  options: ChatCompletionOptions,
+  signal?: AbortSignal
 ): Promise<{
   content: string;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -438,6 +439,7 @@ export async function chatCompletion(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {

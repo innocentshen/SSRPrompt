@@ -7,6 +7,8 @@ import type {
   OcrCredentialSource,
   OcrSystemProviderSettings,
   UpdateOcrSystemProviderSettingsDto,
+  OcrResultItem,
+  OcrResultsRequest,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
@@ -26,6 +28,8 @@ export const ocrApi = {
 
   updateSystemSettings: (data: UpdateOcrSystemProviderSettingsDto) =>
     apiClient.put<OcrSystemProviderSettings>('/ocr/system-settings', data),
+
+  getResults: (data: OcrResultsRequest) => apiClient.post<OcrResultItem[]>('/ocr/results', data),
 
   async test(
     file: File,

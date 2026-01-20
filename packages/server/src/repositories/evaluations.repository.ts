@@ -48,6 +48,7 @@ class EvaluationsRepositoryClass extends TenantRepository<
         status: true,
         config: true,
         results: true,
+        orderIndex: true,
         isPublic: true,
         createdAt: true,
         completedAt: true,
@@ -74,7 +75,7 @@ class EvaluationsRepositoryClass extends TenantRepository<
           select: { testCases: true, criteria: true, runs: true },
         },
       },
-      orderBy: options?.orderBy || { createdAt: 'desc' },
+      orderBy: options?.orderBy || [{ orderIndex: 'asc' }, { createdAt: 'desc' }],
       skip: options?.skip,
       take: options?.take,
     }) as unknown as EvaluationWithRelations[];
@@ -253,6 +254,20 @@ class EvaluationsRepositoryClass extends TenantRepository<
         runs: true,
       },
     });
+  }
+
+  /**
+   * Update order for multiple evaluations
+   */
+  async updateOrder(userId: string, updates: { id: string; orderIndex: number }[]): Promise<void> {
+    await prisma.$transaction(
+      updates.map((u) =>
+        this.delegate.updateMany({
+          where: { id: u.id, userId },
+          data: { orderIndex: u.orderIndex },
+        })
+      )
+    );
   }
 }
 

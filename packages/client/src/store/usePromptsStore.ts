@@ -5,10 +5,12 @@ import type {
   PromptVersion,
   PromptVariable,
   FileAttachment,
+  OcrProvider,
 } from '../types';
 import { PromptMessage, PromptConfig, DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { promptsApi } from '../api';
 import { invalidatePromptsCache } from '../lib/cache-events';
+import { toFrontendOutputSchema } from '../lib/output-schema';
 
 // Type conversion helpers
 const toFrontendMessages = (messages: unknown): PromptMessage[] => {
@@ -28,7 +30,7 @@ const toFrontendConfig = (config: unknown): PromptConfig => {
     frequency_penalty: (c.frequency_penalty as number) ?? DEFAULT_PROMPT_CONFIG.frequency_penalty,
     presence_penalty: (c.presence_penalty as number) ?? DEFAULT_PROMPT_CONFIG.presence_penalty,
     max_tokens: (c.max_tokens as number) ?? DEFAULT_PROMPT_CONFIG.max_tokens,
-    output_schema: c.output_schema as PromptConfig['output_schema'],
+    output_schema: toFrontendOutputSchema(c.output_schema),
     reasoning: c.reasoning as PromptConfig['reasoning'],
   };
 };
@@ -47,6 +49,8 @@ export interface DebugRun {
   timestamp: Date;
   attachments?: FileAttachment[];
   thinking?: string;
+  ocrUsed?: boolean;
+  ocrProvider?: OcrProvider;
 }
 
 // Compare result type

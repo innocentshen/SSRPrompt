@@ -1,8 +1,13 @@
 import { prisma } from '../config/database.js';
+import { getS3Client, isS3Configured } from '../config/s3.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { filesService } from './files.service.js';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppError } from '@ssrprompt/shared';
 import { Prisma } from '@prisma/client';
+import { unzipSync } from 'fflate';
+import { randomUUID } from 'node:crypto';
 
 import type {
   OcrProvider,
@@ -12,6 +17,10 @@ import type {
   OcrProviderSettings,
   OcrSystemProviderSettings,
   UpdateOcrSystemProviderSettingsDto,
+  MineruOcrParams,
+  MineruModelVersion,
+  PaddleOcrParams,
+  PaddleVlOcrParams,
 } from '@ssrprompt/shared';
 
 type EffectiveOcrConfig = {
@@ -20,6 +29,9 @@ type EffectiveOcrConfig = {
   baseUrl: string | null;
   apiKey: string | null;
   credentialSource: OcrCredentialSource;
+  mineru: MineruOcrParams;
+  paddle: PaddleOcrParams;
+  paddle_vl: PaddleVlOcrParams;
 };
 
 const OCR_TEST_PREVIEW_LIMIT = 100_000;
@@ -27,6 +39,311 @@ const OCR_TEST_PREVIEW_LIMIT = 100_000;
 function normalizeBaseUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.trim().replace(/\/+$/, '') || null;
+}
+
+function joinUrl(baseUrl: string, path: string): string {
+  const cleanedBase = baseUrl.replace(/\/+$/, '');
+  const cleanedPath = path.startsWith('/') ? path : `/${path}`;
+  try {
+    const u = new URL(cleanedBase);
+    const basePath = u.pathname.replace(/\/+$/, '');
+    u.pathname = `${basePath}${cleanedPath}`;
+    return u.toString();
+  } catch {
+    return `${cleanedBase}${cleanedPath}`;
+  }
+}
+
+function normalizeMineruZipUrl(value: string): string {
+  try {
+    const u = new URL(value);
+    if (u.hostname === 'cdn-mineru.openxlab.org.cn') {
+      u.hostname = 'mineru.oss-cn-shanghai.aliyuncs.com';
+    }
+    return u.toString();
+  } catch {
+    return value;
+  }
+}
+
+const MINERU_DEFAULT_PARAMS: MineruOcrParams = {
+  userToken: null,
+  modelVersion: 'pipeline',
+  // This is a file OCR feature; default to OCR enabled so image/scanned PDFs work out of the box.
+  isOcr: true,
+  enableFormula: true,
+  enableTable: true,
+  language: 'ch',
+  extraFormats: [],
+  pageRanges: null,
+};
+
+const PADDLE_DEFAULT_PARAMS: PaddleOcrParams = {
+  useDocOrientationClassify: null,
+  useDocUnwarping: null,
+  useTextlineOrientation: null,
+  textDetLimitSideLen: null,
+  textDetLimitType: null,
+  textDetThresh: null,
+  textDetBoxThresh: null,
+  textDetUnclipRatio: null,
+  textRecScoreThresh: null,
+  visualize: null,
+};
+
+const PADDLE_VL_DEFAULT_PARAMS: PaddleVlOcrParams = {
+  useDocOrientationClassify: null,
+  useDocUnwarping: null,
+  useLayoutDetection: null,
+  useChartRecognition: null,
+  layoutThreshold: null,
+  layoutNms: null,
+  layoutUnclipRatio: null,
+  layoutMergeBboxesMode: null,
+  promptLabel: null,
+  repetitionPenalty: null,
+  temperature: null,
+  topP: null,
+  minPixels: null,
+  maxPixels: null,
+  showFormulaNumber: null,
+  prettifyMarkdown: null,
+  visualize: null,
+};
+
+function normalizeMineruParams(_userId: string, raw: unknown): MineruOcrParams {
+  const defaults = MINERU_DEFAULT_PARAMS;
+  if (!raw || typeof raw !== 'object') return defaults;
+
+  const record = raw as Record<string, unknown>;
+  const mineruRaw = record.mineru;
+  if (!mineruRaw || typeof mineruRaw !== 'object') return defaults;
+  const mineru = mineruRaw as Record<string, unknown>;
+
+  const userToken = (() => {
+    if (mineru.userToken === null) return null;
+    if (typeof mineru.userToken === 'string') {
+      const v = mineru.userToken.trim();
+      return v ? v : null;
+    }
+    return defaults.userToken;
+  })();
+
+  const modelVersion: MineruModelVersion = mineru.modelVersion === 'vlm' ? 'vlm' : 'pipeline';
+  const isOcr = typeof mineru.isOcr === 'boolean' ? mineru.isOcr : defaults.isOcr;
+  const enableFormula = typeof mineru.enableFormula === 'boolean' ? mineru.enableFormula : defaults.enableFormula;
+  const enableTable = typeof mineru.enableTable === 'boolean' ? mineru.enableTable : defaults.enableTable;
+  const language = typeof mineru.language === 'string' && mineru.language.trim() ? mineru.language.trim() : defaults.language;
+  const extraFormats = Array.isArray(mineru.extraFormats) ? mineru.extraFormats.filter((x) => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : defaults.extraFormats;
+  const pageRanges = typeof mineru.pageRanges === 'string' && mineru.pageRanges.trim() ? mineru.pageRanges.trim() : null;
+
+  // If userToken isn't configured, MinerU still needs a per-user identifier. We'll fallback to the SSRPrompt userId at call-site.
+  // Keep the returned setting null so UI can show it as "unset" and avoid exposing internal IDs by default.
+  return {
+    userToken,
+    modelVersion,
+    isOcr,
+    enableFormula,
+    enableTable,
+    language,
+    extraFormats: Array.from(new Set(extraFormats)),
+    pageRanges,
+  };
+}
+
+function normalizePaddleParams(raw: unknown): PaddleOcrParams {
+  const defaults = PADDLE_DEFAULT_PARAMS;
+  if (!raw || typeof raw !== 'object') return defaults;
+
+  const record = raw as Record<string, unknown>;
+  const paddleRaw = record.paddle;
+  if (!paddleRaw || typeof paddleRaw !== 'object') return defaults;
+  const paddle = paddleRaw as Record<string, unknown>;
+
+  const toNumber = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const toBoolean = (value: unknown): boolean | null =>
+    typeof value === 'boolean' ? value : null;
+  const toLimitType = (value: unknown): 'min' | 'max' | null =>
+    value === 'min' || value === 'max' ? value : null;
+
+  return {
+    useDocOrientationClassify: toBoolean(paddle.useDocOrientationClassify) ?? defaults.useDocOrientationClassify,
+    useDocUnwarping: toBoolean(paddle.useDocUnwarping) ?? defaults.useDocUnwarping,
+    useTextlineOrientation: toBoolean(paddle.useTextlineOrientation) ?? defaults.useTextlineOrientation,
+    textDetLimitSideLen: toNumber(paddle.textDetLimitSideLen) ?? defaults.textDetLimitSideLen,
+    textDetLimitType: toLimitType(paddle.textDetLimitType) ?? defaults.textDetLimitType,
+    textDetThresh: toNumber(paddle.textDetThresh) ?? defaults.textDetThresh,
+    textDetBoxThresh: toNumber(paddle.textDetBoxThresh) ?? defaults.textDetBoxThresh,
+    textDetUnclipRatio: toNumber(paddle.textDetUnclipRatio) ?? defaults.textDetUnclipRatio,
+    textRecScoreThresh: toNumber(paddle.textRecScoreThresh) ?? defaults.textRecScoreThresh,
+    visualize: toBoolean(paddle.visualize) ?? defaults.visualize,
+  };
+}
+
+function normalizePaddleVlParams(raw: unknown): PaddleVlOcrParams {
+  const defaults = PADDLE_VL_DEFAULT_PARAMS;
+  if (!raw || typeof raw !== 'object') return defaults;
+
+  const record = raw as Record<string, unknown>;
+  const paddleRaw = record.paddle_vl;
+  if (!paddleRaw || typeof paddleRaw !== 'object') return defaults;
+  const paddle = paddleRaw as Record<string, unknown>;
+
+  const toNumber = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const toBoolean = (value: unknown): boolean | null =>
+    typeof value === 'boolean' ? value : null;
+  const toString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+  const toMergeMode = (value: unknown): 'large' | 'small' | 'union' | null =>
+    value === 'large' || value === 'small' || value === 'union' ? value : null;
+
+  return {
+    useDocOrientationClassify: toBoolean(paddle.useDocOrientationClassify) ?? defaults.useDocOrientationClassify,
+    useDocUnwarping: toBoolean(paddle.useDocUnwarping) ?? defaults.useDocUnwarping,
+    useLayoutDetection: toBoolean(paddle.useLayoutDetection) ?? defaults.useLayoutDetection,
+    useChartRecognition: toBoolean(paddle.useChartRecognition) ?? defaults.useChartRecognition,
+    layoutThreshold: toNumber(paddle.layoutThreshold) ?? defaults.layoutThreshold,
+    layoutNms: toBoolean(paddle.layoutNms) ?? defaults.layoutNms,
+    layoutUnclipRatio: toNumber(paddle.layoutUnclipRatio) ?? defaults.layoutUnclipRatio,
+    layoutMergeBboxesMode: toMergeMode(paddle.layoutMergeBboxesMode) ?? defaults.layoutMergeBboxesMode,
+    promptLabel: toString(paddle.promptLabel) ?? defaults.promptLabel,
+    repetitionPenalty: toNumber(paddle.repetitionPenalty) ?? defaults.repetitionPenalty,
+    temperature: toNumber(paddle.temperature) ?? defaults.temperature,
+    topP: toNumber(paddle.topP) ?? defaults.topP,
+    minPixels: toNumber(paddle.minPixels) ?? defaults.minPixels,
+    maxPixels: toNumber(paddle.maxPixels) ?? defaults.maxPixels,
+    showFormulaNumber: toBoolean(paddle.showFormulaNumber) ?? defaults.showFormulaNumber,
+    prettifyMarkdown: toBoolean(paddle.prettifyMarkdown) ?? defaults.prettifyMarkdown,
+    visualize: toBoolean(paddle.visualize) ?? defaults.visualize,
+  };
+}
+
+function mergePaddleParams(base: PaddleOcrParams, override?: Partial<PaddleOcrParams>): PaddleOcrParams {
+  if (!override) return base;
+  const next = { ...base };
+
+  if (Object.prototype.hasOwnProperty.call(override, 'useDocOrientationClassify')) {
+    next.useDocOrientationClassify = typeof override.useDocOrientationClassify === 'boolean' ? override.useDocOrientationClassify : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'useDocUnwarping')) {
+    next.useDocUnwarping = typeof override.useDocUnwarping === 'boolean' ? override.useDocUnwarping : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'useTextlineOrientation')) {
+    next.useTextlineOrientation = typeof override.useTextlineOrientation === 'boolean' ? override.useTextlineOrientation : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textDetLimitSideLen')) {
+    next.textDetLimitSideLen = typeof override.textDetLimitSideLen === 'number' && Number.isFinite(override.textDetLimitSideLen)
+      ? override.textDetLimitSideLen
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textDetLimitType')) {
+    next.textDetLimitType = override.textDetLimitType === 'min' || override.textDetLimitType === 'max' ? override.textDetLimitType : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textDetThresh')) {
+    next.textDetThresh = typeof override.textDetThresh === 'number' && Number.isFinite(override.textDetThresh)
+      ? override.textDetThresh
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textDetBoxThresh')) {
+    next.textDetBoxThresh = typeof override.textDetBoxThresh === 'number' && Number.isFinite(override.textDetBoxThresh)
+      ? override.textDetBoxThresh
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textDetUnclipRatio')) {
+    next.textDetUnclipRatio = typeof override.textDetUnclipRatio === 'number' && Number.isFinite(override.textDetUnclipRatio)
+      ? override.textDetUnclipRatio
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'textRecScoreThresh')) {
+    next.textRecScoreThresh = typeof override.textRecScoreThresh === 'number' && Number.isFinite(override.textRecScoreThresh)
+      ? override.textRecScoreThresh
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'visualize')) {
+    next.visualize = typeof override.visualize === 'boolean' ? override.visualize : null;
+  }
+
+  return next;
+}
+
+function mergePaddleVlParams(base: PaddleVlOcrParams, override?: Partial<PaddleVlOcrParams>): PaddleVlOcrParams {
+  if (!override) return base;
+  const next = { ...base };
+
+  if (Object.prototype.hasOwnProperty.call(override, 'useDocOrientationClassify')) {
+    next.useDocOrientationClassify = typeof override.useDocOrientationClassify === 'boolean' ? override.useDocOrientationClassify : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'useDocUnwarping')) {
+    next.useDocUnwarping = typeof override.useDocUnwarping === 'boolean' ? override.useDocUnwarping : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'useLayoutDetection')) {
+    next.useLayoutDetection = typeof override.useLayoutDetection === 'boolean' ? override.useLayoutDetection : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'useChartRecognition')) {
+    next.useChartRecognition = typeof override.useChartRecognition === 'boolean' ? override.useChartRecognition : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'layoutThreshold')) {
+    next.layoutThreshold = typeof override.layoutThreshold === 'number' && Number.isFinite(override.layoutThreshold)
+      ? override.layoutThreshold
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'layoutNms')) {
+    next.layoutNms = typeof override.layoutNms === 'boolean' ? override.layoutNms : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'layoutUnclipRatio')) {
+    next.layoutUnclipRatio = typeof override.layoutUnclipRatio === 'number' && Number.isFinite(override.layoutUnclipRatio)
+      ? override.layoutUnclipRatio
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'layoutMergeBboxesMode')) {
+    next.layoutMergeBboxesMode =
+      override.layoutMergeBboxesMode === 'large' || override.layoutMergeBboxesMode === 'small' || override.layoutMergeBboxesMode === 'union'
+        ? override.layoutMergeBboxesMode
+        : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'promptLabel')) {
+    next.promptLabel = typeof override.promptLabel === 'string' && override.promptLabel.trim() ? override.promptLabel.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'repetitionPenalty')) {
+    next.repetitionPenalty = typeof override.repetitionPenalty === 'number' && Number.isFinite(override.repetitionPenalty)
+      ? override.repetitionPenalty
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'temperature')) {
+    next.temperature = typeof override.temperature === 'number' && Number.isFinite(override.temperature)
+      ? override.temperature
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'topP')) {
+    next.topP = typeof override.topP === 'number' && Number.isFinite(override.topP) ? override.topP : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'minPixels')) {
+    next.minPixels = typeof override.minPixels === 'number' && Number.isFinite(override.minPixels) ? override.minPixels : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'maxPixels')) {
+    next.maxPixels = typeof override.maxPixels === 'number' && Number.isFinite(override.maxPixels) ? override.maxPixels : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'showFormulaNumber')) {
+    next.showFormulaNumber = typeof override.showFormulaNumber === 'boolean' ? override.showFormulaNumber : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'prettifyMarkdown')) {
+    next.prettifyMarkdown = typeof override.prettifyMarkdown === 'boolean' ? override.prettifyMarkdown : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'visualize')) {
+    next.visualize = typeof override.visualize === 'boolean' ? override.visualize : null;
+  }
+
+  return next;
+}
+
+function toMineruDataId(value: string): string {
+  const v = value.trim().replace(/[^A-Za-z0-9_.-]/g, '_');
+  return (v || 'ssrprompt').slice(0, 128);
 }
 
 function paddleRequiresToken(baseUrl: string): boolean {
@@ -57,6 +374,41 @@ function mimeToPaddleFileType(mimeType: string): 0 | 1 {
   if (mimeType === 'application/pdf') return 0;
   if (mimeType.startsWith('image/')) return 1;
   throw new AppError(400, 'VALIDATION_ERROR', `Unsupported OCR mime type: ${mimeType}`);
+}
+
+function applyPaddleParams(target: Record<string, unknown>, params: PaddleOcrParams): void {
+  if (typeof params.useDocOrientationClassify === 'boolean') target.useDocOrientationClassify = params.useDocOrientationClassify;
+  if (typeof params.useDocUnwarping === 'boolean') target.useDocUnwarping = params.useDocUnwarping;
+  if (typeof params.useTextlineOrientation === 'boolean') target.useTextlineOrientation = params.useTextlineOrientation;
+  if (typeof params.textDetLimitSideLen === 'number') target.textDetLimitSideLen = params.textDetLimitSideLen;
+  if (params.textDetLimitType === 'min' || params.textDetLimitType === 'max') target.textDetLimitType = params.textDetLimitType;
+  if (typeof params.textDetThresh === 'number') target.textDetThresh = params.textDetThresh;
+  if (typeof params.textDetBoxThresh === 'number') target.textDetBoxThresh = params.textDetBoxThresh;
+  if (typeof params.textDetUnclipRatio === 'number') target.textDetUnclipRatio = params.textDetUnclipRatio;
+  if (typeof params.textRecScoreThresh === 'number') target.textRecScoreThresh = params.textRecScoreThresh;
+  if (typeof params.visualize === 'boolean') target.visualize = params.visualize;
+}
+
+function applyPaddleVlParams(target: Record<string, unknown>, params: PaddleVlOcrParams): void {
+  if (typeof params.useDocOrientationClassify === 'boolean') target.useDocOrientationClassify = params.useDocOrientationClassify;
+  if (typeof params.useDocUnwarping === 'boolean') target.useDocUnwarping = params.useDocUnwarping;
+  if (typeof params.useLayoutDetection === 'boolean') target.useLayoutDetection = params.useLayoutDetection;
+  if (typeof params.useChartRecognition === 'boolean') target.useChartRecognition = params.useChartRecognition;
+  if (typeof params.layoutThreshold === 'number') target.layoutThreshold = params.layoutThreshold;
+  if (typeof params.layoutNms === 'boolean') target.layoutNms = params.layoutNms;
+  if (typeof params.layoutUnclipRatio === 'number') target.layoutUnclipRatio = params.layoutUnclipRatio;
+  if (params.layoutMergeBboxesMode === 'large' || params.layoutMergeBboxesMode === 'small' || params.layoutMergeBboxesMode === 'union') {
+    target.layoutMergeBboxesMode = params.layoutMergeBboxesMode;
+  }
+  if (typeof params.promptLabel === 'string' && params.promptLabel.trim()) target.promptLabel = params.promptLabel.trim();
+  if (typeof params.repetitionPenalty === 'number') target.repetitionPenalty = params.repetitionPenalty;
+  if (typeof params.temperature === 'number') target.temperature = params.temperature;
+  if (typeof params.topP === 'number') target.topP = params.topP;
+  if (typeof params.minPixels === 'number') target.minPixels = params.minPixels;
+  if (typeof params.maxPixels === 'number') target.maxPixels = params.maxPixels;
+  if (typeof params.showFormulaNumber === 'boolean') target.showFormulaNumber = params.showFormulaNumber;
+  if (typeof params.prettifyMarkdown === 'boolean') target.prettifyMarkdown = params.prettifyMarkdown;
+  if (typeof params.visualize === 'boolean') target.visualize = params.visualize;
 }
 
 function buildAuthorization(value: string, defaultScheme: string): string {
@@ -143,7 +495,11 @@ function extractPaddleVlText(layoutParsingResult: unknown): string {
   return '';
 }
 
-async function paddleOcrExtract(config: { baseUrl: string; apiKey?: string | null }, file: { buffer: Buffer; mimeType: string }): Promise<{ pages: string[]; fullText: string }> {
+async function paddleOcrExtract(
+  config: { baseUrl: string; apiKey?: string | null },
+  file: { buffer: Buffer; mimeType: string },
+  params: PaddleOcrParams
+): Promise<{ pages: string[]; fullText: string }> {
   const url = (() => {
     try {
       const u = new URL(config.baseUrl);
@@ -167,10 +523,11 @@ async function paddleOcrExtract(config: { baseUrl: string; apiKey?: string | nul
     headers['Authorization'] = buildAuthorization(config.apiKey, 'token');
   }
 
-  const body = {
+  const body: Record<string, unknown> = {
     file: file.buffer.toString('base64'),
     fileType: mimeToPaddleFileType(file.mimeType),
   };
+  applyPaddleParams(body, params);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -231,7 +588,8 @@ async function paddleOcrExtract(config: { baseUrl: string; apiKey?: string | nul
 
 async function paddleOcrVlExtract(
   config: { baseUrl: string; apiKey?: string | null },
-  file: { buffer: Buffer; mimeType: string }
+  file: { buffer: Buffer; mimeType: string },
+  params: PaddleVlOcrParams
 ): Promise<{ pages: string[]; fullText: string }> {
   const url = (() => {
     try {
@@ -256,12 +614,13 @@ async function paddleOcrVlExtract(
     headers['Authorization'] = buildAuthorization(config.apiKey, 'token');
   }
 
-  const body = {
+  const body: Record<string, unknown> = {
     file: file.buffer.toString('base64'),
     fileType: mimeToPaddleFileType(file.mimeType),
     // Avoid returning large base64 images in the response; we only need text.
     visualize: false,
   };
+  applyPaddleVlParams(body, params);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 180_000);
@@ -432,6 +791,194 @@ async function datalabExtract(
   }
 }
 
+async function parseJsonOrThrow(res: Response, providerName: string): Promise<any> {
+  const text = await res.text();
+  const sanitizedText = text.replace(/^\uFEFF/, '');
+  try {
+    return JSON.parse(sanitizedText);
+  } catch {
+    const contentType = res.headers.get('content-type');
+    const snippet = sanitizedText.trim().replace(/\s+/g, ' ').slice(0, 240);
+    const message = `${providerName} returned non-JSON response (status ${res.status}${contentType ? `, content-type ${contentType}` : ''}${snippet ? `, snippet ${JSON.stringify(snippet)}` : ''})`;
+    throw new AppError(502, 'PROVIDER_ERROR', message, {
+      status: res.status,
+      contentType,
+      body: text.slice(0, 2000),
+    });
+  }
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  // TextDecoder is globally available in Node 18+.
+  return new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+}
+
+function mineruHeaders(config: { apiKey: string; userToken: string }): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    Authorization: buildAuthorization(config.apiKey, 'Bearer'),
+    token: config.userToken,
+  };
+}
+
+async function mineruExtract(
+  config: { baseUrl: string; apiKey: string; userToken: string },
+  params: MineruOcrParams,
+  file: { buffer: Buffer; mimeType: string; filename: string; dataId: string }
+): Promise<{ pages: string[]; fullText: string; pageCount?: number }> {
+  const headers = mineruHeaders({ apiKey: config.apiKey, userToken: config.userToken });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const started = Date.now();
+
+  let tempObjectKey: string | null = null;
+  let s3: ReturnType<typeof getS3Client> | null = null;
+
+  try {
+    if (!isS3Configured()) {
+      throw new AppError(500, 'INTERNAL_ERROR', 'S3 storage is not configured (required for MinerU file OCR)');
+    }
+
+    s3 = getS3Client();
+
+    const ext = (() => {
+      const parts = file.filename.split('.');
+      const raw = parts.length > 1 ? parts[parts.length - 1].trim().toLowerCase() : '';
+      const cleaned = raw.replace(/[^a-z0-9]/g, '');
+      return cleaned && cleaned.length <= 10 ? cleaned : '';
+    })();
+
+    tempObjectKey = `tmp/ocr/mineru/${file.dataId}_${randomUUID()}${ext ? `.${ext}` : ''}`;
+
+    await s3.client.send(
+      new PutObjectCommand({
+        Bucket: s3.bucket,
+        Key: tempObjectKey,
+        Body: file.buffer,
+        ContentType: file.mimeType || 'application/octet-stream',
+      })
+    );
+
+    const sourceUrl = await getSignedUrl(
+      s3.client,
+      new GetObjectCommand({
+        Bucket: s3.bucket,
+        Key: tempObjectKey,
+      }),
+      { expiresIn: 3600 }
+    );
+
+    const extractUrl = joinUrl(config.baseUrl, '/extract/task');
+    const body: Record<string, unknown> = {
+      url: sourceUrl,
+      model_version: params.modelVersion,
+      data_id: file.dataId,
+    };
+
+    // These flags only apply to the pipeline model (and non-html files), but MinerU safely ignores unsupported fields.
+    body.is_ocr = params.isOcr;
+    body.enable_formula = params.enableFormula;
+    body.enable_table = params.enableTable;
+    if (params.language) body.language = params.language;
+    if (params.pageRanges) body.page_ranges = params.pageRanges;
+    if (Array.isArray(params.extraFormats) && params.extraFormats.length > 0) body.extra_formats = params.extraFormats;
+
+    console.log(`[OCR:MinerU] Submitting extract task: ${extractUrl}`);
+
+    const submitRes = await fetch(extractUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    let submitJson = await parseJsonOrThrow(submitRes, 'MinerU');
+    if (!submitRes.ok || submitJson?.code !== 0) {
+      throw new AppError(502, 'PROVIDER_ERROR', submitJson?.msg || 'MinerU extract task submit failed', { status: submitRes.status, body: submitJson });
+    }
+
+    const taskId = submitJson?.data?.task_id ?? submitJson?.data?.taskId;
+    if (typeof taskId !== 'string' || !taskId.trim()) {
+      throw new AppError(502, 'PROVIDER_ERROR', 'MinerU did not return task_id', { body: submitJson });
+    }
+
+    while (true) {
+      const state = String(submitJson?.data?.state || '').toLowerCase();
+      const fullZipUrl = submitJson?.data?.full_zip_url ?? submitJson?.data?.fullZipUrl;
+
+      if (state === 'done') {
+        if (typeof fullZipUrl !== 'string' || !fullZipUrl) {
+          throw new AppError(502, 'PROVIDER_ERROR', 'MinerU task completed without full_zip_url', { body: submitJson });
+        }
+
+        console.log(`[OCR:MinerU] Task done in ${Date.now() - started}ms, downloading zip...`);
+        const zipRes = await fetch(normalizeMineruZipUrl(fullZipUrl), { method: 'GET', signal: controller.signal });
+        if (!zipRes.ok) {
+          const zipText = await zipRes.text().catch(() => '');
+          throw new AppError(502, 'PROVIDER_ERROR', `MinerU zip download failed (status ${zipRes.status})`, { status: zipRes.status, body: zipText.slice(0, 2000) });
+        }
+
+        const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
+        const extracted = unzipSync(zipBytes);
+        const entries = Object.entries(extracted);
+
+        const pickLargestTextFile = (suffix: string) =>
+          entries
+            .filter(([name]) => name.toLowerCase().endsWith(suffix))
+            .sort((a, b) => (b[1]?.length ?? 0) - (a[1]?.length ?? 0))[0];
+
+        const md = pickLargestTextFile('.md') || pickLargestTextFile('.txt');
+        if (!md) {
+          const names = entries.map(([n]) => n).slice(0, 50);
+          throw new AppError(502, 'PROVIDER_ERROR', 'MinerU zip does not contain markdown/text output', { files: names });
+        }
+
+        const markdown = decodeUtf8(md[1]).trim();
+        return {
+          pages: markdown ? [markdown] : [],
+          fullText: markdown,
+        };
+      }
+
+      if (state === 'failed' || state === 'error') {
+        const err = submitJson?.data?.err_msg ?? submitJson?.data?.errMsg ?? submitJson?.msg ?? 'MinerU OCR failed';
+        throw new AppError(502, 'PROVIDER_ERROR', String(err), { body: submitJson });
+      }
+
+      if (Date.now() - started > 180_000) {
+        throw new AppError(504, 'PROVIDER_ERROR', 'MinerU timeout (180s)');
+      }
+
+      // pending / running / converting
+      await new Promise((r) => setTimeout(r, 1000));
+
+      const pollUrl = joinUrl(config.baseUrl, `/extract/task/${encodeURIComponent(taskId)}`);
+      const pollRes = await fetch(pollUrl, { method: 'GET', headers, signal: controller.signal });
+      submitJson = await parseJsonOrThrow(pollRes, 'MinerU');
+      if (!pollRes.ok || submitJson?.code !== 0) {
+        throw new AppError(502, 'PROVIDER_ERROR', submitJson?.msg || 'MinerU task poll failed', { status: pollRes.status, body: submitJson });
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.toLowerCase().includes('abort')) {
+      throw new AppError(504, 'PROVIDER_ERROR', 'MinerU timeout (180s)');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+    if (s3 && tempObjectKey) {
+      try {
+        await s3.client.send(new DeleteObjectCommand({ Bucket: s3.bucket, Key: tempObjectKey }));
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  }
+}
+
 export class OcrService {
   private async getSettingRow(userId: string) {
     return prisma.ocrProviderSetting.findUnique({ where: { userId } });
@@ -441,6 +988,7 @@ export class OcrService {
     paddle: { baseUrl: string | null; apiKey: string | null };
     paddle_vl: { baseUrl: string | null; apiKey: string | null };
     datalab: { baseUrl: string | null; apiKey: string | null };
+    mineru: { baseUrl: string | null; apiKey: string | null };
   }> {
     const rows = await prisma.ocrSystemProviderConfig.findMany();
     const byProvider = new Map(rows.map((r) => [r.provider as OcrProvider, r]));
@@ -448,6 +996,7 @@ export class OcrService {
     const paddleRow = byProvider.get('paddle') ?? null;
     const paddleVlRow = byProvider.get('paddle_vl') ?? null;
     const datalabRow = byProvider.get('datalab') ?? null;
+    const mineruRow = byProvider.get('mineru') ?? null;
 
     return {
       paddle: {
@@ -462,6 +1011,10 @@ export class OcrService {
         baseUrl: normalizeBaseUrl(datalabRow?.baseUrl ?? null),
         apiKey: safeDecrypt(datalabRow?.apiKey ?? null),
       },
+      mineru: {
+        baseUrl: normalizeBaseUrl(mineruRow?.baseUrl ?? null),
+        apiKey: safeDecrypt(mineruRow?.apiKey ?? null),
+      },
     };
   }
 
@@ -473,6 +1026,9 @@ export class OcrService {
       baseUrl: string | null;
       apiKey: string | null;
       enabled: boolean;
+      paddle: Partial<PaddleOcrParams>;
+      paddle_vl: Partial<PaddleVlOcrParams>;
+      mineru: Partial<MineruOcrParams>;
     }>
   ): Promise<EffectiveOcrConfig> {
     const system = await this.getSystemDefaults();
@@ -482,16 +1038,43 @@ export class OcrService {
     const provider = override?.provider ?? (row?.provider as OcrProvider | undefined) ?? 'paddle';
     const credentialSource = override?.credentialSource ?? (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system';
 
+    const mineruFromRow = normalizeMineruParams(userId, (row as any)?.providerParams);
+    const mineruOverride = override?.mineru;
+    const mineru: MineruOcrParams = mineruOverride
+      ? {
+          ...mineruFromRow,
+          ...(mineruOverride.userToken !== undefined ? { userToken: mineruOverride.userToken ? mineruOverride.userToken.trim() : null } : {}),
+          ...(mineruOverride.modelVersion === 'vlm' || mineruOverride.modelVersion === 'pipeline' ? { modelVersion: mineruOverride.modelVersion } : {}),
+          ...(typeof mineruOverride.isOcr === 'boolean' ? { isOcr: mineruOverride.isOcr } : {}),
+          ...(typeof mineruOverride.enableFormula === 'boolean' ? { enableFormula: mineruOverride.enableFormula } : {}),
+          ...(typeof mineruOverride.enableTable === 'boolean' ? { enableTable: mineruOverride.enableTable } : {}),
+          ...(typeof mineruOverride.language === 'string' && mineruOverride.language.trim() ? { language: mineruOverride.language.trim() } : {}),
+          ...(Array.isArray(mineruOverride.extraFormats) ? { extraFormats: mineruOverride.extraFormats } : {}),
+          ...(mineruOverride.pageRanges !== undefined
+            ? { pageRanges: typeof mineruOverride.pageRanges === 'string' && mineruOverride.pageRanges.trim() ? mineruOverride.pageRanges.trim() : null }
+            : {}),
+        }
+      : mineruFromRow;
+
+    const paddleFromRow = normalizePaddleParams((row as any)?.providerParams);
+    const paddle = mergePaddleParams(paddleFromRow, override?.paddle);
+
+    const paddleVlFromRow = normalizePaddleVlParams((row as any)?.providerParams);
+    const paddle_vl = mergePaddleVlParams(paddleVlFromRow, override?.paddle_vl);
+
     if (credentialSource === 'system') {
       const defaults = provider === 'datalab'
         ? system.datalab
-        : (provider === 'paddle_vl' ? system.paddle_vl : system.paddle);
+        : (provider === 'paddle_vl' ? system.paddle_vl : (provider === 'mineru' ? system.mineru : system.paddle));
       return {
         enabled,
         provider,
         credentialSource,
         baseUrl: defaults.baseUrl,
         apiKey: defaults.apiKey,
+        paddle,
+        paddle_vl,
+        mineru,
       };
     }
 
@@ -509,6 +1092,9 @@ export class OcrService {
       credentialSource,
       baseUrl,
       apiKey,
+      paddle,
+      paddle_vl,
+      mineru,
     };
   }
 
@@ -531,10 +1117,14 @@ export class OcrService {
       baseUrl: effective.baseUrl,
       hasApiKey,
       apiKeyLast4: row?.apiKeyLast4 ?? null,
+      paddle: effective.paddle,
+      paddle_vl: effective.paddle_vl,
+      mineru: effective.mineru,
       systemDefaults: {
         paddle: { baseUrl: system.paddle.baseUrl },
         paddle_vl: { baseUrl: system.paddle_vl.baseUrl },
         datalab: { baseUrl: system.datalab.baseUrl },
+        mineru: { baseUrl: system.mineru.baseUrl },
       },
     };
   }
@@ -549,6 +1139,46 @@ export class OcrService {
     if (typeof data.enabled === 'boolean') update.enabled = data.enabled;
     if (data.provider) update.provider = data.provider;
     if (data.credentialSource) update.credentialSource = data.credentialSource;
+
+    const existingParams = (row as any)?.providerParams;
+    const nextProviderParams = existingParams && typeof existingParams === 'object' ? { ...existingParams } : {};
+    let hasProviderParamsUpdate = false;
+
+    if (data.mineru) {
+      const current = normalizeMineruParams(userId, existingParams);
+      const next: MineruOcrParams = {
+        ...current,
+        ...(data.mineru.userToken !== undefined ? { userToken: typeof data.mineru.userToken === 'string' ? (data.mineru.userToken.trim() || null) : null } : {}),
+        ...(data.mineru.modelVersion === 'vlm' || data.mineru.modelVersion === 'pipeline' ? { modelVersion: data.mineru.modelVersion } : {}),
+        ...(typeof data.mineru.isOcr === 'boolean' ? { isOcr: data.mineru.isOcr } : {}),
+        ...(typeof data.mineru.enableFormula === 'boolean' ? { enableFormula: data.mineru.enableFormula } : {}),
+        ...(typeof data.mineru.enableTable === 'boolean' ? { enableTable: data.mineru.enableTable } : {}),
+        ...(typeof data.mineru.language === 'string' && data.mineru.language.trim() ? { language: data.mineru.language.trim() } : {}),
+        ...(Array.isArray(data.mineru.extraFormats) ? { extraFormats: Array.from(new Set(data.mineru.extraFormats)) } : {}),
+        ...(data.mineru.pageRanges !== undefined
+          ? { pageRanges: typeof data.mineru.pageRanges === 'string' && data.mineru.pageRanges.trim() ? data.mineru.pageRanges.trim() : null }
+          : {}),
+      };
+
+      nextProviderParams.mineru = next;
+      hasProviderParamsUpdate = true;
+    }
+
+    if (data.paddle) {
+      const current = normalizePaddleParams(existingParams);
+      nextProviderParams.paddle = mergePaddleParams(current, data.paddle);
+      hasProviderParamsUpdate = true;
+    }
+
+    if (data.paddle_vl) {
+      const current = normalizePaddleVlParams(existingParams);
+      nextProviderParams.paddle_vl = mergePaddleVlParams(current, data.paddle_vl);
+      hasProviderParamsUpdate = true;
+    }
+
+    if (hasProviderParamsUpdate) {
+      update.providerParams = nextProviderParams;
+    }
 
     if (nextCredentialSource === 'custom') {
       if (data.baseUrl !== undefined) {
@@ -571,6 +1201,12 @@ export class OcrService {
           throw new AppError(400, 'VALIDATION_ERROR', 'API key is required for Datalab');
         }
       }
+      if (nextProvider === 'mineru') {
+        const hasKey = !!(update.apiKey ?? row?.apiKey);
+        if (!hasKey) {
+          throw new AppError(400, 'VALIDATION_ERROR', 'API key is required for MinerU');
+        }
+      }
     } else {
       // System credentials: keep DB clean (do not persist keys or base URL).
       update.baseUrl = null;
@@ -589,6 +1225,7 @@ export class OcrService {
         baseUrl: update.baseUrl ?? null,
         apiKey: update.apiKey ?? null,
         apiKeyLast4: update.apiKeyLast4 ?? null,
+        providerParams: update.providerParams ?? {},
       },
     });
 
@@ -612,6 +1249,7 @@ export class OcrService {
       paddle: toConfig('paddle'),
       paddle_vl: toConfig('paddle_vl'),
       datalab: toConfig('datalab'),
+      mineru: toConfig('mineru'),
     };
   }
 
@@ -624,6 +1262,7 @@ export class OcrService {
     if (data.paddle) entries.push({ provider: 'paddle', config: data.paddle });
     if (data.paddle_vl) entries.push({ provider: 'paddle_vl', config: data.paddle_vl });
     if (data.datalab) entries.push({ provider: 'datalab', config: data.datalab });
+    if (data.mineru) entries.push({ provider: 'mineru', config: data.mineru });
 
     for (const { provider, config } of entries) {
       const update: Record<string, unknown> = {};
@@ -691,6 +1330,15 @@ export class OcrService {
       };
     }
 
+    if (effective.provider === 'mineru' && !effective.apiKey) {
+      return {
+        success: false,
+        provider: effective.provider,
+        latencyMs: 0,
+        error: 'MinerU API key is not configured',
+      };
+    }
+
     if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl') && !effective.apiKey && effective.baseUrl && paddleRequiresToken(effective.baseUrl)) {
       return {
         success: false,
@@ -705,7 +1353,8 @@ export class OcrService {
       if (effective.provider === 'paddle') {
         const { pages, fullText } = await paddleOcrExtract(
           { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer: file.buffer, mimeType: file.mimeType }
+          { buffer: file.buffer, mimeType: file.mimeType },
+          effective.paddle
         );
 
         const latencyMs = Date.now() - started;
@@ -725,7 +1374,8 @@ export class OcrService {
       if (effective.provider === 'paddle_vl') {
         const { pages, fullText } = await paddleOcrVlExtract(
           { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer: file.buffer, mimeType: file.mimeType }
+          { buffer: file.buffer, mimeType: file.mimeType },
+          effective.paddle_vl
         );
 
         const latencyMs = Date.now() - started;
@@ -734,6 +1384,36 @@ export class OcrService {
         return {
           success: true,
           provider: 'paddle_vl',
+          latencyMs,
+          pageCount: pages.length || undefined,
+          charCount: fullText.length,
+          previewText,
+          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
+        };
+      }
+
+      if (effective.provider === 'mineru') {
+        const { pages, fullText } = await mineruExtract(
+          {
+            baseUrl: effective.baseUrl,
+            apiKey: effective.apiKey!,
+            userToken: effective.mineru.userToken || userId,
+          },
+          effective.mineru,
+          {
+            buffer: file.buffer,
+            mimeType: file.mimeType,
+            filename: file.filename,
+            dataId: toMineruDataId(`test_${Date.now()}`),
+          }
+        );
+
+        const latencyMs = Date.now() - started;
+        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
+
+        return {
+          success: true,
+          provider: 'mineru',
           latencyMs,
           pageCount: pages.length || undefined,
           charCount: fullText.length,
@@ -771,6 +1451,42 @@ export class OcrService {
     }
   }
 
+  async getResults(
+    userId: string,
+    fileIds: string[],
+    provider?: OcrProvider
+  ): Promise<Array<{
+    fileId: string;
+    provider: OcrProvider;
+    status: 'success' | 'failed';
+    errorMessage: string | null;
+    fullText: string;
+    pages: string[] | null;
+    createdAt: string;
+  }>> {
+    const uniqueIds = Array.from(new Set(fileIds.filter((id) => typeof id === 'string' && id.trim())));
+    if (uniqueIds.length === 0) return [];
+
+    const results = await prisma.ocrResult.findMany({
+      where: {
+        userId,
+        fileId: { in: uniqueIds },
+        ...(provider ? { provider: provider as any } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return results.map((row) => ({
+      fileId: row.fileId,
+      provider: row.provider as OcrProvider,
+      status: row.status as 'success' | 'failed',
+      errorMessage: row.errorMessage ?? null,
+      fullText: row.fullText || '',
+      pages: Array.isArray(row.pages) ? (row.pages as unknown as string[]) : null,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
   async extractForFile(
     userId: string,
     fileId: string,
@@ -788,6 +1504,10 @@ export class OcrService {
 
     if (effective.provider === 'datalab' && !effective.apiKey) {
       throw new AppError(400, 'INVALID_REQUEST', 'Datalab API key is not configured');
+    }
+
+    if (effective.provider === 'mineru' && !effective.apiKey) {
+      throw new AppError(400, 'INVALID_REQUEST', 'MinerU API key is not configured');
     }
 
     if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl') && !effective.apiKey && paddleRequiresToken(effective.baseUrl)) {
@@ -822,11 +1542,36 @@ export class OcrService {
       let fullText = '';
 
       if (effective.provider === 'paddle') {
-        const result = await paddleOcrExtract({ baseUrl: effective.baseUrl, apiKey: effective.apiKey }, { buffer, mimeType });
+        const result = await paddleOcrExtract(
+          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
+          { buffer, mimeType },
+          effective.paddle
+        );
         pages = result.pages;
         fullText = result.fullText;
       } else if (effective.provider === 'paddle_vl') {
-        const result = await paddleOcrVlExtract({ baseUrl: effective.baseUrl, apiKey: effective.apiKey }, { buffer, mimeType });
+        const result = await paddleOcrVlExtract(
+          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
+          { buffer, mimeType },
+          effective.paddle_vl
+        );
+        pages = result.pages;
+        fullText = result.fullText;
+      } else if (effective.provider === 'mineru') {
+        const result = await mineruExtract(
+          {
+            baseUrl: effective.baseUrl,
+            apiKey: effective.apiKey!,
+            userToken: effective.mineru.userToken || userId,
+          },
+          effective.mineru,
+          {
+            buffer,
+            mimeType,
+            filename,
+            dataId: toMineruDataId(fileId),
+          }
+        );
         pages = result.pages;
         fullText = result.fullText;
       } else {

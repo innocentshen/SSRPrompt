@@ -47,8 +47,19 @@ export const TestConnectionSchema = z.object({
   baseUrl: z.string().url().nullable().optional(),
 });
 
+// Discover Provider Models Schema
+// Allows fetching models using either the saved provider config or temporary overrides from the UI.
+export const DiscoverProviderModelsSchema = z
+  .object({
+    type: ProviderTypeSchema.optional(),
+    apiKey: z.string().optional(),
+    baseUrl: z.string().url().nullable().optional(),
+  })
+  .default({});
+
 export type CreateProviderInput = z.infer<typeof CreateProviderSchema>;
 export type UpdateProviderInput = z.infer<typeof UpdateProviderSchema>;
 export type CreateModelInput = z.infer<typeof CreateModelSchema>;
 export type UpdateModelInput = z.infer<typeof UpdateModelSchema>;
 export type TestConnectionInput = z.infer<typeof TestConnectionSchema>;
+export type DiscoverProviderModelsInput = z.infer<typeof DiscoverProviderModelsSchema>;

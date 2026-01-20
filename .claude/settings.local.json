@@ -98,7 +98,13 @@
       "Bash(npx prisma db:*)",
       "Bash(tasklist:*)",
       "WebFetch(domain:linux.do)",
-      "Bash(copy:*)"
+      "Bash(copy:*)",
+      "Bash(pnpm --filter @ssrprompt/client exec tsc:*)",
+      "Bash(pnpm --filter @ssrprompt/shared build:*)",
+      "Bash(pnpm db:push:*)",
+      "Bash(pnpm --filter @ssrprompt/server exec tsc:*)",
+      "Bash(pnpm build:server:*)",
+      "Bash(pnpm build:*)"
     ]
   }
 }

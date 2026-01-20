@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File } from 'lucide-react';
-import { Badge, MarkdownRenderer } from '../ui';
+import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File, RotateCcw, Scale, Copy, Check } from 'lucide-react';
+import { Badge, Button, MarkdownRenderer } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
-import type { TestCase, TestCaseResult, EvaluationCriterion, FileAttachment } from '../../types';
+import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
+import type { TestCase, TestCaseResult, EvaluationCriterion, FileAttachment, OcrProvider } from '../../types';
 import { getFileIconType } from '../../lib/file-utils';
 
 interface EvaluationResultsViewProps {
@@ -12,6 +13,11 @@ interface EvaluationResultsViewProps {
   criteria: EvaluationCriterion[];
   overallScores: Record<string, number>;
   summary?: string;
+  ocrProvider?: OcrProvider | null;
+  onRetryOutput?: (testCaseId: string) => void;
+  onRunAiEvaluation?: (testCaseId: string) => void;
+  retryingOutputTestCaseId?: string | null;
+  retryingAiEvaluationTestCaseId?: string | null;
 }
 
 export function EvaluationResultsView({
@@ -20,11 +26,43 @@ export function EvaluationResultsView({
   criteria,
   overallScores,
   summary,
+  ocrProvider,
+  onRetryOutput,
+  onRunAiEvaluation,
+  retryingOutputTestCaseId,
+  retryingAiEvaluationTestCaseId,
 }: EvaluationResultsViewProps) {
   const { t } = useTranslation('evaluation');
+  const { t: tCommon } = useTranslation('common');
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
+  const [copiedField, setCopiedField] = useState<{ resultId: string; field: 'expected' | 'model' } | null>(null);
+  const copyTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async (text: string, resultId: string, field: 'expected' | 'model') => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField({ resultId, field });
+      if (copyTimeoutRef.current) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = window.setTimeout(() => {
+        setCopiedField(null);
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to copy text:', error);
+    }
+  };
 
   // 使用 Map 索引优化查询性能，避免 O(n²) 的查找问题
   const testCaseMap = useMemo(() => {
@@ -86,6 +124,9 @@ export function EvaluationResultsView({
   const passedCount = results.filter((r) => r.passed).length;
   const totalCount = results.length;
   const passRate = totalCount > 0 ? (passedCount / totalCount) * 100 : 0;
+  const totalLlmMs = results.reduce((sum, r) => sum + (r.latencyMs || 0), 0);
+  const totalOcrMs = results.reduce((sum, r) => sum + (r.ocrLatencyMs || 0), 0);
+  const totalMs = totalLlmMs + totalOcrMs;
 
   return (
     <div className="space-y-6">
@@ -116,9 +157,12 @@ export function EvaluationResultsView({
         </div>
         <div className="p-4 bg-slate-800/50 light:bg-amber-50 border border-slate-700 light:border-amber-200 rounded-lg text-center">
           <p className="text-3xl font-bold text-amber-400 light:text-amber-600">
-            {(results.reduce((sum, r) => sum + r.latencyMs, 0) / 1000).toFixed(1)}s
+            {(totalMs / 1000).toFixed(1)}s
           </p>
           <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('totalTime')}</p>
+          <p className="text-[10px] text-slate-500 light:text-slate-600 mt-1">
+            {t('llmTime')}: {(totalLlmMs / 1000).toFixed(1)}s · {t('ocrTime')}: {(totalOcrMs / 1000).toFixed(1)}s
+          </p>
         </div>
       </div>
 
@@ -159,7 +203,10 @@ export function EvaluationResultsView({
       <div>
         <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t('detailedResults')}</h4>
         <div className="space-y-2">
-          {results.map((result, index) => (
+          {results.map((result, index) => {
+            const attachments = getTestCaseAttachments(result.testCaseId);
+            const showOcrResults = result.ocrLatencyMs > 0 && attachments.length > 0;
+            return (
             <div
               key={result.id}
               className="border border-slate-700 light:border-slate-200 rounded-lg bg-slate-800/30 light:bg-white overflow-hidden light:shadow-sm"
@@ -179,18 +226,24 @@ export function EvaluationResultsView({
                   <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
                     {getTestCaseName(result.testCaseId, index)}
                   </span>
-                  {getTestCaseAttachments(result.testCaseId).length > 0 && (
+                  {attachments.length > 0 && (
                     <span className="flex items-center gap-1 text-xs text-slate-500 light:text-slate-600">
                       <Paperclip className="w-3 h-3" />
-                      {getTestCaseAttachments(result.testCaseId).length}
+                      {attachments.length}
                     </span>
                   )}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-500 light:text-slate-600">
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    {result.latencyMs}ms
+                    {t('llmTime')}: {result.latencyMs}ms
                   </span>
+                  {result.ocrLatencyMs > 0 && (
+                    <span className="flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      {t('ocrTime')}: {result.ocrLatencyMs}ms
+                    </span>
+                  )}
                   <span className="flex items-center gap-1">
                     <Zap className="w-3 h-3" />
                     {result.tokensInput + result.tokensOutput} tokens
@@ -205,6 +258,36 @@ export function EvaluationResultsView({
 
               {expandedResultId === result.id && (
                 <div className="p-4 pt-0 space-y-4 border-t border-slate-700/50 light:border-slate-200">
+                  {(onRetryOutput || onRunAiEvaluation) && (
+                    <div className="flex items-center justify-end gap-2 pt-2">
+                      {onRunAiEvaluation && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRunAiEvaluation(result.testCaseId)}
+                          loading={retryingAiEvaluationTestCaseId === result.testCaseId}
+                          disabled={retryingOutputTestCaseId === result.testCaseId}
+                          title={t('runAiEvaluation')}
+                        >
+                          <Scale className="w-3.5 h-3.5" />
+                          <span>{t('runAiEvaluation')}</span>
+                        </Button>
+                      )}
+                      {onRetryOutput && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRetryOutput(result.testCaseId)}
+                          loading={retryingOutputTestCaseId === result.testCaseId}
+                          disabled={retryingAiEvaluationTestCaseId === result.testCaseId}
+                          title={t('retryOutput')}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>{t('retryOutput')}</span>
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <button
                       onClick={() => toggleOutputExpanded(result.id)}
@@ -220,8 +303,21 @@ export function EvaluationResultsView({
                     {expandedOutputs.has(result.id) && (
                       <div className="grid grid-cols-2 gap-0 border border-t-0 border-slate-700 light:border-slate-200 rounded-b overflow-hidden">
                         <div className="border-r border-slate-700 light:border-slate-200">
-                          <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200">
+                          <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
                             <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">{t('expectedOutput')}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(getExpectedOutput(result.testCaseId) || '', result.id, 'expected')}
+                              disabled={!getExpectedOutput(result.testCaseId)}
+                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={tCommon('copy')}
+                            >
+                              {copiedField?.resultId === result.id && copiedField.field === 'expected' ? (
+                                <Check className="w-3.5 h-3.5" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                           </div>
                           <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
                             {getExpectedOutput(result.testCaseId) ? (
@@ -232,8 +328,21 @@ export function EvaluationResultsView({
                           </div>
                         </div>
                         <div>
-                          <div className="px-3 py-1.5 bg-slate-800 light:bg-cyan-50 border-b border-slate-700 light:border-slate-200">
+                          <div className="px-3 py-1.5 bg-slate-800 light:bg-cyan-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
                             <span className="text-xs font-medium text-cyan-400 light:text-cyan-600">{t('modelOutput')}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(result.modelOutput || '', result.id, 'model')}
+                              disabled={!result.modelOutput}
+                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-cyan-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={tCommon('copy')}
+                            >
+                              {copiedField?.resultId === result.id && copiedField.field === 'model' ? (
+                                <Check className="w-3.5 h-3.5" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                           </div>
                           <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
                             {result.modelOutput ? (
@@ -303,14 +412,14 @@ export function EvaluationResultsView({
                     </div>
                   )}
 
-                  {getTestCaseAttachments(result.testCaseId).length > 0 && (
+                  {attachments.length > 0 && (
                     <div>
                       <p className="text-xs text-slate-500 light:text-slate-600 mb-2 flex items-center gap-1">
                         <Paperclip className="w-3 h-3" />
-                        {t('attachments')} ({getTestCaseAttachments(result.testCaseId).length})
+                        {t('attachments')} ({attachments.length})
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {getTestCaseAttachments(result.testCaseId).map((attachment, i) => {
+                        {attachments.map((attachment, i) => {
                           const Icon = getFileIcon(attachment);
                           return (
                             <button
@@ -330,10 +439,15 @@ export function EvaluationResultsView({
                       </div>
                     </div>
                   )}
+
+                  {showOcrResults && (
+                    <OcrResultsPanel attachments={attachments} provider={ocrProvider} />
+                  )}
                 </div>
               )}
             </div>
-          ))}
+          );
+          })}
         </div>
       </div>
 

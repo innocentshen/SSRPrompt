@@ -63,6 +63,8 @@ export interface PromptTestPanelProps {
     status: 'success' | 'error';
     errorMessage?: string;
     attachments?: FileAttachment[];
+    ocrUsed?: boolean;
+    ocrProvider?: OcrProvider;
   }) => void;
 
   // File attachments (optional, managed externally)
@@ -75,6 +77,8 @@ export interface PromptTestPanelProps {
   // External output control (for syncing with debug history selection)
   externalOutput?: string;
   externalThinking?: string;
+  onOutputChange?: (output: string) => void;
+  onThinkingChange?: (thinking: string) => void;
 
   // Custom class name
   className?: string;
@@ -102,6 +106,8 @@ export function PromptTestPanel({
   showFileUpload = true,
   externalOutput,
   externalThinking,
+  onOutputChange,
+  onThinkingChange,
   className = '',
 }: PromptTestPanelProps) {
   const { showToast } = useToast();
@@ -127,9 +133,9 @@ export function PromptTestPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const runAbortControllerRef = useRef<AbortController | null>(null);
 
-  // Use external output if provided, otherwise use internal
-  const output = externalOutput ?? internalOutput;
-  const thinking = externalThinking ?? internalThinking;
+  // Use internal output while running to keep streaming responsive.
+  const output = running ? internalOutput : (externalOutput ?? internalOutput);
+  const thinking = running ? internalThinking : (externalThinking ?? internalThinking);
 
   const currentModel = useMemo(() => models.find((m) => m.id === selectedModelId) || null, [models, selectedModelId]);
   const [fileProcessing, setFileProcessing] = useState<'auto' | 'vision' | 'ocr' | 'none'>('auto');
@@ -204,6 +210,8 @@ export function PromptTestPanel({
     setInternalOutput('');
     setInternalThinking('');
     setIsThinking(false);
+    onOutputChange?.('');
+    onThinkingChange?.('');
 
     const startTime = Date.now();
 
@@ -218,6 +226,8 @@ export function PromptTestPanel({
       const effectiveMode = resolveFileMode(model.supportsVision ?? true);
       const runNeedsOcr = attachedFiles.length > 0 && hasBinaryAttachments && effectiveMode === 'ocr';
       setProcessingStage(runNeedsOcr ? 'ocr' : 'llm');
+      const runOcrUsed = runNeedsOcr;
+      const runOcrProvider = runNeedsOcr ? (ocrProviderOverride || undefined) : undefined;
 
       // Replace variables in prompt
       const finalPrompt = replaceVariables(promptText, variableValues);
@@ -242,6 +252,8 @@ export function PromptTestPanel({
       let fullContent = '';
       let accumulatedThinking = '';
       let isCurrentlyThinking = false;
+      let latestOutput = '';
+      let latestThinking = '';
 
       const callbacks: StreamCallbacks = {
         onToken: (token) => {
@@ -261,10 +273,12 @@ export function PromptTestPanel({
 
           if (extractedThinking && extractedThinking !== accumulatedThinking) {
             accumulatedThinking = extractedThinking;
+            latestThinking = extractedThinking;
             setInternalThinking(extractedThinking);
           }
 
           // Show content without thinking tags - use flushSync for streaming render
+          latestOutput = content;
           flushSync(() => {
             setInternalOutput(content);
           });
@@ -279,6 +293,7 @@ export function PromptTestPanel({
             });
           }
           accumulatedThinking += token;
+          latestThinking = accumulatedThinking;
           flushSync(() => {
             setInternalThinking(accumulatedThinking);
           });
@@ -296,11 +311,15 @@ export function PromptTestPanel({
           const { thinking: extractedThinking, content } = extractThinking(result.content);
           const finalThinking = result.thinking || extractedThinking || accumulatedThinking;
 
+          latestThinking = finalThinking;
           setInternalThinking(finalThinking);
           setIsThinking(false);
 
           const outputText = `${content}\n\n---\n**${t('processingTime')}:** ${(latencyMs / 1000).toFixed(2)}s`;
+          latestOutput = outputText;
           setInternalOutput(outputText);
+          onThinkingChange?.(finalThinking);
+          onOutputChange?.(outputText);
 
           // Call onRunComplete callback
           onRunComplete?.({
@@ -312,6 +331,8 @@ export function PromptTestPanel({
             tokensOutput,
             status: 'success',
             attachments: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+            ocrUsed: runOcrUsed,
+            ocrProvider: runOcrProvider,
           });
 
           setRunning(false);
@@ -321,6 +342,8 @@ export function PromptTestPanel({
           runAbortControllerRef.current = null;
           setProcessingStage('idle');
           setIsThinking(false);
+          onThinkingChange?.(latestThinking);
+          onOutputChange?.(latestOutput);
           setRunning(false);
           showToast('info', t('runStopped'));
         },
@@ -328,7 +351,11 @@ export function PromptTestPanel({
           runAbortControllerRef.current = null;
           setProcessingStage('idle');
           const errorMessage = error.message;
-          setInternalOutput(`**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`);
+          const errorOutput = `**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`;
+          latestOutput = errorOutput;
+          setInternalOutput(errorOutput);
+          onThinkingChange?.('');
+          onOutputChange?.(errorOutput);
 
           // Call onRunComplete callback with error
           onRunComplete?.({
@@ -339,6 +366,9 @@ export function PromptTestPanel({
             tokensOutput: 0,
             status: 'error',
             errorMessage,
+            attachments: attachedFiles.length > 0 ? [...attachedFiles] : undefined,
+            ocrUsed: runOcrUsed,
+            ocrProvider: runOcrProvider,
           });
 
           setRunning(false);
@@ -371,7 +401,10 @@ export function PromptTestPanel({
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : t('unknownError');
-      setInternalOutput(`**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`);
+      const errorOutput = `**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`;
+      setInternalOutput(errorOutput);
+      onThinkingChange?.('');
+      onOutputChange?.(errorOutput);
       setProcessingStage('idle');
       setRunning(false);
       showToast('error', t('runFailed') + ': ' + errorMessage);
@@ -580,6 +613,7 @@ export function PromptTestPanel({
                      { value: 'paddle', label: 'PaddleOCR' },
                      { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
                      { value: 'datalab', label: tEval('ocrProviderDatalab') },
+                     { value: 'mineru', label: tEval('ocrProviderMineru') },
                    ]}
                  />
                )}

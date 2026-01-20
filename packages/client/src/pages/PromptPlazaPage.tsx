@@ -6,10 +6,11 @@ import { Button, Badge } from '../components/ui';
 import { ParameterPanel, PromptTestPanel, StructuredOutputEditor, VariableEditor } from '../components/Prompt';
 import { promptsApi } from '../api';
 import { formatDate } from '../lib/date-utils';
+import { toFrontendOutputSchema } from '../lib/output-schema';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
 import type { PublicPromptDetail, PublicPromptListItem, PromptVersion, PromptVariable } from '../types';
-import { DEFAULT_PROMPT_CONFIG, type OutputSchema, type PromptConfig } from '../types/database';
+import { DEFAULT_PROMPT_CONFIG, type PromptConfig } from '../types/database';
 
 function formatPromptFromMessages(messages: Array<{ role: string; content: string }>): string {
   return messages.map((m) => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n');
@@ -87,7 +88,7 @@ export function PromptPlazaPage() {
   const activePromptConfig = useMemo<PromptConfig>(() => {
     const config = (activeSnapshot?.config || {}) as Record<string, unknown>;
     const reasoning = config.reasoning as { enabled?: boolean; effort?: 'default' | 'none' | 'low' | 'medium' | 'high' } | undefined;
-    const outputSchema = config.output_schema as OutputSchema | undefined;
+    const outputSchema = toFrontendOutputSchema(config.output_schema);
 
     return {
       temperature: typeof config.temperature === 'number' ? config.temperature : DEFAULT_PROMPT_CONFIG.temperature,

@@ -23,6 +23,8 @@ interface TestCaseEditorProps {
   onRunSingle?: () => void;
   isRunning?: boolean;
   isSaving?: boolean;
+  isSelected?: boolean;
+  onSelectChange?: (selected: boolean) => void;
   fileUploadCapabilities?: FileUploadCapabilities;
   providerType?: ProviderType;
   modelId?: string;
@@ -92,6 +94,8 @@ export function TestCaseEditor({
   onDelete,
   onRunSingle,
   isRunning,
+  isSelected,
+  onSelectChange,
 }: TestCaseEditorProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
@@ -102,6 +106,7 @@ export function TestCaseEditor({
   const [expandedValue, setExpandedValue] = useState('');
   const [expandedPreview, setExpandedPreview] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpdate = async (updates: Partial<TestCase>) => {
@@ -112,33 +117,42 @@ export function TestCaseEditor({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (isUploading) return;
+
+    const maxSize = 20 * 1024 * 1024;
     const newAttachments: FileAttachment[] = [];
 
-    for (const file of Array.from(files)) {
-      if (!isSupportedFileType(file)) {
-        continue; // Skip unsupported files
+    setIsUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        if (!isSupportedFileType(file)) {
+          continue; // Skip unsupported files
+        }
+
+        // 根据模型能力检查是否允许上传
+        if (file.size > maxSize) {
+          continue;
+        }
+
+        try {
+          const attachment = await uploadFileAttachment(file);
+          newAttachments.push(attachment);
+        } catch {
+          // Ignore upload failures per file (user can retry)
+        }
       }
 
-      // 根据模型能力检查是否允许上传
-      if (file.size > 20 * 1024 * 1024) {
-        continue;
+      if (newAttachments.length > 0) {
+        const updatedAttachments = [...testCase.attachments, ...newAttachments];
+        await handleUpdate({
+          attachments: updatedAttachments,
+        });
       }
-
-      try {
-        const attachment = await uploadFileAttachment(file);
-        newAttachments.push(attachment);
-      } catch {
-        // Ignore upload failures per file (user can retry)
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
-    }
-
-    const updatedAttachments = [...testCase.attachments, ...newAttachments];
-    await handleUpdate({
-      attachments: updatedAttachments,
-    });
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
     }
   };
 
@@ -207,6 +221,16 @@ export function TestCaseEditor({
         className="w-full flex items-center justify-between p-4 hover:bg-slate-800/50 light:hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
       >
         <div className="flex items-center gap-3">
+          {onSelectChange && (
+            <input
+              type="checkbox"
+              checked={!!isSelected}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onSelectChange(e.target.checked)}
+              className="w-4 h-4 accent-cyan-500"
+              aria-label={t('selectTestCase')}
+            />
+          )}
           <span className="w-6 h-6 rounded-full bg-slate-700 light:bg-cyan-100 flex items-center justify-center text-xs font-medium text-slate-300 light:text-cyan-700">
             {index + 1}
           </span>
@@ -341,6 +365,12 @@ export function TestCaseEditor({
               {t('attachments')}
             </label>
             <div className="space-y-2">
+              {isUploading && (
+                <div className="flex items-center gap-2 p-2 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-lg">
+                  <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                  <span className="text-xs text-slate-400 light:text-slate-600">{t('uploading')}</span>
+                </div>
+              )}
               {testCase.attachments.length > 0 && (
                 testCase.attachments.map((attachment, i) => {
                   const Icon = getFileIcon(attachment);
@@ -385,6 +415,7 @@ export function TestCaseEditor({
               <Button
                 variant="secondary"
                 size="sm"
+                disabled={isUploading}
                 onClick={() => {
                   fileInputRef.current?.click();
                 }}

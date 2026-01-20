@@ -78,4 +78,11 @@
   "reasoningMediumDesc": "速度と深さのバランス",
   "reasoningHigh": "高",
   "reasoningHighDesc": "深い推論分析"
+,
+  "ocrResults": "OCR結果",
+  "ocrResultsLoading": "OCR結果を読み込み中...",
+  "ocrResultsMissing": "OCR結果がありません",
+  "ocrResultsEmpty": "OCR結果が空です",
+  "ocrResultsFailed": "OCR失敗",
+  "ocrResultsError": "OCR結果の読み込みに失敗しました"
 }

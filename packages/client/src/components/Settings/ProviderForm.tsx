@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Eye,
@@ -17,11 +17,13 @@ import {
 import { Button, Input, Select, Toggle, Modal, useToast } from '../ui';
 import type { Provider, Model, ProviderType } from '../../types';
 import { inferVisionSupport, inferReasoningSupport, inferFunctionCallingSupport } from '../../lib/model-capabilities';
+import { providersApi } from '../../api';
 
 interface FetchedModel {
   id: string;
   name: string;
   owned_by?: string;
+  maxContextLength?: number;
 }
 
 interface ProviderFormProps {
@@ -82,6 +84,15 @@ export function ProviderForm({
   const { showToast } = useToast();
   const { t } = useTranslation('settings');
   const { t: tCommon } = useTranslation('common');
+  const filteredModels = useMemo(() => {
+    const query = newModelId.trim().toLowerCase();
+    if (!query) return models;
+    return models.filter((model) => {
+      const modelName = model.name?.toLowerCase() ?? '';
+      const modelId = model.modelId?.toLowerCase() ?? '';
+      return modelId.includes(query) || modelName.includes(query);
+    });
+  }, [models, newModelId]);
 
   const providerTypes = providerTypesStatic.map(p => ({
     value: p.value,
@@ -159,91 +170,35 @@ export function ProviderForm({
   };
 
   const handleFetchModels = async () => {
-    if (!apiKey) {
-      showToast('error', t('fillApiKeyFirst'));
+    if (!provider) return;
+    if (type === 'anthropic') {
+      showToast('info', t('anthropicNoAutoFetch'));
       return;
     }
 
     setFetchingModels(true);
     try {
-      let modelsUrl = '';
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
       const effectiveBaseUrl = baseUrl || defaultBaseUrls[type];
-
-      if (type === 'openai' || type === 'custom' || type === 'openrouter') {
-        const cleanBaseUrl = effectiveBaseUrl.replace(/#$/, '').replace(/\/$/, '');
-        modelsUrl = `${cleanBaseUrl}/v1/models`;
-        headers['Authorization'] = `Bearer ${apiKey.split(',')[0].trim()}`;
-        if (type === 'openrouter') {
-          headers['HTTP-Referer'] = window.location.origin;
-        }
-      } else if (type === 'anthropic') {
-        showToast('info', t('anthropicNoAutoFetch'));
-        setFetchingModels(false);
-        return;
-      } else if (type === 'gemini') {
-        const cleanBaseUrl = effectiveBaseUrl.replace(/\/$/, '');
-        modelsUrl = `${cleanBaseUrl}/v1beta/models?key=${apiKey.split(',')[0].trim()}`;
-      } else {
-        showToast('error', t('providerNoAutoFetch'));
-        setFetchingModels(false);
-        return;
-      }
-
-      const response = await fetch(modelsUrl, {
-        method: 'GET',
-        headers: type !== 'gemini' ? headers : undefined,
+      const modelList = await providersApi.discoverModels(provider.id, {
+        type,
+        ...(effectiveBaseUrl ? { baseUrl: effectiveBaseUrl } : {}),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as { models?: unknown[]; data?: unknown[] };
-      let modelList: FetchedModel[] = [];
-
-      if (type === 'gemini') {
-        modelList = (data.models || [])
-          .map((m: unknown) => {
-            const model = m as { name?: string; displayName?: string };
-            return {
-              id: model.name?.replace('models/', '') || model.name || '',
-              name: model.displayName || model.name?.replace('models/', '') || '',
-              owned_by: 'google',
-            };
-          })
-          .filter((m) => m.id && m.name);
-      } else {
-        modelList = (data.data || [])
-          .map((m: unknown) => {
-            const model = m as { id?: string; owned_by?: string };
-            return {
-              id: model.id || '',
-              name: model.id || '',
-              owned_by: model.owned_by,
-            };
-          })
-          .filter((m) => m.id);
-      }
-
       const existingModelIds = new Set(models.map(m => m.modelId));
-      modelList = modelList.filter(m => !existingModelIds.has(m.id));
+      const newModels = modelList.filter(m => !existingModelIds.has(m.id));
 
-      if (modelList.length === 0) {
+      if (newModels.length === 0) {
         showToast('info', t('noNewModelsFound'));
         setFetchingModels(false);
         return;
       }
 
-      modelList.sort((a, b) => a.id.localeCompare(b.id));
-      setFetchedModels(modelList);
+      newModels.sort((a, b) => a.id.localeCompare(b.id));
+      setFetchedModels(newModels);
       setSelectedFetchedModels(new Set());
       setShowModelPicker(true);
-      showToast('success', t('foundModelsCount', { count: modelList.length }));
+      showToast('success', t('foundModelsCount', { count: newModels.length }));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Network error';
       showToast('error', t('fetchModelsFailed') + ': ' + message);
@@ -269,7 +224,7 @@ export function ProviderForm({
     for (const model of modelsToAdd) {
       await onAddModel(model.id, model.name, {
         supportsVision: inferVisionSupport(model.id),
-        maxContextLength: 8000,
+        maxContextLength: model.maxContextLength ?? 8000,
       });
     }
     setShowModelPicker(false);
@@ -379,7 +334,7 @@ export function ProviderForm({
               size="sm"
               onClick={handleFetchModels}
               loading={fetchingModels}
-              disabled={!apiKey}
+              disabled={fetchingModels}
             >
               <RefreshCw className={`w-4 h-4 ${fetchingModels ? 'animate-spin' : ''}`} />
               <span>{t('autoFetch')}</span>
@@ -431,8 +386,12 @@ export function ProviderForm({
                 <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
                   {t('noModelsAddOrFetch')}
                 </div>
+              ) : filteredModels.length === 0 ? (
+                <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
+                  {t('noMatchingModels')}
+                </div>
               ) : (
-                models.map((model) => (
+                filteredModels.map((model) => (
                   <div
                     key={model.id}
                     className="flex items-center justify-between px-4 py-3"

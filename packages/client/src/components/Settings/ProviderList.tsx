@@ -1,4 +1,5 @@
-import { Plus, Bot, Sparkles, Cpu, Server, Globe } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Plus, Bot, Sparkles, Cpu, Server, Globe, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Provider } from '../../types';
 
@@ -27,14 +28,39 @@ const providerColors: Record<string, string> = {
 
 export function ProviderList({ providers, selectedId, onSelect, onAdd }: ProviderListProps) {
   const { t } = useTranslation('settings');
+  const [query, setQuery] = useState('');
+  const filteredProviders = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return providers;
+    return providers.filter((provider) => {
+      const name = provider.name?.toLowerCase() ?? '';
+      const type = provider.type?.toLowerCase() ?? '';
+      return name.includes(normalized) || type.includes(normalized);
+    });
+  }, [providers, query]);
   return (
     <div className="w-64 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col">
       <div className="p-4 border-b border-slate-700 light:border-slate-200">
-        <h2 className="text-sm font-semibold text-slate-300 light:text-slate-700">{t('providerList')}</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-300 light:text-slate-700 flex-1 min-w-0">
+            {t('providerList')}
+          </h2>
+          <div className="relative w-36">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('searchProviders')}
+              aria-label={t('searchProviders')}
+              className="w-full pl-7 pr-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {providers.map((provider) => {
+        {filteredProviders.map((provider) => {
           const Icon = providerIcons[provider.type] || Server;
           const isSelected = selectedId === provider.id;
           return (

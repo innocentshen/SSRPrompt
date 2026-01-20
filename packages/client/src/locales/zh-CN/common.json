@@ -78,4 +78,11 @@
   "reasoningMediumDesc": "平衡速度和深度",
   "reasoningHigh": "沉思",
   "reasoningHighDesc": "深度推理分析"
+,
+  "ocrResults": "OCR结果",
+  "ocrResultsLoading": "加载OCR结果中...",
+  "ocrResultsMissing": "未找到OCR结果",
+  "ocrResultsEmpty": "OCR结果为空",
+  "ocrResultsFailed": "OCR失败",
+  "ocrResultsError": "OCR结果加载失败"
 }

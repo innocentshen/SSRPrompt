@@ -135,5 +135,6 @@ router.delete('/:id', (req, res, next) => providersController.delete(req, res, n
  */
 router.get('/:providerId/models', (req, res, next) => modelsController.listByProvider(req, res, next));
 router.post('/:providerId/models', (req, res, next) => modelsController.create(req, res, next));
+router.post('/:providerId/models/discover', (req, res, next) => providersController.discoverModels(req, res, next));
 
 export default router;

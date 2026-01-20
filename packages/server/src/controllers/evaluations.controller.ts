@@ -83,6 +83,18 @@ export const evaluationsController = {
     const evaluation = await evaluationsService.copy(req.user!.userId, req.params.id, name);
     res.status(201).json({ data: evaluation });
   },
+
+  /**
+   * PUT /evaluations/batch-order
+   * Update order for multiple evaluations
+   */
+  async batchUpdateOrder(req: Request, res: Response): Promise<void> {
+    const updates = z
+      .array(z.object({ id: z.string().uuid(), orderIndex: z.number().int().min(0) }))
+      .parse(req.body);
+    await evaluationsService.updateOrder(req.user!.userId, updates);
+    res.json({ success: true });
+  },
 };
 
 /**
@@ -158,6 +170,16 @@ export const criteriaController = {
 // Run creation schema
 const CreateRunSchema = z.object({
   modelParameters: z.record(z.unknown()).optional(),
+  testCaseIds: z.array(z.string().uuid()).optional(),
+});
+
+// Run update schema
+const UpdateRunSchema = z.object({
+  status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  results: z.record(z.unknown()).optional(),
+  errorMessage: z.string().nullable().optional(),
+  totalTokensInput: z.number().int().min(0).optional(),
+  totalTokensOutput: z.number().int().min(0).optional(),
 });
 
 // Add result schema
@@ -167,10 +189,14 @@ const AddResultSchema = z.object({
   scores: z.record(z.number()).optional(),
   aiFeedback: z.record(z.unknown()).optional(),
   latencyMs: z.number().int().min(0).optional(),
+  ocrLatencyMs: z.number().int().min(0).optional(),
   tokensInput: z.number().int().min(0).optional(),
   tokensOutput: z.number().int().min(0).optional(),
   passed: z.boolean().optional(),
-  errorMessage: z.string().optional(),
+  errorMessage: z.string().nullable().optional(),
+});
+const AddResultsBatchSchema = z.object({
+  results: z.array(AddResultSchema).min(1),
 });
 
 /**
@@ -187,11 +213,45 @@ export const runsController = {
   },
 
   /**
+   * POST /evaluations/:evaluationId/runs/execute - Create and execute run server-side
+   */
+  async execute(req: Request, res: Response): Promise<void> {
+    const data = CreateRunSchema.parse(req.body);
+    const run = await runsService.createAndExecute(req.user!.userId, req.params.evaluationId, data);
+    res.status(201).json({ data: run });
+  },
+
+  /**
+   * PUT /runs/:id - Update run
+   */
+  async update(req: Request, res: Response): Promise<void> {
+    const data = UpdateRunSchema.parse(req.body);
+    const run = await runsService.update(req.user!.userId, req.params.id, data);
+    res.json({ data: run });
+  },
+
+  /**
+   * GET /runs/:id - Get run by ID
+   */
+  async getById(req: Request, res: Response): Promise<void> {
+    const run = await runsService.getById(req.user!.userId, req.params.id);
+    res.json({ data: run });
+  },
+
+  /**
    * DELETE /runs/:id - Delete run
    */
   async delete(req: Request, res: Response): Promise<void> {
     await runsService.delete(req.user!.userId, req.params.id);
     res.status(204).send();
+  },
+
+  /**
+   * POST /runs/:id/abort - Abort a run
+   */
+  async abort(req: Request, res: Response): Promise<void> {
+    const run = await runsService.abort(req.user!.userId, req.params.id);
+    res.json({ data: run });
   },
 
   /**
@@ -209,5 +269,14 @@ export const runsController = {
     const data = AddResultSchema.parse(req.body);
     const result = await runsService.addResult(req.user!.userId, req.params.id, data);
     res.status(201).json({ data: result });
+  },
+
+  /**
+   * POST /runs/:id/results/batch - Add results to run
+   */
+  async addResultsBatch(req: Request, res: Response): Promise<void> {
+    const data = AddResultsBatchSchema.parse(req.body);
+    const results = await runsService.addResultsBatch(req.user!.userId, req.params.id, data.results);
+    res.status(201).json({ data: results });
   },
 };

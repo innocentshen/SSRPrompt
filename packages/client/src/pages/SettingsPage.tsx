@@ -11,6 +11,7 @@ import { useToast } from '../components/ui';
 import { providersApi, modelsApi } from '../api';
 import { useGlobalStore } from '../store/useGlobalStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { invalidateModelsCache, invalidateProvidersCache } from '../lib/cache-events';
 import type { Provider, Model, ProviderType } from '../types';
 
 type SettingsTab = 'providers' | 'optimization' | 'ocr' | 'users';
@@ -73,6 +74,7 @@ export function SettingsPage() {
       setShowAddModal(false);
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateProvidersCache(newProvider);
     } catch (err) {
       console.error('Failed to add provider:', err);
       showToast('error', t('addProviderFailed'));
@@ -96,6 +98,7 @@ export function SettingsPage() {
       showToast('success', t('configSaved'));
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateProvidersCache(updated);
     } catch (err) {
       console.error('Failed to save provider:', err);
       showToast('error', t('saveConfigFailed'));
@@ -114,6 +117,7 @@ export function SettingsPage() {
       showToast('success', t('providerDeletedSuccess'));
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateProvidersCache({});
     } catch (err) {
       console.error('Failed to delete provider:', err);
       showToast('error', t('deleteProviderFailed'));
@@ -139,6 +143,7 @@ export function SettingsPage() {
       showToast('success', t('modelAddedSuccess'));
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateModelsCache(newModel);
     } catch (err) {
       console.error('Failed to add model:', err);
       showToast('error', t('addModelFailed'));
@@ -153,6 +158,7 @@ export function SettingsPage() {
       );
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateModelsCache(updated);
     } catch (err) {
       console.error('Failed to update model:', err);
       showToast('error', t('updateModelFailed'));
@@ -166,6 +172,7 @@ export function SettingsPage() {
       showToast('success', t('modelDeletedSuccess'));
       // Sync to global store for other pages
       refreshGlobalStore(true);
+      invalidateModelsCache({});
     } catch (err) {
       console.error('Failed to delete model:', err);
       showToast('error', t('deleteModelFailed'));

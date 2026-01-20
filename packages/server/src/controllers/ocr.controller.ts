@@ -1,9 +1,9 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { ocrService } from '../services/ocr.service.js';
-import { UpdateOcrProviderSettingsSchema, UpdateOcrSystemProviderSettingsSchema } from '@ssrprompt/shared';
+import { OcrResultsRequestSchema, UpdateOcrProviderSettingsSchema, UpdateOcrSystemProviderSettingsSchema } from '@ssrprompt/shared';
 
-const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'datalab']);
+const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'datalab', 'mineru']);
 const OcrCredentialSourceSchema = z.enum(['system', 'custom']);
 
 const OcrTestOverrideSchema = z.object({
@@ -22,7 +22,7 @@ export const ocrController = {
 
   async updateSettings(req: Request, res: Response): Promise<void> {
     const userId = req.user!.userId;
-    const data = UpdateOcrProviderSettingsSchema.parse(req.body);
+    const data = UpdateOcrProviderSettingsSchema.passthrough().parse(req.body);
     const settings = await ocrService.updateSettings(userId, data);
     res.json({ data: settings });
   },
@@ -66,5 +66,12 @@ export const ocrController = {
     );
 
     res.json({ data: result });
+  },
+
+  async getResults(req: Request, res: Response): Promise<void> {
+    const userId = req.user!.userId;
+    const data = OcrResultsRequestSchema.parse(req.body);
+    const results = await ocrService.getResults(userId, data.fileIds, data.provider);
+    res.json({ data: results });
   },
 };

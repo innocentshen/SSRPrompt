@@ -29,6 +29,7 @@ export type {
   TestCase,
   EvaluationCriterion,
   EvaluationRun,
+  RunConfig,
   TestCaseResult,
   ModelParameters,
   CreateEvaluationDto,
@@ -50,11 +51,16 @@ export type {
   // OCR types
   OcrProvider,
   OcrCredentialSource,
+  MineruModelVersion,
+  MineruOcrParams,
   OcrProviderSettings,
   UpdateOcrProviderSettingsDto,
   OcrSystemProviderSettings,
   UpdateOcrSystemProviderSettingsDto,
   OcrTestResult,
+  OcrStatus,
+  OcrResultItem,
+  OcrResultsRequest,
 } from '@ssrprompt/shared';
 
 // Re-export frontend-specific types from database.ts

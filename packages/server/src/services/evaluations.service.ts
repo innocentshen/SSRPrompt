@@ -11,6 +11,7 @@ import { transformResponse, transformDecimal } from '../utils/transform.js';
 import { AppError } from '@ssrprompt/shared';
 import type { Prisma, TestCase, EvaluationCriterion, EvaluationRun, TestCaseResult } from '@prisma/client';
 import { filesService } from './files.service.js';
+import { abortEvaluationRun, enqueueEvaluationRun } from './evaluation-queue.service.js';
 
 type LegacyBase64Attachment = { name: string; type: string; base64: string };
 type StoredAttachment = { fileId: string; name: string; type: string; size: number };
@@ -161,6 +162,7 @@ export class EvaluationsService {
       modelId?: string;
       judgeModelId?: string;
       config?: Record<string, unknown>;
+      orderIndex?: number;
       testCases?: Array<{
         name?: string;
         inputText: string;
@@ -196,6 +198,7 @@ export class EvaluationsService {
         model: data.modelId ? { connect: { id: data.modelId } } : undefined,
         judgeModel: data.judgeModelId ? { connect: { id: data.judgeModelId } } : undefined,
         config: (data.config as Prisma.JsonObject) || {},
+        orderIndex: data.orderIndex,
       },
       data.testCases?.map((tc) => ({
         name: tc.name || '',
@@ -232,6 +235,7 @@ export class EvaluationsService {
       config?: Record<string, unknown>;
       results?: Record<string, unknown>;
       isPublic?: boolean;
+      orderIndex?: number;
       completedAt?: string | null;
     }
   ): Promise<EvaluationWithRelations> {
@@ -244,6 +248,7 @@ export class EvaluationsService {
     if (data.config !== undefined) updateData.config = data.config as Prisma.JsonObject;
     if (data.results !== undefined) updateData.results = data.results as Prisma.JsonObject;
     if (data.isPublic !== undefined) updateData.isPublic = data.isPublic;
+    if (data.orderIndex !== undefined) updateData.orderIndex = data.orderIndex;
 
     if (data.completedAt !== undefined) {
       updateData.completedAt = data.completedAt ? new Date(data.completedAt) : null;
@@ -317,6 +322,13 @@ export class EvaluationsService {
     const original = await this.findById(userId, id);
     const evaluation = await evaluationsRepository.copy(userId, id, newName || `${original.name} (Copy)`);
     return transformResponse(evaluation);
+  }
+
+  /**
+   * Update order for multiple evaluations
+   */
+  async updateOrder(userId: string, updates: { id: string; orderIndex: number }[]): Promise<void> {
+    await evaluationsRepository.updateOrder(userId, updates);
   }
 }
 
@@ -508,17 +520,88 @@ export class RunsService {
     evaluationId: string,
     data?: {
       modelParameters?: Record<string, unknown>;
+      testCaseIds?: string[];
+    },
+    options?: {
+      status?: 'pending' | 'running' | 'completed' | 'failed';
     }
   ): Promise<EvaluationRun> {
-    // Verify evaluation ownership
-    await this.evaluationsService.assertOwner(userId, evaluationId);
+    // Verify evaluation ownership and get evaluation details with relations
+    const evaluation = await evaluationsRepository.findByIdWithRelations(userId, evaluationId);
+    if (!evaluation) {
+      throw new AppError(404, 'NOT_FOUND', 'Evaluation not found');
+    }
+    if (evaluation.userId !== userId) {
+      throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+    }
 
+    const availableTestCaseIds = new Set((evaluation.testCases || []).map((tc) => tc.id));
+    const selectedTestCaseIds = data?.testCaseIds?.length
+      ? data.testCaseIds
+      : Array.from(availableTestCaseIds);
+
+    const invalidTestCaseIds = selectedTestCaseIds.filter((id) => !availableTestCaseIds.has(id));
+    if (invalidTestCaseIds.length > 0) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Some selected test cases do not belong to this evaluation', {
+        invalidTestCaseIds,
+      });
+    }
+
+    const totalCases = selectedTestCaseIds.length;
+
+    // Build runConfig snapshot
+    const runConfig: Record<string, unknown> = {
+      promptId: evaluation.promptId,
+      promptName: evaluation.prompt?.name || null,
+      promptVersion: evaluation.prompt?.currentVersion || null,
+      modelId: evaluation.modelId,
+      modelName: evaluation.model?.name || null,
+      judgeModelId: evaluation.judgeModelId,
+      judgeModelName: evaluation.judgeModel?.name || null,
+      passThreshold: (evaluation.config as Record<string, unknown>)?.pass_threshold,
+      executionMode: (evaluation.config as Record<string, unknown>)?.execution_mode || 'sequential',
+      fileProcessing: ((evaluation.config as Record<string, unknown>)?.file_processing as string | undefined) || 'auto',
+      ocrProvider: (evaluation.config as Record<string, unknown>)?.ocr_provider,
+      testCaseIds: selectedTestCaseIds,
+    };
+
+    const nextStatus = options?.status ?? 'running';
     const run = await runsRepository.create(evaluationId, {
-      status: 'pending',
+      status: nextStatus,
+      results: { totalCases, completedCases: 0 } as Prisma.JsonObject,
       modelParameters: data?.modelParameters as Prisma.JsonObject,
+      runConfig: runConfig as Prisma.JsonObject,
     });
 
+    // Sync evaluation status to match the new active run.
+    try {
+      await prisma.evaluation.update({
+        where: { id: evaluationId },
+        data: { status: nextStatus, completedAt: nextStatus === 'completed' || nextStatus === 'failed' ? new Date() : null },
+      });
+    } catch (e) {
+      console.error('Failed to update evaluation status for new run:', e);
+    }
+
     return transformResponse(run);
+  }
+
+  /**
+   * Create a new run and enqueue server-side execution.
+   */
+  async createAndExecute(
+    userId: string,
+    evaluationId: string,
+    data?: {
+      modelParameters?: Record<string, unknown>;
+      testCaseIds?: string[];
+    }
+  ): Promise<EvaluationRun> {
+    const run = await this.create(userId, evaluationId, data, { status: 'pending' });
+    enqueueEvaluationRun(userId, run.id).catch((error) => {
+      console.error('Failed to enqueue evaluation run:', error);
+    });
+    return run;
   }
 
   /**
@@ -555,7 +638,48 @@ export class RunsService {
     }
 
     const updated = await runsRepository.update(id, updateData);
+
+    // Keep evaluation status aligned with the latest run status to avoid UI drift.
+    if (data.status === 'running' || data.status === 'completed' || data.status === 'failed') {
+      const evalUpdate: Prisma.EvaluationUpdateInput = { status: data.status };
+      if (data.status === 'running') {
+        evalUpdate.completedAt = null;
+      }
+      if (data.status === 'completed' || data.status === 'failed') {
+        evalUpdate.completedAt = new Date();
+      }
+      if (data.results !== undefined && data.status === 'completed') {
+        evalUpdate.results = data.results as Prisma.JsonObject;
+      }
+      try {
+        await prisma.evaluation.update({
+          where: { id: run.evaluationId },
+          data: evalUpdate,
+        });
+      } catch (e) {
+        console.error('Failed to sync evaluation status with run:', e);
+      }
+    }
+
     return transformResponse(updated);
+  }
+
+  /**
+   * Get run by ID
+   */
+  async getById(userId: string, id: string): Promise<EvaluationRun> {
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id },
+      include: { evaluation: { select: { userId: true } } },
+    });
+    if (!run) {
+      throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+    if (run.evaluation.userId !== userId) {
+      throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+    }
+    const { evaluation, ...rest } = run;
+    return transformResponse(rest as EvaluationRun);
   }
 
   /**
@@ -571,6 +695,48 @@ export class RunsService {
     await this.evaluationsService.assertOwner(userId, run.evaluationId);
 
     await runsRepository.delete(id);
+  }
+
+  /**
+   * Abort a run
+   */
+  async abort(userId: string, id: string): Promise<EvaluationRun> {
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id },
+      select: { id: true, status: true, evaluationId: true },
+    });
+    if (!run) {
+      throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+
+    await this.evaluationsService.assertOwner(userId, run.evaluationId);
+    abortEvaluationRun(run.id);
+
+    if (run.status === 'completed' || run.status === 'failed') {
+      const existing = await prisma.evaluationRun.findUnique({ where: { id: run.id } });
+      if (!existing) {
+        throw new AppError(404, 'NOT_FOUND', 'Run not found');
+      }
+      return transformResponse(existing);
+    }
+
+    const errorMessage = 'Run aborted';
+    const updated = await runsRepository.update(run.id, {
+      status: 'failed',
+      errorMessage,
+      completedAt: new Date(),
+    });
+
+    try {
+      await prisma.evaluation.update({
+        where: { id: run.evaluationId },
+        data: { status: 'failed', completedAt: new Date() },
+      });
+    } catch (e) {
+      console.error('Failed to update evaluation status for aborted run:', e);
+    }
+
+    return transformResponse(updated);
   }
 
   /**
@@ -600,10 +766,11 @@ export class RunsService {
       scores?: Record<string, number>;
       aiFeedback?: Record<string, unknown>;
       latencyMs?: number;
+      ocrLatencyMs?: number;
       tokensInput?: number;
       tokensOutput?: number;
       passed?: boolean;
-      errorMessage?: string;
+      errorMessage?: string | null;
     }
   ): Promise<TestCaseResult> {
     const run = await runsRepository.findByIdWithResults(runId);
@@ -623,21 +790,213 @@ export class RunsService {
       throw new AppError(400, 'VALIDATION_ERROR', 'Test case does not belong to this evaluation');
     }
 
-    const result = await testCaseResultsRepository.create({
-      evaluation: { connect: { id: run.evaluationId } },
-      testCase: { connect: { id: data.testCaseId } },
-      run: { connect: { id: runId } },
-      modelOutput: data.modelOutput,
-      scores: (data.scores as Prisma.JsonObject) || {},
-      aiFeedback: (data.aiFeedback as Prisma.JsonObject) || {},
-      latencyMs: data.latencyMs || 0,
-      tokensInput: data.tokensInput || 0,
-      tokensOutput: data.tokensOutput || 0,
-      passed: data.passed || false,
-      errorMessage: data.errorMessage,
+    const existing = await prisma.testCaseResult.findFirst({
+      where: { runId, testCaseId: data.testCaseId },
+      select: { id: true },
     });
 
+    const safeUpdate: Prisma.TestCaseResultUpdateInput = {};
+    if (data.modelOutput !== undefined) safeUpdate.modelOutput = data.modelOutput;
+    if (data.scores !== undefined) safeUpdate.scores = data.scores as Prisma.JsonObject;
+    if (data.aiFeedback !== undefined) safeUpdate.aiFeedback = data.aiFeedback as Prisma.JsonObject;
+    if (data.latencyMs !== undefined) safeUpdate.latencyMs = data.latencyMs;
+    if (data.ocrLatencyMs !== undefined) safeUpdate.ocrLatencyMs = data.ocrLatencyMs;
+    if (data.tokensInput !== undefined) safeUpdate.tokensInput = data.tokensInput;
+    if (data.tokensOutput !== undefined) safeUpdate.tokensOutput = data.tokensOutput;
+    if (data.passed !== undefined) safeUpdate.passed = data.passed;
+    if (data.errorMessage !== undefined) safeUpdate.errorMessage = data.errorMessage;
+
+    const result = existing
+      ? await prisma.testCaseResult.update({
+          where: { id: existing.id },
+          data: safeUpdate,
+        })
+      : await testCaseResultsRepository.create({
+          evaluation: { connect: { id: run.evaluationId } },
+          testCase: { connect: { id: data.testCaseId } },
+          run: { connect: { id: runId } },
+          modelOutput: data.modelOutput,
+          scores: (data.scores as Prisma.JsonObject) || {},
+          aiFeedback: (data.aiFeedback as Prisma.JsonObject) || {},
+          latencyMs: data.latencyMs || 0,
+          ocrLatencyMs: data.ocrLatencyMs || 0,
+          tokensInput: data.tokensInput || 0,
+          tokensOutput: data.tokensOutput || 0,
+          passed: data.passed || false,
+          errorMessage: data.errorMessage,
+        });
+
+    // Maintain progress counters on the run record for accurate UI progress bars.
+    try {
+      const completedCases = await prisma.testCaseResult.count({ where: { runId } });
+      const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+      const existingRunResults = (run.results || {}) as Record<string, unknown>;
+      const config = run.runConfig as Record<string, unknown> | null;
+      const configTestCaseIds = Array.isArray(config?.testCaseIds) ? (config!.testCaseIds as unknown[]) : [];
+      const totalCases =
+        typeof existingRunResults.totalCases === 'number'
+          ? (existingRunResults.totalCases as number)
+          : configTestCaseIds.length > 0
+            ? configTestCaseIds.length
+            : completedCases;
+
+      const rate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0;
+      const nextResults: Record<string, unknown> = {
+        ...existingRunResults,
+        totalCases,
+        completedCases,
+        passedCases,
+        summary: `Total ${totalCases}, Passed ${passedCases}, Rate ${rate}%`,
+      };
+
+      await runsRepository.update(runId, { results: nextResults as Prisma.JsonObject });
+    } catch (e) {
+      console.error('Failed to update run progress:', e);
+    }
+
     return transformResponse(result);
+  }
+
+  /**
+   * Add results to a run in batches
+   */
+  async addResultsBatch(
+    userId: string,
+    runId: string,
+    results: Array<{
+      testCaseId: string;
+      modelOutput?: string;
+      scores?: Record<string, number>;
+      aiFeedback?: Record<string, unknown>;
+      latencyMs?: number;
+      ocrLatencyMs?: number;
+      tokensInput?: number;
+      tokensOutput?: number;
+      passed?: boolean;
+      errorMessage?: string | null;
+    }>
+  ): Promise<TestCaseResult[]> {
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id: runId },
+      select: { id: true, evaluationId: true, results: true, runConfig: true },
+    });
+    if (!run) {
+      throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+
+    await this.evaluationsService.assertOwner(userId, run.evaluationId);
+
+    const deduped = new Map<string, typeof results[number]>();
+    for (const item of results) {
+      deduped.set(item.testCaseId, item);
+    }
+    const normalized = Array.from(deduped.values());
+    if (normalized.length === 0) return [];
+
+    const testCaseIds = normalized.map((item) => item.testCaseId);
+
+    const validTestCases = await prisma.testCase.findMany({
+      where: { id: { in: testCaseIds }, evaluationId: run.evaluationId },
+      select: { id: true },
+    });
+    const validIds = new Set(validTestCases.map((tc) => tc.id));
+    const invalidTestCaseIds = testCaseIds.filter((id) => !validIds.has(id));
+    if (invalidTestCaseIds.length > 0) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Some selected test cases do not belong to this evaluation', {
+        invalidTestCaseIds,
+      });
+    }
+
+    const existing = await prisma.testCaseResult.findMany({
+      where: { runId, testCaseId: { in: testCaseIds } },
+      select: { id: true, testCaseId: true },
+    });
+    const existingMap = new Map(existing.map((item) => [item.testCaseId, item.id]));
+
+    const updateOps: Prisma.PrismaPromise<unknown>[] = [];
+    const createData: Prisma.TestCaseResultCreateManyInput[] = [];
+
+    for (const item of normalized) {
+      const existingId = existingMap.get(item.testCaseId);
+      if (existingId) {
+        const updateData: Prisma.TestCaseResultUpdateInput = {};
+        if (item.modelOutput !== undefined) updateData.modelOutput = item.modelOutput;
+        if (item.scores !== undefined) updateData.scores = item.scores as Prisma.JsonObject;
+        if (item.aiFeedback !== undefined) updateData.aiFeedback = item.aiFeedback as Prisma.JsonObject;
+        if (item.latencyMs !== undefined) updateData.latencyMs = item.latencyMs;
+        if (item.ocrLatencyMs !== undefined) updateData.ocrLatencyMs = item.ocrLatencyMs;
+        if (item.tokensInput !== undefined) updateData.tokensInput = item.tokensInput;
+        if (item.tokensOutput !== undefined) updateData.tokensOutput = item.tokensOutput;
+        if (item.passed !== undefined) updateData.passed = item.passed;
+        if (item.errorMessage !== undefined) updateData.errorMessage = item.errorMessage;
+
+        if (Object.keys(updateData).length > 0) {
+          updateOps.push(
+            prisma.testCaseResult.update({
+              where: { id: existingId },
+              data: updateData,
+            })
+          );
+        }
+      } else {
+        createData.push({
+          evaluationId: run.evaluationId,
+          runId,
+          testCaseId: item.testCaseId,
+          modelOutput: item.modelOutput,
+          scores: (item.scores as Prisma.JsonObject) || {},
+          aiFeedback: (item.aiFeedback as Prisma.JsonObject) || {},
+          latencyMs: item.latencyMs || 0,
+          ocrLatencyMs: item.ocrLatencyMs || 0,
+          tokensInput: item.tokensInput || 0,
+          tokensOutput: item.tokensOutput || 0,
+          passed: item.passed || false,
+          errorMessage: item.errorMessage,
+        });
+      }
+    }
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [];
+    if (updateOps.length > 0) ops.push(...updateOps);
+    if (createData.length > 0) {
+      ops.push(prisma.testCaseResult.createMany({ data: createData }));
+    }
+    if (ops.length > 0) {
+      await prisma.$transaction(ops);
+    }
+
+    const saved = await prisma.testCaseResult.findMany({
+      where: { runId, testCaseId: { in: testCaseIds } },
+    });
+
+    try {
+      const completedCases = await prisma.testCaseResult.count({ where: { runId } });
+      const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+      const existingRunResults = (run.results || {}) as Record<string, unknown>;
+      const config = run.runConfig as Record<string, unknown> | null;
+      const configTestCaseIds = Array.isArray(config?.testCaseIds) ? (config!.testCaseIds as unknown[]) : [];
+      const totalCases =
+        typeof existingRunResults.totalCases === 'number'
+          ? (existingRunResults.totalCases as number)
+          : configTestCaseIds.length > 0
+            ? configTestCaseIds.length
+            : completedCases;
+
+      const rate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0;
+      const nextResults: Record<string, unknown> = {
+        ...existingRunResults,
+        totalCases,
+        completedCases,
+        passedCases,
+        summary: `Total ${totalCases}, Passed ${passedCases}, Rate ${rate}%`,
+      };
+
+      await runsRepository.update(runId, { results: nextResults as Prisma.JsonObject });
+    } catch (e) {
+      console.error('Failed to update run progress:', e);
+    }
+
+    return saved.map((result) => transformResponse(result));
   }
 }
 

@@ -138,11 +138,12 @@ pnpm --filter @ssrprompt/server prisma:seed
 
 ```bash
 # 同时启动前端和后端（推荐）
-pnpm dev:all
+pnpm dev:all          # ??????/??/worker
 
 # 或分别启动
 pnpm dev          # 前端 http://localhost:5173
 pnpm dev:server   # 后端 http://localhost:3001
+pnpm dev:worker       # ?? worker
 ```
 
 ## 项目结构
@@ -301,7 +302,8 @@ GET    /api/v1/stats/usage            # 获取使用统计
 # 开发
 pnpm dev              # 启动前端
 pnpm dev:server       # 启动后端
-pnpm dev:all          # 同时启动前后端
+pnpm dev:worker       # ?? worker
+pnpm dev:all          # ??????/??/worker
 
 # 构建
 pnpm build            # 构建前端

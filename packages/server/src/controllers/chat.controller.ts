@@ -6,10 +6,13 @@ import {
   chatCompletion,
   type ChatMessage,
 } from '../services/chat.service.js';
+import type { Model, Provider } from '@prisma/client';
 import { tracesRepository } from '../repositories/traces.repository.js';
-import { AppError } from '@ssrprompt/shared';
+import { AppError, type OcrProvider } from '@ssrprompt/shared';
+import { prisma } from '../config/database.js';
 import { filesService } from '../services/files.service.js';
 import { ocrService } from '../services/ocr.service.js';
+import { providersService } from '../services/providers.service.js';
 
 // Content part schema for vision and files
 const ContentPartSchema = z.discriminatedUnion('type', [
@@ -63,7 +66,7 @@ const ChatCompletionSchema = z.object({
   responseFormat: z.record(z.unknown()).optional(),
   isEvalCase: z.boolean().optional().default(false),
   fileProcessing: z.enum(['auto', 'vision', 'ocr', 'none']).optional(),
-  ocrProvider: z.enum(['paddle', 'paddle_vl', 'datalab']).optional(),
+  ocrProvider: z.enum(['paddle', 'paddle_vl', 'datalab', 'mineru']).optional(),
 });
 
 type IncomingChatMessage = z.infer<typeof ChatMessageSchema>;
@@ -74,6 +77,55 @@ interface ExpandedMessages {
   messages: ChatMessage[];
   inputContent: string;
   attachments: TraceAttachment[];
+  ocrLatencyMs: number;
+  ocrProvider?: OcrProvider;
+  ocrFileIds: string[];
+}
+
+const DEFAULT_MAX_CONTEXT_LENGTH = 8000;
+const MODEL_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
+const modelContextCache = new Map<string, { value: number; checkedAt: number }>();
+
+async function resolveModelMaxContextLength(
+  userId: string,
+  model: Model,
+  provider: Provider,
+  origin?: string
+): Promise<number> {
+  const cached = modelContextCache.get(model.id);
+  const now = Date.now();
+
+  if (cached && cached.value === model.maxContextLength && now - cached.checkedAt < MODEL_CONTEXT_TTL_MS) {
+    return cached.value;
+  }
+
+  if (model.maxContextLength !== DEFAULT_MAX_CONTEXT_LENGTH) {
+    modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
+    return model.maxContextLength;
+  }
+
+  if (provider.type !== 'openrouter' && provider.type !== 'gemini') {
+    modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
+    return model.maxContextLength;
+  }
+
+  try {
+    const discovered = await providersService.discoverModels(userId, provider.id, { type: provider.type }, origin);
+    const match = discovered.find((item) => item.id === model.modelId);
+    if (match?.maxContextLength && match.maxContextLength >= 256) {
+      await prisma.model.update({
+        where: { id: model.id },
+        data: { maxContextLength: match.maxContextLength },
+      });
+      modelContextCache.set(model.id, { value: match.maxContextLength, checkedAt: now });
+      return match.maxContextLength;
+    }
+  } catch (error) {
+    console.error('Failed to refresh model context length:', error);
+  }
+
+  modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
+  return model.maxContextLength;
 }
 
 /**
@@ -127,11 +179,14 @@ async function expandMessages(
   userId: string,
   messages: IncomingChatMessage[],
   mode: 'vision' | 'ocr',
-  options?: { ocrProvider?: 'paddle' | 'paddle_vl' | 'datalab' }
+  options?: { ocrProvider?: OcrProvider }
 ): Promise<ExpandedMessages> {
   const attachments: TraceAttachment[] = [];
   const seenFileIds = new Set<string>();
   const ocrTextByFileId = new Map<string, string>();
+  const ocrFileIds = new Set<string>();
+  let ocrLatencyMs = 0;
+  let ocrProvider: OcrProvider | undefined;
 
   const expanded: ChatMessage[] = [];
 
@@ -162,12 +217,18 @@ async function expandMessages(
         if (mode === 'ocr' && (meta.mimeType.startsWith('image/') || meta.mimeType === 'application/pdf')) {
           let text = ocrTextByFileId.get(fileId);
           if (text === undefined) {
+            const ocrStart = Date.now();
             const result = await ocrService.extractForFile(
               userId,
               fileId,
               options?.ocrProvider ? { provider: options.ocrProvider } : undefined
             );
+            ocrLatencyMs += Date.now() - ocrStart;
             text = result.fullText || '';
+            ocrFileIds.add(fileId);
+            if (!ocrProvider) {
+              ocrProvider = result.provider;
+            }
             ocrTextByFileId.set(fileId, text);
           }
 
@@ -261,7 +322,14 @@ async function expandMessages(
     expanded.push({ role: message.role, content: newParts });
   }
 
-  return { messages: expanded, inputContent: extractInputContent(expanded), attachments };
+  return {
+    messages: expanded,
+    inputContent: extractInputContent(expanded),
+    attachments,
+    ocrLatencyMs,
+    ocrProvider,
+    ocrFileIds: Array.from(ocrFileIds),
+  };
 }
 
 function hasFileParts(messages: IncomingChatMessage[]): boolean {
@@ -326,6 +394,7 @@ export const chatController = {
 
     // Get model with decrypted API key
     const { model, provider, apiKey } = await getModelWithProvider(userId, data.modelId);
+    const maxContextLength = await resolveModelMaxContextLength(userId, model, provider, req.headers.origin as string | undefined);
 
     const requestedFileProcessing = data.fileProcessing ?? 'auto';
 
@@ -359,13 +428,18 @@ export const chatController = {
     }
 
     const expanded = await expandMessages(userId, messagesForModel, mode, { ocrProvider: data.ocrProvider });
+    const ocrLatencyMs = expanded.ocrLatencyMs;
+    const timingsMeta = ocrLatencyMs > 0 ? { timings: { ocrLatencyMs } } : {};
+    const ocrMeta = expanded.ocrFileIds.length > 0
+      ? { ocrProvider: expanded.ocrProvider, ocrFileIds: expanded.ocrFileIds }
+      : {};
 
     // Context budget check (no chunking). Estimate tokens conservatively.
     const estimatedTokens = estimateTokensFromMessages(expanded.messages);
-    if (estimatedTokens > model.maxContextLength) {
+    if (estimatedTokens > maxContextLength) {
       throw new AppError(400, 'CONTEXT_LIMIT_EXCEEDED', 'Context length exceeded', {
         estimatedTokens,
-        maxContextLength: model.maxContextLength,
+        maxContextLength,
       });
     }
 
@@ -460,16 +534,20 @@ export const chatController = {
               prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
-              metadata: expanded.attachments.length > 0
-                ? {
-                    files: expanded.attachments.map((a) => ({
-                      fileId: a.fileId,
-                      name: a.name,
-                      type: a.type,
-                      size: a.size,
-                    })),
-                  }
-                : {},
+              metadata: {
+                ...(expanded.attachments.length > 0
+                  ? {
+                      files: expanded.attachments.map((a) => ({
+                        fileId: a.fileId,
+                        name: a.name,
+                        type: a.type,
+                        size: a.size,
+                      })),
+                    }
+                  : {}),
+                  ...timingsMeta,
+                  ...ocrMeta,
+                },
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);
@@ -512,8 +590,10 @@ export const chatController = {
                       type: a.type,
                       size: a.size,
                     })),
+                    ...timingsMeta,
+                    ...ocrMeta,
                   }
-                : {},
+                : { ...timingsMeta, ...ocrMeta },
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);
@@ -525,6 +605,9 @@ export const chatController = {
             content: result.content,
             usage: result.usage,
             latencyMs,
+            ocrLatencyMs,
+            ocrProvider: expanded.ocrProvider,
+            ocrFileIds: expanded.ocrFileIds,
           },
         });
       } catch (error) {
@@ -550,8 +633,10 @@ export const chatController = {
                       type: a.type,
                       size: a.size,
                     })),
+                    ...timingsMeta,
+                    ...ocrMeta,
                   }
-                : {},
+                : { ...timingsMeta, ...ocrMeta },
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);

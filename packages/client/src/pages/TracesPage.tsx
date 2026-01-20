@@ -22,10 +22,11 @@ import {
 } from 'lucide-react';
 import { Button, Badge, Select, Modal, Input, useToast, MarkdownRenderer } from '../components/ui';
 import { tracesApi, promptsApi, modelsApi } from '../api';
-import type { Trace, TraceListItem, PromptListItem, Model } from '../types';
+import type { Trace, TraceListItem, PromptListItem, Model, OcrProvider } from '../types';
 import type { FileAttachment } from '../lib/ai-service';
 import { AttachmentList } from '../components/Prompt/AttachmentPreview';
 import { AttachmentModal } from '../components/Prompt/AttachmentModal';
+import { OcrResultsPanel } from '../components/Prompt/OcrResultsPanel';
 
 // API returns camelCase, use directly
 
@@ -174,6 +175,22 @@ export function TracesPage() {
       setAttachmentsLoading(false);
     }
   };
+
+  const selectedTraceOcr = useMemo(() => {
+    if (!selectedTrace) {
+      return { hasOcr: false, provider: undefined as OcrProvider | undefined, attachments: [] as FileAttachment[] };
+    }
+    const metadata = selectedTrace.metadata as {
+      ocrProvider?: string;
+      ocrFileIds?: string[];
+      timings?: { ocrLatencyMs?: number };
+    } | null;
+    const ocrFileIds = Array.isArray(metadata?.ocrFileIds) ? metadata!.ocrFileIds! : [];
+    const hasOcr = ocrFileIds.length > 0 || ((metadata?.timings?.ocrLatencyMs ?? 0) > 0);
+    const attachments = (selectedTrace.attachments || []) as FileAttachment[];
+    const filtered = ocrFileIds.length > 0 ? attachments.filter((a) => ocrFileIds.includes(a.fileId)) : attachments;
+    return { hasOcr, provider: metadata?.ocrProvider as OcrProvider | undefined, attachments: filtered };
+  }, [selectedTrace]);
 
   // Group traces by prompt and calculate stats
   const promptStatsList = useMemo(() => {
@@ -609,6 +626,13 @@ export function TracesPage() {
                   )}
                 </div>
               </div>
+            )}
+
+            {selectedTraceOcr.hasOcr && selectedTraceOcr.attachments.length > 0 && (
+              <OcrResultsPanel
+                attachments={selectedTraceOcr.attachments}
+                provider={selectedTraceOcr.provider}
+              />
             )}
 
             {selectedTrace.errorMessage && (

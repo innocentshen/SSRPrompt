@@ -30,6 +30,18 @@ router.post('/', asyncHandler(evaluationsController.create));
 
 /**
  * @swagger
+ * /evaluations/batch-order:
+ *   put:
+ *     tags: [Evaluations]
+ *     summary: 批量更新评测排序
+ *     responses:
+ *       200:
+ *         description: 成功
+ */
+router.put('/batch-order', asyncHandler(evaluationsController.batchUpdateOrder));
+
+/**
+ * @swagger
  * /evaluations/{id}:
  *   get:
  *     tags: [Evaluations]
@@ -143,5 +155,23 @@ router.post('/:evaluationId/criteria', asyncHandler(criteriaController.create));
  *         description: 创建成功
  */
 router.post('/:evaluationId/runs', asyncHandler(runsController.create));
+
+/**
+ * @swagger
+ * /evaluations/{evaluationId}/runs/execute:
+ *   post:
+ *     tags: [Runs]
+ *     summary: 创建并执行评测运行
+ *     parameters:
+ *       - in: path
+ *         name: evaluationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       201:
+ *         description: 创建成功
+ */
+router.post('/:evaluationId/runs/execute', asyncHandler(runsController.execute));
 
 export default router;

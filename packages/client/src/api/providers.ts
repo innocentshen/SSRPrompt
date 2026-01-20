@@ -7,6 +7,13 @@ export interface TestConnectionResult {
   latencyMs?: number;
 }
 
+export interface DiscoveredModel {
+  id: string;
+  name: string;
+  owned_by?: string;
+  maxContextLength?: number;
+}
+
 /**
  * Providers API
  */
@@ -41,6 +48,14 @@ export const providersApi = {
    */
   testConnection: (data: { type: ProviderType; apiKey: string; baseUrl?: string | null }) =>
     apiClient.post<TestConnectionResult>('/providers/test-connection', data),
+
+  /**
+   * Discover models available for a provider (uses saved key by default)
+   */
+  discoverModels: (
+    providerId: string,
+    data?: { type?: ProviderType; apiKey?: string; baseUrl?: string | null }
+  ) => apiClient.post<DiscoveredModel[]>(`/providers/${providerId}/models/discover`, data),
 };
 
 /**

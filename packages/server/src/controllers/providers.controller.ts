@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { providersService } from '../services/index.js';
-import { CreateProviderSchema, UpdateProviderSchema, TestConnectionSchema } from '@ssrprompt/shared';
+import { CreateProviderSchema, UpdateProviderSchema, TestConnectionSchema, DiscoverProviderModelsSchema } from '@ssrprompt/shared';
 
 function maskApiKey(apiKey: string): string {
   const value = apiKey?.trim();
@@ -132,6 +132,25 @@ export class ProvidersController {
       const result = await providersService.testConnection(data);
 
       res.json({ data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /providers/:providerId/models/discover
+   * Discover models from a provider API (uses saved key by default).
+   */
+  async discoverModels(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.userId;
+      const { providerId } = req.params;
+      const data = DiscoverProviderModelsSchema.parse(req.body);
+      const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+
+      const models = await providersService.discoverModels(userId, providerId, data, origin);
+
+      res.json({ data: models });
     } catch (error) {
       next(error);
     }

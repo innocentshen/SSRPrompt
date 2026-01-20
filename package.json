@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "pnpm --filter @ssrprompt/client dev",
     "dev:server": "pnpm --filter @ssrprompt/server dev",
-    "dev:all": "concurrently \"pnpm run dev\" \"pnpm run dev:server\"",
+    "dev:worker": "pnpm --filter @ssrprompt/server worker",
+    "dev:all": "concurrently \"pnpm run dev\" \"pnpm run dev:server\" \"pnpm run dev:worker\"",
     "build": "pnpm --filter @ssrprompt/client build",
     "build:server": "pnpm --filter @ssrprompt/server build",
     "build:all": "pnpm run build && pnpm run build:server",

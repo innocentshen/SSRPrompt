@@ -125,6 +125,7 @@ model Evaluation {
   status          EvaluationStatus      @default(pending)
   config          Json                  @default("{}")
   results         Json                  @default("{}")
+  orderIndex      Int                   @default(0) @map("order_index")
   createdAt       DateTime              @default(now()) @map("created_at")
   completedAt     DateTime?             @map("completed_at")
   isPublic       Boolean               @default(false) @map("is_public")
@@ -186,6 +187,7 @@ model EvaluationRun {
   totalTokensInput  Int              @default(0) @map("total_tokens_input")
   totalTokensOutput Int              @default(0) @map("total_tokens_output")
   modelParameters   Json?            @map("model_parameters")
+  runConfig         Json?            @map("run_config") // 运行时配置快照
   startedAt         DateTime         @default(now()) @map("started_at")
   completedAt       DateTime?        @map("completed_at")
   createdAt         DateTime         @default(now()) @map("created_at")
@@ -207,6 +209,7 @@ model TestCaseResult {
   scores       Json           @default("{}")
   aiFeedback   Json           @default("{}") @map("ai_feedback")
   latencyMs    Int            @default(0) @map("latency_ms")
+  ocrLatencyMs Int            @default(0) @map("ocr_latency_ms")
   tokensInput  Int            @default(0) @map("tokens_input")
   tokensOutput Int            @default(0) @map("tokens_output")
   passed       Boolean        @default(false)
@@ -376,6 +379,7 @@ model OcrProviderSetting {
   baseUrl          String?             @map("base_url")
   apiKey           String?             @map("api_key_encrypted")
   apiKeyLast4      String?             @map("api_key_last4")
+  providerParams   Json                @default("{}") @map("provider_params")
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
   user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -482,6 +486,7 @@ enum OcrProvider {
   paddle
   paddle_vl
   datalab
+  mineru
 }
 
 enum OcrCredentialSource {

@@ -4,6 +4,7 @@ import { History, Clock, CheckCircle, XCircle, RotateCcw, Trash2, Eye, Paperclip
 import { Collapsible, Button, Badge } from '../ui';
 import { AttachmentList } from './AttachmentPreview';
 import type { FileAttachment } from '../../lib/ai-service';
+import type { OcrProvider } from '../../types';
 
 export interface DebugRun {
   id: string;
@@ -18,6 +19,8 @@ export interface DebugRun {
   timestamp: Date;
   attachments?: FileAttachment[];
   thinking?: string;
+  ocrUsed?: boolean;
+  ocrProvider?: OcrProvider;
 }
 
 interface DebugHistoryProps {

@@ -12,3 +12,4 @@ export { AttachmentPreview, AttachmentList } from './AttachmentPreview';
 export { AttachmentModal } from './AttachmentModal';
 export { PromptTestPanel } from './PromptTestPanel';
 export type { PromptTestPanelProps } from './PromptTestPanel';
+export { OcrResultsPanel } from './OcrResultsPanel';
