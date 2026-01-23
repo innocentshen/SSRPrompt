@@ -8,7 +8,7 @@ import type { User, AuthResponse, TokenPair, JwtPayload } from '@ssrprompt/share
 import { verificationService } from './verification.service.js';
 
 const SALT_ROUNDS = 12;
-const ACCESS_TOKEN_EXPIRY = '15m';
+const ACCESS_TOKEN_EXPIRY = '24h';
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 
 /**
