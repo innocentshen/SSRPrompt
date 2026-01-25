@@ -51,6 +51,8 @@ export type {
   // OCR types
   OcrProvider,
   OcrCredentialSource,
+  DatalabOcrMode,
+  DatalabOcrParams,
   MineruModelVersion,
   MineruOcrParams,
   OcrProviderSettings,

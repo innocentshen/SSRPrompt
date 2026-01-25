@@ -13,10 +13,11 @@ function getAuthHeader(): string {
   return token ? `Bearer ${token}` : '';
 }
 
-async function parseJsonOrThrow(response: Response): Promise<any> {
-  const data = await response.json().catch(() => ({}));
+async function parseJsonOrThrow(response: Response): Promise<Record<string, unknown>> {
+  const data = await response.json().catch(() => ({} as Record<string, unknown>));
   if (!response.ok) {
-    const message = data?.error?.message || `HTTP ${response.status}`;
+    const error = (data as { error?: { message?: unknown } }).error;
+    const message = error && typeof error.message === 'string' ? error.message : `HTTP ${response.status}`;
     throw new Error(message);
   }
   return data;

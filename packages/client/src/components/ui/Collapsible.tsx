@@ -9,6 +9,8 @@ interface CollapsibleProps {
   action?: ReactNode;
   /** 禁用展开/折叠功能 */
   disabled?: boolean;
+  className?: string;
+  contentClassName?: string;
 }
 
 export function Collapsible({
@@ -18,6 +20,8 @@ export function Collapsible({
   icon,
   action,
   disabled = false,
+  className,
+  contentClassName,
 }: CollapsibleProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
@@ -28,7 +32,7 @@ export function Collapsible({
   };
 
   return (
-    <div className="border border-slate-700 light:border-slate-200 rounded-lg overflow-hidden">
+    <div className={`border border-slate-700 light:border-slate-200 rounded-lg overflow-hidden ${className ?? ''}`}>
       <div
         role="button"
         tabIndex={disabled ? -1 : 0}
@@ -67,7 +71,7 @@ export function Collapsible({
         )}
       </div>
       {isOpen && !disabled && (
-        <div className="p-3 border-t border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white">
+        <div className={`p-3 border-t border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white ${contentClassName ?? ''}`}>
           {children}
         </div>
       )}

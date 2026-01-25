@@ -682,7 +682,7 @@ export class RunsService {
     if (run.evaluation.userId !== userId) {
       throw new AppError(403, 'FORBIDDEN', 'Not authorized');
     }
-    const { evaluation, ...rest } = run;
+    const { evaluation: _evaluation, ...rest } = run;
     return transformResponse(rest as EvaluationRun);
   }
 

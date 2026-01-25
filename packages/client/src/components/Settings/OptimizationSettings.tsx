@@ -1,35 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Sparkles, Save, RotateCcw, Info } from 'lucide-react';
 import { Button, useToast } from '../ui';
-
-const STORAGE_KEY = 'ssrprompt_optimization_settings';
-
-export interface OptimizationSettingsData {
-  analysisPrompt: string;
-}
-
-// 获取默认分析提示词（需要传入翻译函数）
-export function getDefaultAnalysisPrompt(t: (key: string) => string): string {
-  return t('defaultAnalysisPrompt');
-}
-
-export function getOptimizationSettings(): OptimizationSettingsData {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  // 返回空字符串，让调用方使用翻译后的默认值
-  return { analysisPrompt: '' };
-}
-
-export function saveOptimizationSettings(settings: OptimizationSettingsData): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-}
+import { getOptimizationSettings, saveOptimizationSettings } from '../../lib/optimization-settings';
 
 export function OptimizationSettings() {
   const { t } = useTranslation('settings');
@@ -40,7 +13,6 @@ export function OptimizationSettings() {
 
   useEffect(() => {
     const settings = getOptimizationSettings();
-    // 如果存储的值为空，使用翻译后的默认值
     setAnalysisPrompt(settings.analysisPrompt || defaultPrompt);
   }, [defaultPrompt]);
 

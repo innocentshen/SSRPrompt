@@ -5,7 +5,16 @@ import { Button, Input, Modal, Toggle, useToast } from '../ui';
 import { useOcrSettingsStore } from '../../store/useOcrSettingsStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { ocrApi } from '../../api/ocr';
-import type { OcrProvider, OcrCredentialSource, OcrTestResult, OcrSystemProviderSettings, MineruModelVersion } from '../../types';
+import type {
+  OcrProvider,
+  OcrCredentialSource,
+  OcrTestResult,
+  OcrSystemProviderSettings,
+  MineruModelVersion,
+  DatalabOcrMode,
+  UpdateOcrProviderSettingsDto,
+  UpdateOcrSystemProviderSettingsDto,
+} from '../../types';
 
 function providerLabel(provider: OcrProvider, t: (k: string) => string): string {
   if (provider === 'paddle') return 'PaddleOCR';
@@ -66,6 +75,19 @@ export function OcrSettings() {
   const [mineruExtraHtml, setMineruExtraHtml] = useState(false);
   const [mineruExtraLatex, setMineruExtraLatex] = useState(false);
   const [mineruPageRanges, setMineruPageRanges] = useState('');
+
+  const [datalabMode, setDatalabMode] = useState<DatalabOcrMode>('fast');
+  const [datalabMaxPages, setDatalabMaxPages] = useState('');
+  const [datalabPageRange, setDatalabPageRange] = useState('');
+  const [datalabPaginate, setDatalabPaginate] = useState(false);
+  const [datalabAddBlockIds, setDatalabAddBlockIds] = useState(false);
+  const [datalabDisableImageExtraction, setDatalabDisableImageExtraction] = useState(false);
+  const [datalabDisableImageCaptions, setDatalabDisableImageCaptions] = useState(false);
+  const [datalabOutputFormat, setDatalabOutputFormat] = useState('');
+  const [datalabSkipCache, setDatalabSkipCache] = useState(false);
+  const [datalabSaveCheckpoint, setDatalabSaveCheckpoint] = useState(false);
+  const [datalabExtras, setDatalabExtras] = useState('');
+  const [datalabAdditionalConfig, setDatalabAdditionalConfig] = useState('');
 
   const [paddleUseDocOrientationClassify, setPaddleUseDocOrientationClassify] = useState<TriStateBoolean>('default');
   const [paddleUseDocUnwarping, setPaddleUseDocUnwarping] = useState<TriStateBoolean>('default');
@@ -137,6 +159,19 @@ export function OcrSettings() {
     setMineruExtraLatex(extra.includes('latex'));
     setMineruPageRanges(settings.mineru?.pageRanges || '');
 
+    setDatalabMode(settings.datalab?.mode || 'fast');
+    setDatalabMaxPages(settings.datalab?.maxPages != null ? String(settings.datalab.maxPages) : '');
+    setDatalabPageRange(settings.datalab?.pageRange || '');
+    setDatalabPaginate(settings.datalab?.paginate ?? false);
+    setDatalabAddBlockIds(settings.datalab?.addBlockIds ?? false);
+    setDatalabDisableImageExtraction(settings.datalab?.disableImageExtraction ?? false);
+    setDatalabDisableImageCaptions(settings.datalab?.disableImageCaptions ?? false);
+    setDatalabOutputFormat(settings.datalab?.outputFormat || '');
+    setDatalabSkipCache(settings.datalab?.skipCache ?? false);
+    setDatalabSaveCheckpoint(settings.datalab?.saveCheckpoint ?? false);
+    setDatalabExtras(settings.datalab?.extras || '');
+    setDatalabAdditionalConfig(settings.datalab?.additionalConfig || '');
+
     setPaddleUseDocOrientationClassify(toTriState(settings.paddle?.useDocOrientationClassify));
     setPaddleUseDocUnwarping(toTriState(settings.paddle?.useDocUnwarping));
     setPaddleUseTextlineOrientation(toTriState(settings.paddle?.useTextlineOrientation));
@@ -203,14 +238,32 @@ export function OcrSettings() {
     { value: 'true', label: t('optionEnable') },
     { value: 'false', label: t('optionDisable') },
   ];
+  const defaultValueHint = (value: string) => t('defaultValue', { value });
+  const withDefaultHint = (hint: string, value: string) => `${hint} ${defaultValueHint(value)}`;
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload: any = {
+      const payload: UpdateOcrProviderSettingsDto = {
         enabled,
         provider,
         credentialSource,
+      };
+
+      const datalabMaxPagesValue = toOptionalNumber(datalabMaxPages);
+      payload.datalab = {
+        mode: datalabMode,
+        maxPages: datalabMaxPagesValue != null ? Math.trunc(datalabMaxPagesValue) : null,
+        pageRange: datalabPageRange.trim() ? datalabPageRange.trim() : null,
+        paginate: datalabPaginate,
+        addBlockIds: datalabAddBlockIds,
+        disableImageExtraction: datalabDisableImageExtraction,
+        disableImageCaptions: datalabDisableImageCaptions,
+        outputFormat: datalabOutputFormat.trim() ? datalabOutputFormat.trim() : null,
+        skipCache: datalabSkipCache,
+        saveCheckpoint: datalabSaveCheckpoint,
+        extras: datalabExtras.trim() ? datalabExtras.trim() : null,
+        additionalConfig: datalabAdditionalConfig.trim() ? datalabAdditionalConfig.trim() : null,
       };
 
       payload.paddle = {
@@ -281,7 +334,7 @@ export function OcrSettings() {
   const handleSaveSystem = async () => {
     setSystemSaving(true);
     try {
-      const payload: any = {
+      const payload: UpdateOcrSystemProviderSettingsDto = {
         paddle: {
           baseUrl: systemPaddleBaseUrl || null,
           ...(clearSystemPaddleKey ? { apiKey: null } : (systemPaddleApiKey.trim() ? { apiKey: systemPaddleApiKey.trim() } : {})),
@@ -422,6 +475,93 @@ export function OcrSettings() {
             type="password"
           />
         </div>
+
+        {provider === 'datalab' && (
+          <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
+                {t('datalabParamsTitle')}
+              </h3>
+              <p className="text-xs text-slate-500 light:text-slate-600">
+                {t('datalabParamsDesc')}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                  {t('datalabMode')}
+                </label>
+                <select
+                  value={datalabMode}
+                  onChange={(e) => setDatalabMode(e.target.value as DatalabOcrMode)}
+                  className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+                >
+                  <option value="fast">{t('datalabModeFast')}</option>
+                  <option value="balanced">{t('datalabModeBalanced')}</option>
+                  <option value="accurate">{t('datalabModeAccurate')}</option>
+                </select>
+                <p className="text-xs text-slate-500 light:text-slate-600">
+                  {defaultValueHint(t('datalabModeFast'))}
+                </p>
+              </div>
+              <Input
+                label={t('datalabOutputFormat')}
+                value={datalabOutputFormat}
+                onChange={(e) => setDatalabOutputFormat(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                hint={withDefaultHint(t('datalabOutputFormatHint'), t('defaultAuto'))}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label={t('datalabMaxPages')}
+                value={datalabMaxPages}
+                onChange={(e) => setDatalabMaxPages(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                hint={defaultValueHint(t('defaultUnlimited'))}
+                type="number"
+              />
+              <Input
+                label={t('datalabPageRange')}
+                value={datalabPageRange}
+                onChange={(e) => setDatalabPageRange(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                hint={defaultValueHint(t('defaultAllPages'))}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-6">
+              <Toggle checked={datalabPaginate} onChange={setDatalabPaginate} label={t('datalabPaginate')} />
+              <Toggle checked={datalabAddBlockIds} onChange={setDatalabAddBlockIds} label={t('datalabAddBlockIds')} />
+              <Toggle checked={datalabDisableImageExtraction} onChange={setDatalabDisableImageExtraction} label={t('datalabDisableImageExtraction')} />
+              <Toggle checked={datalabDisableImageCaptions} onChange={setDatalabDisableImageCaptions} label={t('datalabDisableImageCaptions')} />
+              <Toggle checked={datalabSkipCache} onChange={setDatalabSkipCache} label={t('datalabSkipCache')} />
+              <Toggle checked={datalabSaveCheckpoint} onChange={setDatalabSaveCheckpoint} label={t('datalabSaveCheckpoint')} />
+            </div>
+            <p className="text-xs text-slate-500 light:text-slate-600">
+              {t('datalabToggleDefaults')}
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label={t('datalabExtras')}
+                value={datalabExtras}
+                onChange={(e) => setDatalabExtras(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                hint={withDefaultHint(t('datalabExtrasHint'), t('defaultNone'))}
+              />
+              <Input
+                label={t('datalabAdditionalConfig')}
+                value={datalabAdditionalConfig}
+                onChange={(e) => setDatalabAdditionalConfig(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                hint={withDefaultHint(t('datalabAdditionalConfigHint'), t('defaultNone'))}
+              />
+            </div>
+          </div>
+        )}
 
         {provider === 'paddle' && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
@@ -807,6 +947,9 @@ export function OcrSettings() {
                   <option value="pipeline">{t('mineruModelPipeline')}</option>
                   <option value="vlm">{t('mineruModelVlm')}</option>
                 </select>
+                <p className="text-xs text-slate-500 light:text-slate-600">
+                  {defaultValueHint(t('mineruModelPipeline'))}
+                </p>
               </div>
             </div>
 
@@ -815,6 +958,9 @@ export function OcrSettings() {
               <Toggle checked={mineruEnableFormula} onChange={setMineruEnableFormula} label={t('mineruEnableFormula')} />
               <Toggle checked={mineruEnableTable} onChange={setMineruEnableTable} label={t('mineruEnableTable')} />
             </div>
+            <p className="text-xs text-slate-500 light:text-slate-600">
+              {t('mineruToggleDefaults')}
+            </p>
 
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -822,13 +968,14 @@ export function OcrSettings() {
                 value={mineruLanguage}
                 onChange={(e) => setMineruLanguage(e.target.value)}
                 placeholder="ch"
+                hint={defaultValueHint('ch')}
               />
               <Input
                 label={t('mineruPageRanges')}
                 value={mineruPageRanges}
                 onChange={(e) => setMineruPageRanges(e.target.value)}
                 placeholder={t('mineruPageRangesPlaceholder')}
-                hint={t('mineruPageRangesHint')}
+                hint={withDefaultHint(t('mineruPageRangesHint'), t('defaultAllPages'))}
               />
             </div>
 
@@ -866,7 +1013,7 @@ export function OcrSettings() {
                 </label>
               </div>
               <p className="text-xs text-slate-500 light:text-slate-600">
-                {t('mineruExtraFormatsHint')}
+                {withDefaultHint(t('mineruExtraFormatsHint'), t('defaultNone'))}
               </p>
             </div>
           </div>
@@ -1057,7 +1204,7 @@ function OcrTestModal({
   credentialSource: OcrCredentialSource;
   baseUrl: string;
   apiKey: string;
-  tCommon: (key: string, options?: any) => string;
+  tCommon: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const { t } = useTranslation('settings');
   const { showToast } = useToast();

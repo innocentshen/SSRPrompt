@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, Sparkles, Users, FileText } from 'lucide-react';
 import { ProviderList } from '../components/Settings/ProviderList';
@@ -32,11 +32,7 @@ export function SettingsPage() {
   const selectedProvider = providers.find((p) => p.id === selectedProviderId) || null;
   const selectedModels = models.filter((m) => m.providerId === selectedProviderId);
 
-  useEffect(() => {
-    loadProviders();
-  }, []);
-
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
     setLoading(true);
     try {
       // 并行加载 providers 和 models
@@ -48,15 +44,19 @@ export function SettingsPage() {
       setProviders(providersData);
       setModels(modelsData);
 
-      if (providersData.length > 0 && !selectedProviderId) {
-        setSelectedProviderId(providersData[0].id);
+      if (providersData.length > 0) {
+        setSelectedProviderId((prev) => prev ?? providersData[0].id);
       }
     } catch (err) {
       console.error('Failed to load providers:', err);
       showToast('error', t('loadFailed'));
     }
     setLoading(false);
-  };
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
 
   const handleAddProvider = async (name: string, type: ProviderType, isSystem?: boolean) => {
     try {

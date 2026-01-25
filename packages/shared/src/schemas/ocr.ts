@@ -4,6 +4,7 @@ export const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'datalab', 'mine
 export const OcrCredentialSourceSchema = z.enum(['system', 'custom']);
 
 export const MineruModelVersionSchema = z.enum(['pipeline', 'vlm']);
+export const DatalabOcrModeSchema = z.enum(['fast', 'balanced', 'accurate']);
 
 export const MineruOcrParamsSchema = z.object({
   userToken: z.string().min(1).nullable().optional(),
@@ -14,6 +15,21 @@ export const MineruOcrParamsSchema = z.object({
   language: z.string().min(1).optional(),
   extraFormats: z.array(z.enum(['docx', 'html', 'latex'])).optional(),
   pageRanges: z.string().min(1).nullable().optional(),
+});
+
+export const DatalabOcrParamsSchema = z.object({
+  mode: DatalabOcrModeSchema.optional(),
+  maxPages: z.number().int().positive().nullable().optional(),
+  pageRange: z.string().min(1).nullable().optional(),
+  paginate: z.boolean().optional(),
+  addBlockIds: z.boolean().optional(),
+  disableImageExtraction: z.boolean().optional(),
+  disableImageCaptions: z.boolean().optional(),
+  outputFormat: z.string().min(1).nullable().optional(),
+  skipCache: z.boolean().optional(),
+  saveCheckpoint: z.boolean().optional(),
+  extras: z.string().min(1).nullable().optional(),
+  additionalConfig: z.string().min(1).nullable().optional(),
 });
 
 export const PaddleDetLimitTypeSchema = z.enum(['min', 'max']);
@@ -59,6 +75,7 @@ export const UpdateOcrProviderSettingsSchema = z.object({
   credentialSource: OcrCredentialSourceSchema.optional(),
   baseUrl: z.string().url().nullable().optional(),
   apiKey: z.string().min(1).nullable().optional(),
+  datalab: DatalabOcrParamsSchema.partial().optional(),
   paddle: PaddleOcrParamsSchema.partial().optional(),
   paddle_vl: PaddleVlOcrParamsSchema.partial().optional(),
   mineru: MineruOcrParamsSchema.partial().optional(),

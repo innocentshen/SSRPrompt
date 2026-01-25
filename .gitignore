@@ -5,6 +5,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*.tsbuildinfo
 
 node_modules
 dist
@@ -20,6 +21,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary artifacts
+tmp-*
 
 # 环境变量和敏感配置
 .env

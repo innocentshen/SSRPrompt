@@ -33,7 +33,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
 
   useEffect(() => {
     if (!isOpen) return;
-    if (!attachment) return;
+    if (!attachmentId) return;
 
     const abortController = new AbortController();
     let urlToRevoke: string | null = null;
@@ -45,7 +45,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
 
     (async () => {
       try {
-        const blob = await filesApi.downloadBlob(attachment.fileId, { signal: abortController.signal });
+        const blob = await filesApi.downloadBlob(attachmentId, { signal: abortController.signal });
         if (abortController.signal.aborted) return;
 
         if (isText) {
@@ -60,8 +60,9 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
         if (abortController.signal.aborted) return;
         setLoadError(e instanceof Error ? e.message : String(e));
       } finally {
-        if (abortController.signal.aborted) return;
-        setLoading(false);
+        if (!abortController.signal.aborted) {
+          setLoading(false);
+        }
       }
     })();
 

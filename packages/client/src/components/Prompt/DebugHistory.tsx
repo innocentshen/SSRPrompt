@@ -5,9 +5,14 @@ import { Collapsible, Button, Badge } from '../ui';
 import { AttachmentList } from './AttachmentPreview';
 import type { FileAttachment } from '../../lib/ai-service';
 import type { OcrProvider } from '../../types';
+import type { ChatTranscriptMessage } from './ChatTranscript';
 
 export interface DebugRun {
   id: string;
+  mode?: 'single' | 'chat';
+  chatRunId?: string;
+  modelId?: string;
+  modelParameters?: Record<string, unknown>;
   input: string;
   inputVariables: Record<string, string>;
   output: string;
@@ -21,6 +26,7 @@ export interface DebugRun {
   thinking?: string;
   ocrUsed?: boolean;
   ocrProvider?: OcrProvider;
+  messages?: ChatTranscriptMessage[];
 }
 
 interface DebugHistoryProps {
@@ -66,6 +72,10 @@ const DebugRunItem = memo(function DebugRunItem({
   onPreviewAttachment?: (attachment: FileAttachment) => void;
 }) {
   const { t } = useTranslation('prompts');
+  const attachments =
+    run.attachments ?? (run.messages ? run.messages.flatMap((m) => m.attachments ?? []) : []);
+  const hasAttachments = attachments.length > 0;
+  const hasThinking = Boolean(run.thinking) || (run.messages?.some((m) => m.thinking && m.thinking.trim()) ?? false);
 
   return (
     <div
@@ -136,20 +146,20 @@ const DebugRunItem = memo(function DebugRunItem({
       </div>
 
       {/* Attachments and thinking indicators */}
-      {(run.attachments?.length || run.thinking) && (
+      {(hasAttachments || hasThinking) && (
         <div className="flex items-center gap-2 mt-1">
-          {run.attachments && run.attachments.length > 0 && (
+          {hasAttachments && (
             <div className="flex items-center gap-1">
               <Paperclip className="w-3 h-3 text-slate-500" />
               <AttachmentList
-                attachments={run.attachments}
+                attachments={attachments}
                 size="sm"
                 maxVisible={2}
                 onPreview={onPreviewAttachment}
               />
             </div>
           )}
-          {run.thinking && (
+          {hasThinking && (
             <div className="flex items-center gap-1 text-purple-400 light:text-purple-600">
               <Brain className="w-3 h-3" />
               <span className="text-xs">{t('hasThinking')}</span>

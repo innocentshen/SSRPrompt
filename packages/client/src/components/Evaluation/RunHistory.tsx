@@ -167,14 +167,6 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onDeleteRun, onAb
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-slate-300 light:text-slate-700 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-slate-400 light:text-slate-500" />
-          {t('executionHistory')}
-        </h3>
-        <span className="text-xs text-slate-500 light:text-slate-600">{t('totalExecutions', { count: filteredRuns.length })}</span>
-      </div>
-
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="w-full sm:w-64">
@@ -247,18 +239,23 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onDeleteRun, onAb
             </div>
           </div>
         </div>
-        {onBatchExport && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => onBatchExport(filteredRuns)}
-            loading={batchExporting}
-            disabled={filteredRuns.length === 0}
-          >
-            <Download className="w-4 h-4" />
-            <span>{t('batchExport')}</span>
-          </Button>
-        )}
+        <div className="flex items-center justify-between gap-3 sm:justify-end">
+          <span className="text-xs text-slate-500 light:text-slate-600">
+            {t('totalExecutions', { count: filteredRuns.length })}
+          </span>
+          {onBatchExport && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onBatchExport(filteredRuns)}
+              loading={batchExporting}
+              disabled={filteredRuns.length === 0}
+            >
+              <Download className="w-4 h-4" />
+              <span>{t('batchExport')}</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-2">

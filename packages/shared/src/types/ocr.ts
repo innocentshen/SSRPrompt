@@ -3,6 +3,7 @@ export type OcrProvider = 'paddle' | 'paddle_vl' | 'datalab' | 'mineru';
 export type OcrCredentialSource = 'system' | 'custom';
 
 export type MineruModelVersion = 'pipeline' | 'vlm';
+export type DatalabOcrMode = 'fast' | 'balanced' | 'accurate';
 
 // MinerU request parameters that are business-specific and should be configurable.
 // These map to MinerU API fields/headers:
@@ -17,6 +18,21 @@ export interface MineruOcrParams {
   language: string;
   extraFormats: string[];
   pageRanges: string | null;
+}
+
+export interface DatalabOcrParams {
+  mode: DatalabOcrMode;
+  maxPages: number | null;
+  pageRange: string | null;
+  paginate: boolean;
+  addBlockIds: boolean;
+  disableImageExtraction: boolean;
+  disableImageCaptions: boolean;
+  outputFormat: string | null;
+  skipCache: boolean;
+  saveCheckpoint: boolean;
+  extras: string | null;
+  additionalConfig: string | null;
 }
 
 export type PaddleDetLimitType = 'min' | 'max';
@@ -64,6 +80,7 @@ export interface OcrProviderSettings {
   hasApiKey: boolean;
   apiKeyLast4: string | null;
   mineru: MineruOcrParams;
+  datalab: DatalabOcrParams;
   paddle: PaddleOcrParams;
   paddle_vl: PaddleVlOcrParams;
   systemDefaults: {
@@ -80,6 +97,7 @@ export interface UpdateOcrProviderSettingsDto {
   credentialSource?: OcrCredentialSource;
   baseUrl?: string | null;
   apiKey?: string | null;
+  datalab?: Partial<DatalabOcrParams>;
   paddle?: Partial<PaddleOcrParams>;
   paddle_vl?: Partial<PaddleVlOcrParams>;
   mineru?: Partial<MineruOcrParams>;

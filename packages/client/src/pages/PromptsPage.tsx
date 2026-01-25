@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { flushSync } from 'react-dom';
 import {
@@ -26,14 +26,13 @@ import {
   Sparkles,
   Check,
   Copy,
-  Maximize2,
   Square,
   Settings2,
   Globe,
   Play,
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
-import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel } from '../components/Prompt';
+import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel, ChatTranscript } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { DebugRun } from '../components/Prompt';
 import { promptsApi, promptGroupsApi, ApiError } from '../api';
@@ -46,7 +45,7 @@ import { formatDateTime } from '../lib/date-utils';
 import { smartReplace } from '../lib/text-utils';
 import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
 import type { Prompt, PromptVersion, PromptGroup, OcrProvider } from '../types';
-import { PromptMessage, PromptConfig, PromptVariable, ReasoningEffort, DEFAULT_PROMPT_CONFIG } from '../types/database';
+import { PromptMessage, PromptMessageRole, PromptConfig, PromptVariable, ReasoningEffort, DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
 import { invalidatePromptsCache } from '../lib/cache-events';
@@ -90,8 +89,9 @@ const toApiConfig = (config: PromptConfig): Record<string, unknown> => ({
 const toApiMessages = (messages: PromptMessage[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> =>
   messages.map((m) => ({ role: m.role, content: m.content }));
 
+const createPromptMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
 type PromptTestCache = {
-  promptId: string;
   testInput: string;
   variableValues: Record<string, string>;
   attachedFiles: FileAttachment[];
@@ -101,13 +101,14 @@ type PromptTestCache = {
   testThinking: string;
 };
 
-let promptTestCache: PromptTestCache | null = null;
+const promptTestCacheByPromptId = new Map<string, PromptTestCache>();
 
 export function PromptsPage() {
   const { showToast } = useToast();
   const { t } = useTranslation('prompts');
   const { t: tEval } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
+  const { t: tTraces } = useTranslation('traces');
 
   // Use global store for providers and models (shared across pages, with caching)
   const {
@@ -194,10 +195,6 @@ export function PromptsPage() {
   const selectPromptRequestIdRef = useRef(0);
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
     if (!editingGroupId) return;
     const input = editingGroupInputRef.current;
     if (!input) return;
@@ -219,50 +216,19 @@ export function PromptsPage() {
     }
   }, [models, providers, selectedModel]);
 
+
+  const promptTestCacheWriteReadyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (selectedPrompt) {
-      // Reset prompt content and configuration
-      setPromptContent(selectedPrompt.content || '');
-      setPromptName(selectedPrompt.name);
-      setPromptMessages(toFrontendMessages(selectedPrompt.messages));
-      setPromptConfig(toFrontendConfig(selectedPrompt.config));
-      setPromptVariables(selectedPrompt.variables || []);
-      if (selectedPrompt.defaultModelId) {
-        setSelectedModel(selectedPrompt.defaultModelId);
-      }
-      loadVersions(selectedPrompt.id);
+    const promptId = selectedPrompt?.id;
+    if (!promptId) return;
 
-      setShowDebugDetail(null);
-
-      const cache = promptTestCache;
-      if (cache && cache.promptId === selectedPrompt.id) {
-        setVariableValues(cache.variableValues);
-        setTestInput(cache.testInput);
-        setAttachedFiles(cache.attachedFiles);
-        setDebugRuns(cache.debugRuns);
-        const cachedSelectedRun = cache.selectedDebugRunId
-          ? cache.debugRuns.find((run) => run.id === cache.selectedDebugRunId) || null
-          : null;
-        setSelectedDebugRun(cachedSelectedRun);
-        setTestOutput(cache.testOutput);
-        setTestThinking(cache.testThinking);
-      } else {
-        // Reset test & output states - each prompt should have independent test data
-        setVariableValues({});
-        setTestInput('');
-        setAttachedFiles([]);
-        setDebugRuns([]);
-        setSelectedDebugRun(null);
-        setTestOutput('');
-        setTestThinking('');
-      }
+    if (promptTestCacheWriteReadyRef.current !== promptId) {
+      promptTestCacheWriteReadyRef.current = promptId;
+      return;
     }
-  }, [selectedPrompt?.id]);
 
-  useEffect(() => {
-    if (!selectedPrompt?.id) return;
-    promptTestCache = {
-      promptId: selectedPrompt.id,
+    promptTestCacheByPromptId.set(promptId, {
       testInput,
       variableValues,
       attachedFiles,
@@ -270,7 +236,7 @@ export function PromptsPage() {
       selectedDebugRunId: selectedDebugRun?.id ?? null,
       testOutput,
       testThinking,
-    };
+    });
   }, [
     attachedFiles,
     debugRuns,
@@ -305,7 +271,7 @@ export function PromptsPage() {
     );
   }, [promptConfig, promptContent, promptMessages, promptName, promptVariables, selectedModel, selectedPrompt]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       // Load providers and models from global store (with caching)
       await fetchProvidersAndModels();
@@ -352,16 +318,59 @@ export function PromptsPage() {
 
       showToast('error', t('loadFailed'));
     }
-  };
+  }, [fetchProvidersAndModels, showToast, t]);
 
-  const loadVersions = async (promptId: string) => {
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const loadVersions = useCallback(async (promptId: string) => {
     try {
       const data = await promptsApi.getVersions(promptId);
       setVersions(data);
     } catch {
       setVersions([]);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPrompt) return;
+    // Reset prompt content and configuration
+    setPromptContent(selectedPrompt.content || '');
+    setPromptName(selectedPrompt.name);
+    setPromptMessages(toFrontendMessages(selectedPrompt.messages));
+    setPromptConfig(toFrontendConfig(selectedPrompt.config));
+    setPromptVariables(selectedPrompt.variables || []);
+    if (selectedPrompt.defaultModelId) {
+      setSelectedModel(selectedPrompt.defaultModelId);
+    }
+    loadVersions(selectedPrompt.id);
+
+    setShowDebugDetail(null);
+
+    const cache = promptTestCacheByPromptId.get(selectedPrompt.id);
+    if (cache) {
+      setVariableValues(cache.variableValues);
+      setTestInput(cache.testInput);
+      setAttachedFiles(cache.attachedFiles);
+      setDebugRuns(cache.debugRuns);
+      const cachedSelectedRun = cache.selectedDebugRunId
+        ? cache.debugRuns.find((run) => run.id === cache.selectedDebugRunId) || null
+        : null;
+      setSelectedDebugRun(cachedSelectedRun);
+      setTestOutput(cache.testOutput);
+      setTestThinking(cache.testThinking);
+    } else {
+      // Reset test & output states - each prompt should have independent test data
+      setVariableValues({});
+      setTestInput('');
+      setAttachedFiles([]);
+      setDebugRuns([]);
+      setSelectedDebugRun(null);
+      setTestOutput('');
+      setTestThinking('');
+    }
+  }, [loadVersions, selectedPrompt]);
 
   const handleSelectPrompt = async (promptId: string) => {
     if (loadingPromptId === promptId || selectedPrompt?.id === promptId) return;
@@ -585,13 +594,88 @@ export function PromptsPage() {
     }
   };
 
+  const formatMessagesToContent = useCallback((messages: PromptMessage[]) => {
+    const formatted = messages
+      .map((message) => ({
+        role: message.role,
+        content: message.content.trimEnd(),
+      }))
+      .filter((message) => message.content.trim().length > 0)
+      .map((message) => `[${message.role.toUpperCase()}]\n${message.content}`);
+    return formatted.join('\n\n');
+  }, []);
+
+  const parseContentToMessages = useCallback((content: string) => {
+    const normalized = content.replace(/\r\n/g, '\n');
+    const lines = normalized.split('\n');
+    const rolePattern = /^\s*\[(SYSTEM|USER|ASSISTANT)\]\s*$/i;
+    const firstMeaningfulLine = lines.find((line) => line.trim().length > 0);
+
+    if (!firstMeaningfulLine || !rolePattern.test(firstMeaningfulLine)) {
+      return null;
+    }
+
+    const messages: PromptMessage[] = [];
+    let currentRole: PromptMessageRole | null = null;
+    let currentLines: string[] = [];
+
+    const pushMessage = () => {
+      if (!currentRole) return;
+      const messageContent = currentLines.join('\n').trimEnd();
+      if (messageContent.trim().length === 0) return;
+      messages.push({
+        id: createPromptMessageId(),
+        role: currentRole,
+        content: messageContent,
+      });
+    };
+
+    lines.forEach((line) => {
+      const match = line.match(rolePattern);
+      if (match) {
+        pushMessage();
+        currentRole = match[1].toLowerCase() as PromptMessageRole;
+        currentLines = [];
+        return;
+      }
+      if (currentRole) {
+        currentLines.push(line);
+      }
+    });
+
+    pushMessage();
+    return messages.length > 0 ? messages : null;
+  }, []);
+
+  const handleSwitchToSingleMessage = useCallback(() => {
+    if (promptMessages.length === 0) return;
+    const content = formatMessagesToContent(promptMessages);
+    setPromptContent(content);
+    setPromptMessages([]);
+  }, [formatMessagesToContent, promptMessages]);
+
+  const handleSwitchToMultiMessage = useCallback(() => {
+    const parsedMessages = parseContentToMessages(promptContent);
+    if (parsedMessages) {
+      setPromptMessages(parsedMessages);
+      setPromptContent('');
+      return;
+    }
+
+    setPromptMessages([
+      { id: createPromptMessageId(), role: 'system', content: promptContent || 'You are a helpful assistant.' },
+      { id: createPromptMessageId(), role: 'user', content: '' },
+    ]);
+    setPromptContent('');
+  }, [parseContentToMessages, promptContent]);
+
   // Build prompt from messages
   const buildPromptFromMessages = useCallback(() => {
     if (promptMessages.length > 0) {
-      return promptMessages.map((m) => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n');
+      return formatMessagesToContent(promptMessages);
     }
     return promptContent;
-  }, [promptMessages, promptContent]);
+  }, [formatMessagesToContent, promptMessages, promptContent]);
 
   const requestDeletePrompt = (promptId: string) => {
     const listItem = prompts.find((p) => p.id === promptId);
@@ -1806,12 +1890,24 @@ export function PromptsPage() {
                       </p>
                     </div>
                     <div className="flex-1 p-4 overflow-y-auto">
-                      {promptMessages.length > 0 ? (
-                        <MessageList
-                          messages={promptMessages}
-                          onChange={setPromptMessages}
-                        />
-                      ) : (
+                        {promptMessages.length > 0 ? (
+                          <div className="space-y-4">
+                            <MessageList
+                              messages={promptMessages}
+                              onChange={setPromptMessages}
+                            />
+                            <div className="text-center">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={handleSwitchToSingleMessage}
+                              >
+                                <FileText className="w-4 h-4 mr-1" />
+                                {t('switchToSingleMessage')}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
                         <div className="h-full flex flex-col">
                           <textarea
                             value={promptContent}
@@ -1819,21 +1915,15 @@ export function PromptsPage() {
                             placeholder={t('promptPlaceholder')}
                             className="flex-1 w-full p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500 font-mono"
                           />
-                          <div className="text-center mt-4">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                setPromptMessages([
-                                  { id: `msg_${Date.now()}_1`, role: 'system', content: promptContent || 'You are a helpful assistant.' },
-                                  { id: `msg_${Date.now()}_2`, role: 'user', content: '' },
-                                ]);
-                                setPromptContent('');
-                              }}
-                            >
-                              <Plus className="w-4 h-4 mr-1" />
-                              {t('switchToMultiMessage')}
-                            </Button>
+                            <div className="text-center mt-4">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={handleSwitchToMultiMessage}
+                              >
+                                <Plus className="w-4 h-4 mr-1" />
+                                {t('switchToMultiMessage')}
+                              </Button>
                           </div>
                         </div>
                       )}
@@ -1903,12 +1993,14 @@ export function PromptsPage() {
                     providers={providers}
                     selectedModelId={selectedModel}
                     onModelSelect={setSelectedModel}
+                    showModelSelector={false}
                     variables={promptVariables}
                     variableValues={variableValues}
                     onVariableValuesChange={setVariableValues}
                     testInput={testInput}
                     onTestInputChange={setTestInput}
                     promptText={buildPromptFromMessages()}
+                    promptMessages={promptMessages.length > 0 ? promptMessages.map((m) => ({ role: m.role, content: m.content })) : undefined}
                     config={promptConfig}
                     outputSchema={promptConfig.output_schema}
                     promptId={selectedPrompt?.id}
@@ -1921,23 +2013,73 @@ export function PromptsPage() {
                     onOutputChange={setTestOutput}
                     onThinkingChange={setTestThinking}
                     onRunComplete={(result) => {
+                      if (result.mode === 'chat' && result.chatRunId && result.messages) {
+                        const chatId = result.chatRunId;
+                        const firstUser = result.messages.find((m) => m.role === 'user')?.content || result.input;
+
+                        setDebugRuns((prev) => {
+                          const existing = prev.find((r) => r.id === chatId);
+
+                          const merged: DebugRun = {
+                            id: chatId,
+                            mode: 'chat',
+                            chatRunId: chatId,
+                            modelId: selectedModel,
+                            modelParameters: {
+                              temperature: promptConfig.temperature,
+                              top_p: promptConfig.top_p,
+                              max_tokens: promptConfig.max_tokens,
+                              frequency_penalty: promptConfig.frequency_penalty,
+                              presence_penalty: promptConfig.presence_penalty,
+                            },
+                            input: existing?.input || firstUser,
+                            inputVariables: existing?.inputVariables || {},
+                            output: result.output,
+                            status: result.status === 'error' ? 'error' : (existing?.status || 'success'),
+                            errorMessage: result.errorMessage ?? existing?.errorMessage,
+                            latencyMs: (existing?.latencyMs || 0) + result.latencyMs,
+                            tokensInput: (existing?.tokensInput || 0) + result.tokensInput,
+                            tokensOutput: (existing?.tokensOutput || 0) + result.tokensOutput,
+                            timestamp: existing?.timestamp || new Date(),
+                            attachments: existing?.attachments ?? result.attachments,
+                            thinking: result.thinking ?? existing?.thinking,
+                            ocrUsed: existing?.ocrUsed || result.ocrUsed,
+                            ocrProvider: existing?.ocrProvider ?? result.ocrProvider,
+                            messages: result.messages,
+                          };
+
+                          const without = prev.filter((r) => r.id !== chatId);
+                          return [merged, ...without].slice(0, 20);
+                        });
+                        return;
+                      }
+
                       const runId = `run_${Date.now()}`;
-                        const newRun: DebugRun = {
-                          id: runId,
-                          input: result.input,
-                          inputVariables: {},
-                          output: result.output,
-                          status: result.status,
-                          errorMessage: result.errorMessage,
-                          latencyMs: result.latencyMs,
-                          tokensInput: result.tokensInput,
-                          tokensOutput: result.tokensOutput,
-                          timestamp: new Date(),
-                          attachments: result.attachments,
-                          thinking: result.thinking,
-                          ocrUsed: result.ocrUsed,
-                          ocrProvider: result.ocrProvider,
-                        };
+                      const newRun: DebugRun = {
+                        id: runId,
+                        mode: 'single',
+                        modelId: selectedModel,
+                        modelParameters: {
+                          temperature: promptConfig.temperature,
+                          top_p: promptConfig.top_p,
+                          max_tokens: promptConfig.max_tokens,
+                          frequency_penalty: promptConfig.frequency_penalty,
+                          presence_penalty: promptConfig.presence_penalty,
+                        },
+                        input: result.input,
+                        inputVariables: {},
+                        output: result.output,
+                        status: result.status,
+                        errorMessage: result.errorMessage,
+                        latencyMs: result.latencyMs,
+                        tokensInput: result.tokensInput,
+                        tokensOutput: result.tokensOutput,
+                        timestamp: new Date(),
+                        attachments: result.attachments,
+                        thinking: result.thinking,
+                        ocrUsed: result.ocrUsed,
+                        ocrProvider: result.ocrProvider,
+                      };
                       setDebugRuns((prev) => [newRun, ...prev.slice(0, 19)]);
                     }}
                     className="flex-1 min-w-0 basis-0 bg-slate-900/20 light:bg-slate-100"
@@ -1949,6 +2091,7 @@ export function PromptsPage() {
                 <div className="flex-1 overflow-hidden">
                   <PromptObserver
                     promptId={selectedPrompt.id}
+                    promptName={selectedPrompt.name}
                     models={models}
                   />
                 </div>
@@ -2281,524 +2424,531 @@ export function PromptsPage() {
           setCompareResults({ left: null, right: null });
         }}
         title={t('promptCompare')}
-        size="xl"
+        size="full"
       >
-        <div className="space-y-4">
-          <div className="flex gap-2 p-1 bg-slate-800 light:bg-slate-100 rounded-lg">
-            <button
-              onClick={() => setCompareMode('models')}
-              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                compareMode === 'models'
-                  ? 'bg-cyan-500 text-white'
-                  : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
-              }`}
-            >
-              {t('sameVersionDiffModels')}
-            </button>
-            <button
-              onClick={() => setCompareMode('versions')}
-              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                compareMode === 'versions'
-                  ? 'bg-cyan-500 text-white'
-                  : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
-              }`}
-            >
-              {t('sameModelDiffVersions')}
-            </button>
-          </div>
+        <div className="flex flex-col gap-4 min-h-[76vh] max-h-[90vh] overflow-hidden">
+          <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,560px)_minmax(0,1fr)] gap-4 min-h-0">
+            <div className="flex flex-col min-h-0">
+              <div className="flex-1 space-y-4 min-h-0 overflow-y-auto pr-1">
+                <div className="flex gap-2 p-1 bg-slate-800 light:bg-slate-100 rounded-lg">
+                  <button
+                    onClick={() => setCompareMode('models')}
+                    className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                      compareMode === 'models'
+                        ? 'bg-cyan-500 text-white'
+                        : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
+                    }`}
+                  >
+                    {t('sameVersionDiffModels')}
+                  </button>
+                  <button
+                    onClick={() => setCompareMode('versions')}
+                    className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                      compareMode === 'versions'
+                        ? 'bg-cyan-500 text-white'
+                        : 'text-slate-400 light:text-slate-600 hover:text-white light:hover:text-slate-900'
+                    }`}
+                  >
+                    {t('sameModelDiffVersions')}
+                  </button>
+                </div>
 
-          {compareMode === 'models' ? (
-            <div className="space-y-3">
-              <Select
-                label={t('selectVersion')}
-                value={compareVersion}
-                onChange={(e) => setCompareVersion(e.target.value)}
-                options={[
-                  { value: '', label: t('selectVersion') },
-                  ...versions.map((v) => ({
-                    value: v.id,
-                    label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
-                  })),
-                ]}
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelA')}</label>
-                  <ModelSelector
-                    models={models}
-                    providers={providers}
-                    selectedModelId={compareModels[0]}
-                    onSelect={(modelId) => setCompareModels([modelId, compareModels[1]])}
+                {compareMode === 'models' ? (
+                  <div className="space-y-3">
+                    <Select
+                      label={t('selectVersion')}
+                      value={compareVersion}
+                      onChange={(e) => setCompareVersion(e.target.value)}
+                      options={[
+                        { value: '', label: t('selectVersion') },
+                        ...versions.map((v) => ({
+                          value: v.id,
+                          label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
+                        })),
+                      ]}
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelA')}</label>
+                        <ModelSelector
+                          models={models}
+                          providers={providers}
+                          selectedModelId={compareModels[0]}
+                          onSelect={(modelId) => setCompareModels([modelId, compareModels[1]])}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelB')}</label>
+                        <ModelSelector
+                          models={models}
+                          providers={providers}
+                          selectedModelId={compareModels[1]}
+                          onSelect={(modelId) => setCompareModels([compareModels[0], modelId])}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{tCommon('selectModel')}</label>
+                      <ModelSelector
+                        models={models}
+                        providers={providers}
+                        selectedModelId={compareModel}
+                        onSelect={(modelId) => setCompareModel(modelId)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <Select
+                        label={t('versionA')}
+                        value={compareVersions[0]}
+                        onChange={(e) => setCompareVersions([e.target.value, compareVersions[1]])}
+                        options={[
+                          { value: '', label: t('selectVersion') },
+                          ...versions.map((v) => ({
+                            value: v.id,
+                            label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
+                          })),
+                        ]}
+                      />
+                      <Select
+                        label={t('versionB')}
+                        value={compareVersions[1]}
+                        onChange={(e) => setCompareVersions([compareVersions[0], e.target.value])}
+                        options={[
+                          { value: '', label: t('selectVersion') },
+                          ...versions.map((v) => ({
+                            value: v.id,
+                            label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
+                          })),
+                        ]}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('testInput')}</label>
+                  <textarea
+                    value={compareInput}
+                    onChange={(e) => setCompareInput(e.target.value)}
+                    placeholder={t('inputPlaceholder')}
+                    rows={4}
+                    className="w-full min-h-[120px] p-3 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500"
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('modelB')}</label>
-                  <ModelSelector
-                    models={models}
-                    providers={providers}
-                    selectedModelId={compareModels[1]}
-                    onSelect={(modelId) => setCompareModels([compareModels[0], modelId])}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{tCommon('selectModel')}</label>
-                <ModelSelector
-                  models={models}
-                  providers={providers}
-                  selectedModelId={compareModel}
-                  onSelect={(modelId) => setCompareModel(modelId)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Select
-                  label={t('versionA')}
-                  value={compareVersions[0]}
-                  onChange={(e) => setCompareVersions([e.target.value, compareVersions[1]])}
-                  options={[
-                    { value: '', label: t('selectVersion') },
-                    ...versions.map((v) => ({
-                      value: v.id,
-                      label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
-                    })),
-                  ]}
-                />
-                <Select
-                  label={t('versionB')}
-                  value={compareVersions[1]}
-                  onChange={(e) => setCompareVersions([compareVersions[0], e.target.value])}
-                  options={[
-                    { value: '', label: t('selectVersion') },
-                    ...versions.map((v) => ({
-                      value: v.id,
-                      label: `v${v.version} - ${formatDateTime(v.createdAt)}`,
-                    })),
-                  ]}
-                />
-              </div>
-            </div>
-          )}
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('testInput')}</label>
-            <textarea
-              value={compareInput}
-              onChange={(e) => setCompareInput(e.target.value)}
-              placeholder={t('inputPlaceholder')}
-              rows={3}
-              className="w-full p-3 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('attachments')}</label>
-              <button
-                type="button"
-                onClick={() => compareFileInputRef.current?.click()}
-                className="flex items-center gap-1 text-xs transition-colors text-cyan-400 hover:text-cyan-300"
-              >
-                <Paperclip className="w-3.5 h-3.5" />
-                {t('addFile')}
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-2">
-              <Select
-                label={tEval('fileProcessing')}
-                value={compareFileProcessing}
-                onChange={(e) => setCompareFileProcessing(e.target.value as typeof compareFileProcessing)}
-                options={[
-                  { value: 'auto', label: tEval('fileProcessingAuto') },
-                  ...(compareVisionEligible ? [{ value: 'vision', label: tEval('fileProcessingVision') }] : []),
-                  { value: 'ocr', label: tEval('fileProcessingOcr') },
-                  { value: 'none', label: tEval('fileProcessingNone') },
-                ]}
-              />
-              {(compareFileProcessing === 'ocr' ||
-                (compareFileProcessing === 'auto' &&
-                  !compareVisionEligible &&
-                  (compareMode === 'models' ? (compareModels[0] || compareModels[1]) : !!compareModel))) && (
-                <Select
-                  value={compareOcrProviderOverride}
-                  onChange={(e) => setCompareOcrProviderOverride(e.target.value as OcrProvider | '')}
-                  options={[
-                    { value: '', label: tEval('ocrProviderFollow') },
-                    { value: 'paddle', label: 'PaddleOCR' },
-                    { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                    { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                    { value: 'mineru', label: tEval('ocrProviderMineru') },
-                  ]}
-                />
-              )}
-            </div>
-            <input
-              ref={compareFileInputRef}
-              type="file"
-              accept={compareFileUploadCapabilities.accept}
-              multiple
-              onChange={handleCompareFileSelect}
-              className="hidden"
-            />
-            {compareFiles.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {compareFiles.map((file, index) => {
-                  const FileIcon = getFileIcon(file.type);
-                  return (
-                    <div
-                      key={index}
-                      className="flex items-center gap-2 p-2 bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 rounded-lg"
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-slate-300 light:text-slate-700">{t('attachments')}</label>
+                    <button
+                      type="button"
+                      onClick={() => compareFileInputRef.current?.click()}
+                      className="flex items-center gap-1 text-xs transition-colors text-cyan-400 hover:text-cyan-300"
                     >
-                      <FileIcon className="w-4 h-4 text-slate-400" />
-                      <span className="text-xs text-slate-300 light:text-slate-700 truncate max-w-[120px]">
-                        {file.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeCompareFile(index)}
-                        className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* 模型参数配置 */}
-          <Collapsible
-            title={t('modelParameters')}
-            icon={<Settings2 className="w-4 h-4 text-cyan-400 light:text-cyan-600" />}
-            defaultOpen={false}
-          >
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
-                <p className="text-xs font-medium text-slate-400 light:text-slate-600">
-                  {compareMode === 'models' ? (models.find((m) => m.id === compareModels[0])?.name || t('modelA')) : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('temperature')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.left.temperature}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, temperature: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
+                      <Paperclip className="w-3.5 h-3.5" />
+                      {t('addFile')}
+                    </button>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('topP')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={compareParams.left.top_p}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, top_p: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                  <div className="grid grid-cols-1 gap-2">
+                    <Select
+                      label={tEval('fileProcessing')}
+                      value={compareFileProcessing}
+                      onChange={(e) => setCompareFileProcessing(e.target.value as typeof compareFileProcessing)}
+                      options={[
+                        { value: 'auto', label: tEval('fileProcessingAuto') },
+                        ...(compareVisionEligible ? [{ value: 'vision', label: tEval('fileProcessingVision') }] : []),
+                        { value: 'ocr', label: tEval('fileProcessingOcr') },
+                        { value: 'none', label: tEval('fileProcessingNone') },
+                      ]}
                     />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.left.frequency_penalty}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.left.presence_penalty}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, presence_penalty: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('maxTokens')}</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="32000"
-                      step="1"
-                      value={compareParams.left.max_tokens}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 4096 } }))}
-                      className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  {/* 推理配置 - 仅在模型支持时显示 */}
-                  {(() => {
-                    const leftModel = compareMode === 'models'
-                      ? models.find((m) => m.id === compareModels[0])
-                      : models.find((m) => m.id === selectedModel);
-                    const leftModelId = leftModel?.modelId;
-                    const leftSupportsReasoning = leftModel?.supportsReasoning ?? (leftModelId ? inferReasoningSupport(leftModelId) : false);
-                    return leftModelId && leftSupportsReasoning && (
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
-                        <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
-                        <ReasoningSelector
-                          modelId={leftModelId}
-                          supportsReasoning={leftSupportsReasoning}
-                          value={compareParams.left.reasoning?.effort || 'default'}
-                          onChange={(effort) => {
-                            setCompareParams((prev) => ({
-                              ...prev,
-                              left: {
-                                ...prev.left,
-                                reasoning: effort === 'default' ? undefined : { enabled: true, effort },
-                              },
-                            }));
-                          }}
-                        />
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-              <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
-                <p className="text-xs font-medium text-slate-400 light:text-slate-600">
-                  {compareMode === 'models' ? (models.find((m) => m.id === compareModels[1])?.name || t('modelB')) : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('temperature')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.right.temperature}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, temperature: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('topP')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={compareParams.right.top_p}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, top_p: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.right.frequency_penalty}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={compareParams.right.presence_penalty}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, presence_penalty: parseFloat(e.target.value) || 0 } }))}
-                      className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">{t('maxTokens')}</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="32000"
-                      step="1"
-                      value={compareParams.right.max_tokens}
-                      onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 4096 } }))}
-                      className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
-                    />
-                  </div>
-                  {/* 推理配置 - 仅在模型支持时显示 */}
-                  {(() => {
-                    const rightModel = compareMode === 'models'
-                      ? models.find((m) => m.id === compareModels[1])
-                      : models.find((m) => m.id === selectedModel);
-                    const rightModelId = rightModel?.modelId;
-                    const rightSupportsReasoning = rightModel?.supportsReasoning ?? (rightModelId ? inferReasoningSupport(rightModelId) : false);
-                    return rightModelId && rightSupportsReasoning && (
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
-                        <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
-                        <ReasoningSelector
-                          modelId={rightModelId}
-                          supportsReasoning={rightSupportsReasoning}
-                          value={compareParams.right.reasoning?.effort || 'default'}
-                          onChange={(effort) => {
-                            setCompareParams((prev) => ({
-                              ...prev,
-                              right: {
-                                ...prev.right,
-                                reasoning: effort === 'default' ? undefined : { enabled: true, effort },
-                              },
-                            }));
-                          }}
-                        />
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-          </Collapsible>
-
-          <div className="flex gap-2">
-            <Button className="flex-1" onClick={handleRunComparison} loading={compareRunning.left || compareRunning.right}>
-              <Play className="w-4 h-4" />
-              <span>{t('run')}{t('compare')}</span>
-            </Button>
-            {(compareRunning.left || compareRunning.right) && (
-              <Button variant="danger" onClick={() => handleStopComparison('both')}>
-                <Square className="w-4 h-4" />
-                <span>{t('stop')}</span>
-              </Button>
-            )}
-          </div>
-
-          {(compareResults.left || compareResults.right || compareRunning.left || compareRunning.right) && (
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-700 light:border-slate-200">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="info">
-                      {compareMode === 'models'
-                        ? models.find((m) => m.id === compareModels[0])?.name || 'A'
-                        : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
-                    </Badge>
-                    {compareRunning.left && (
-                      <button
-                        onClick={() => handleStopComparison('left')}
-                        className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                        title={t('stop')}
-                      >
-                        <Square className="w-3 h-3" />
-                      </button>
+                    {(compareFileProcessing === 'ocr' ||
+                      (compareFileProcessing === 'auto' &&
+                        !compareVisionEligible &&
+                        (compareMode === 'models' ? (compareModels[0] || compareModels[1]) : !!compareModel))) && (
+                      <Select
+                        value={compareOcrProviderOverride}
+                        onChange={(e) => setCompareOcrProviderOverride(e.target.value as OcrProvider | '')}
+                        options={[
+                          { value: '', label: tEval('ocrProviderFollow') },
+                          { value: 'paddle', label: 'PaddleOCR' },
+                          { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
+                          { value: 'datalab', label: tEval('ocrProviderDatalab') },
+                          { value: 'mineru', label: tEval('ocrProviderMineru') },
+                        ]}
+                      />
                     )}
                   </div>
-                  {compareResults.left && !compareResults.left.error && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
-                      <Clock className="w-3 h-3" />
-                      <span>{(compareResults.left.latency / 1000).toFixed(2)}s</span>
-                      <span>|</span>
-                      <span>{compareResults.left.tokensIn + compareResults.left.tokensOut} tokens</span>
-                    </div>
-                  )}
-                </div>
-                <div className="h-96 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
-                  {compareResults.left?.error ? (
-                    <div className="text-red-400 light:text-red-600 text-sm">
-                      <p className="font-medium">{t('error')}</p>
-                      <p className="mt-1 text-xs">{compareResults.left.error}</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {(compareResults.left?.thinking || compareResults.left?.isThinking) && (
-                        <ThinkingBlock
-                          thinking={compareResults.left.thinking}
-                          isStreaming={compareResults.left.isThinking}
-                        />
-                      )}
-                      {compareResults.left?.content ? (
-                        <MarkdownRenderer content={compareResults.left.content} />
-                      ) : compareRunning.left ? (
-                        !compareResults.left?.isThinking && (
-                          <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>{t('running')}</span>
+                  <input
+                    ref={compareFileInputRef}
+                    type="file"
+                    accept={compareFileUploadCapabilities.accept}
+                    multiple
+                    onChange={handleCompareFileSelect}
+                    className="hidden"
+                  />
+                  {compareFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {compareFiles.map((file, index) => {
+                        const FileIcon = getFileIcon(file.type);
+                        return (
+                          <div
+                            key={index}
+                            className="flex items-center gap-2 p-2 bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 rounded-lg"
+                          >
+                            <FileIcon className="w-4 h-4 text-slate-400" />
+                            <span className="text-xs text-slate-300 light:text-slate-700 truncate max-w-[120px]">
+                              {file.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeCompareFile(index)}
+                              className="p-1 text-slate-500 hover:text-red-400 transition-colors"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                        )
-                      ) : (
-                        <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
-                      )}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="success">
-                      {compareMode === 'models'
-                        ? models.find((m) => m.id === compareModels[1])?.name || 'B'
-                        : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
-                    </Badge>
-                    {compareRunning.right && (
-                      <button
-                        onClick={() => handleStopComparison('right')}
-                        className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                        title={t('stop')}
-                      >
-                        <Square className="w-3 h-3" />
-                      </button>
-                    )}
+                <Collapsible
+                  title={t('modelParameters')}
+                  icon={<Settings2 className="w-4 h-4 text-cyan-400 light:text-cyan-600" />}
+                  defaultOpen={false}
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
+                      <p className="text-xs font-medium text-slate-400 light:text-slate-600">
+                        {compareMode === 'models' ? (models.find((m) => m.id === compareModels[0])?.name || t('modelA')) : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
+                      </p>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('temperature')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.left.temperature}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, temperature: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('topP')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={compareParams.left.top_p}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, top_p: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.left.frequency_penalty}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.left.presence_penalty}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, presence_penalty: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('maxTokens')}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="32000"
+                            step="1"
+                            value={compareParams.left.max_tokens}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                            className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        {(() => {
+                          const leftModel = compareMode === 'models'
+                            ? models.find((m) => m.id === compareModels[0])
+                            : models.find((m) => m.id === selectedModel);
+                          const leftModelId = leftModel?.modelId;
+                          const leftSupportsReasoning = leftModel?.supportsReasoning ?? (leftModelId ? inferReasoningSupport(leftModelId) : false);
+                          return leftModelId && leftSupportsReasoning && (
+                            <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
+                              <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
+                              <ReasoningSelector
+                                modelId={leftModelId}
+                                supportsReasoning={leftSupportsReasoning}
+                                value={compareParams.left.reasoning?.effort || 'default'}
+                                onChange={(effort) => {
+                                  setCompareParams((prev) => ({
+                                    ...prev,
+                                    left: {
+                                      ...prev.left,
+                                      reasoning: effort === 'default' ? undefined : { enabled: true, effort },
+                                    },
+                                  }));
+                                }}
+                              />
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div className="space-y-3 p-3 bg-slate-800/30 light:bg-slate-50 rounded-lg border border-slate-700 light:border-slate-200">
+                      <p className="text-xs font-medium text-slate-400 light:text-slate-600">
+                        {compareMode === 'models' ? (models.find((m) => m.id === compareModels[1])?.name || t('modelB')) : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
+                      </p>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('temperature')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.right.temperature}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, temperature: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('topP')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={compareParams.right.top_p}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, top_p: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('frequencyPenalty')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.right.frequency_penalty}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, frequency_penalty: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('presencePenalty')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={compareParams.right.presence_penalty}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, presence_penalty: parseFloat(e.target.value) || 0 } }))}
+                            className="w-16 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">{t('maxTokens')}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="32000"
+                            step="1"
+                            value={compareParams.right.max_tokens}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                            className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
+                          />
+                        </div>
+                        {(() => {
+                          const rightModel = compareMode === 'models'
+                            ? models.find((m) => m.id === compareModels[1])
+                            : models.find((m) => m.id === selectedModel);
+                          const rightModelId = rightModel?.modelId;
+                          const rightSupportsReasoning = rightModel?.supportsReasoning ?? (rightModelId ? inferReasoningSupport(rightModelId) : false);
+                          return rightModelId && rightSupportsReasoning && (
+                            <div className="flex items-center justify-between pt-2 border-t border-slate-600 light:border-slate-300">
+                              <span className="text-xs text-slate-500">{t('reasoningEffort')}</span>
+                              <ReasoningSelector
+                                modelId={rightModelId}
+                                supportsReasoning={rightSupportsReasoning}
+                                value={compareParams.right.reasoning?.effort || 'default'}
+                                onChange={(effort) => {
+                                  setCompareParams((prev) => ({
+                                    ...prev,
+                                    right: {
+                                      ...prev.right,
+                                      reasoning: effort === 'default' ? undefined : { enabled: true, effort },
+                                    },
+                                  }));
+                                }}
+                              />
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
-                  {compareResults.right && !compareResults.right.error && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
-                      <Clock className="w-3 h-3" />
-                      <span>{(compareResults.right.latency / 1000).toFixed(2)}s</span>
-                      <span>|</span>
-                      <span>{compareResults.right.tokensIn + compareResults.right.tokensOut} tokens</span>
-                    </div>
-                  )}
-                </div>
-                <div className="h-96 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
-                  {compareResults.right?.error ? (
-                    <div className="text-red-400 light:text-red-600 text-sm">
-                      <p className="font-medium">{t('error')}</p>
-                      <p className="mt-1 text-xs">{compareResults.right.error}</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {(compareResults.right?.thinking || compareResults.right?.isThinking) && (
-                        <ThinkingBlock
-                          thinking={compareResults.right.thinking}
-                          isStreaming={compareResults.right.isThinking}
-                        />
-                      )}
-                      {compareResults.right?.content ? (
-                        <MarkdownRenderer content={compareResults.right.content} />
-                      ) : compareRunning.right ? (
-                        !compareResults.right?.isThinking && (
-                          <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>{t('running')}</span>
-                          </div>
-                        )
-                      ) : (
-                        <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
-                      )}
-                    </div>
+                </Collapsible>
+              </div>
+              <div className="pt-3">
+                <div className="flex gap-2">
+                  <Button className="flex-1" onClick={handleRunComparison} loading={compareRunning.left || compareRunning.right}>
+                    <Play className="w-4 h-4" />
+                    <span>{t('run')}{t('compare')}</span>
+                  </Button>
+                  {(compareRunning.left || compareRunning.right) && (
+                    <Button variant="danger" onClick={() => handleStopComparison('both')}>
+                      <Square className="w-4 h-4" />
+                      <span>{t('stop')}</span>
+                    </Button>
                   )}
                 </div>
               </div>
             </div>
-          )}
+
+            <div className="flex flex-col min-h-0">
+              <div className="flex items-center justify-between pb-2">
+                <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('outputResult')}</h3>
+              </div>
+              <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="flex flex-col min-h-0 gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="info">
+                        {compareMode === 'models'
+                          ? models.find((m) => m.id === compareModels[0])?.name || 'A'
+                          : `v${versions.find((v) => v.id === compareVersions[0])?.version || 'A'}`}
+                      </Badge>
+                      {compareRunning.left && (
+                        <button
+                          onClick={() => handleStopComparison('left')}
+                          className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                          title={t('stop')}
+                        >
+                          <Square className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    {compareResults.left && !compareResults.left.error && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
+                        <Clock className="w-3 h-3" />
+                        <span>{(compareResults.left.latency / 1000).toFixed(2)}s</span>
+                        <span>|</span>
+                        <span>{compareResults.left.tokensIn + compareResults.left.tokensOut} tokens</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
+                    {compareResults.left?.error ? (
+                      <div className="text-red-400 light:text-red-600 text-sm">
+                        <p className="font-medium">{t('error')}</p>
+                        <p className="mt-1 text-xs">{compareResults.left.error}</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(compareResults.left?.thinking || compareResults.left?.isThinking) && (
+                          <ThinkingBlock
+                            thinking={compareResults.left.thinking}
+                            isStreaming={compareResults.left.isThinking}
+                          />
+                        )}
+                        {compareResults.left?.content ? (
+                          <MarkdownRenderer content={compareResults.left.content} />
+                        ) : compareRunning.left ? (
+                          !compareResults.left?.isThinking && (
+                            <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>{t('running')}</span>
+                            </div>
+                          )
+                        ) : (
+                          <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col min-h-0 gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="success">
+                        {compareMode === 'models'
+                          ? models.find((m) => m.id === compareModels[1])?.name || 'B'
+                          : `v${versions.find((v) => v.id === compareVersions[1])?.version || 'B'}`}
+                      </Badge>
+                      {compareRunning.right && (
+                        <button
+                          onClick={() => handleStopComparison('right')}
+                          className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                          title={t('stop')}
+                        >
+                          <Square className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    {compareResults.right && !compareResults.right.error && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
+                        <Clock className="w-3 h-3" />
+                        <span>{(compareResults.right.latency / 1000).toFixed(2)}s</span>
+                        <span>|</span>
+                        <span>{compareResults.right.tokensIn + compareResults.right.tokensOut} tokens</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
+                    {compareResults.right?.error ? (
+                      <div className="text-red-400 light:text-red-600 text-sm">
+                        <p className="font-medium">{t('error')}</p>
+                        <p className="mt-1 text-xs">{compareResults.right.error}</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(compareResults.right?.thinking || compareResults.right?.isThinking) && (
+                          <ThinkingBlock
+                            thinking={compareResults.right.thinking}
+                            isStreaming={compareResults.right.isThinking}
+                          />
+                        )}
+                        {compareResults.right?.content ? (
+                          <MarkdownRenderer content={compareResults.right.content} />
+                        ) : compareRunning.right ? (
+                          !compareResults.right?.isThinking && (
+                            <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>{t('running')}</span>
+                            </div>
+                          )
+                        ) : (
+                          <div className="text-slate-500 light:text-slate-400 text-sm">{t('noResults')}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </Modal>
 
@@ -2810,137 +2960,162 @@ export function PromptsPage() {
           setDebugDetailExpanded(null);
         }}
         title={t('callDetails')}
-        size="lg"
+        size="wide"
       >
-        {showDebugDetail && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('status')}</p>
-                <Badge variant={showDebugDetail.status === 'success' ? 'success' : 'error'}>
-                  {showDebugDetail.status === 'success' ? t('success') : t('error')}
-                </Badge>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('latency')}</p>
-                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{showDebugDetail.latencyMs}ms</p>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('inputTokens')}</p>
-                <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{showDebugDetail.tokensInput}</p>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('outputTokens')}</p>
-                <p className="text-sm font-medium text-teal-400 light:text-teal-600">{showDebugDetail.tokensOutput}</p>
-              </div>
-            </div>
+        {showDebugDetail && (() => {
+          const candidate = (showDebugDetail.modelParameters ?? {}) as Record<string, unknown>;
+          const formatParamValue = (value: unknown) => {
+            if (value === undefined || value === null) return '-';
+            if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+            if (typeof value === 'string') return value;
+            try {
+              return JSON.stringify(value);
+            } catch {
+              return String(value);
+            }
+          };
+          const parameters = [
+            { label: t('temperature'), value: candidate.temperature },
+            { label: t('topP'), value: candidate.top_p ?? candidate.topP },
+            { label: t('maxTokens'), value: candidate.max_tokens ?? candidate.maxTokens },
+            { label: t('frequencyPenalty'), value: candidate.frequency_penalty ?? candidate.frequencyPenalty },
+            { label: t('presencePenalty'), value: candidate.presence_penalty ?? candidate.presencePenalty },
+          ].filter((item) => item.value !== undefined && item.value !== null);
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('input')}</h4>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setDebugDetailExpanded({ field: 'input', content: showDebugDetail.input })}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={tCommon('expand')}
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDebugDetailCopy(showDebugDetail.input, 'input')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={tCommon('copy')}
-                  >
-                    {debugDetailCopied === 'input' ? (
-                      <Check className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-              <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
-                <MarkdownRenderer content={showDebugDetail.input} />
-              </div>
-            </div>
+           const modelName =
+             models.find((m) => m.id === showDebugDetail.modelId)?.name || showDebugDetail.modelId || '-';
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('output')}</h4>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setDebugDetailExpanded({ field: 'output', content: showDebugDetail.output })}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={tCommon('expand')}
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDebugDetailCopy(showDebugDetail.output, 'output')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={tCommon('copy')}
-                  >
-                    {debugDetailCopied === 'output' ? (
-                      <Check className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
+           const transcriptMessages =
+             showDebugDetail.messages && showDebugDetail.messages.length > 0
+               ? showDebugDetail.messages
+               : [
+                   {
+                     id: `${showDebugDetail.id}_user`,
+                     role: 'user' as const,
+                     content: showDebugDetail.input,
+                     attachments: showDebugDetail.attachments,
+                   },
+                   {
+                     id: `${showDebugDetail.id}_assistant`,
+                     role: 'assistant' as const,
+                     content: showDebugDetail.output,
+                     thinking: showDebugDetail.thinking,
+                   },
+                 ];
+
+           const detailAttachments =
+             showDebugDetail.attachments ??
+             (showDebugDetail.messages ? showDebugDetail.messages.flatMap((m) => m.attachments ?? []) : []);
+           const hasDetailAttachments = detailAttachments.length > 0;
+
+           return (
+             <div className="h-[72vh] overflow-hidden">
+              <div className="h-full grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+              <div className="h-full overflow-y-auto space-y-4 pr-1">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                    <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('status')}</p>
+                    <Badge variant={showDebugDetail.status === 'success' ? 'success' : 'error'}>
+                      {showDebugDetail.status === 'success' ? t('success') : t('error')}
+                    </Badge>
+                  </div>
+                  <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                    <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('latency')}</p>
+                    <p className="text-sm font-medium text-slate-200 light:text-slate-800">{showDebugDetail.latencyMs}ms</p>
+                  </div>
+                  <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                    <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('input')} Tokens</p>
+                    <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{showDebugDetail.tokensInput}</p>
+                  </div>
+                  <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                    <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('output')} Tokens</p>
+                    <p className="text-sm font-medium text-teal-400 light:text-teal-600">{showDebugDetail.tokensOutput}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
-                {showDebugDetail.output ? (
-                  <MarkdownRenderer content={showDebugDetail.output} />
-                ) : (
-                  <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
+
+                <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{tTraces('prompt')}</p>
+                  <p className="text-sm text-slate-200 light:text-slate-800">{selectedPrompt?.name || promptName || '-'}</p>
+                </div>
+
+                <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('model')}</p>
+                  <p className="text-sm text-slate-200 light:text-slate-800">{modelName}</p>
+                </div>
+
+                <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('modelParameters')}</p>
+                  <div className="mt-2 space-y-1 text-xs">
+                    {parameters.length > 0 ? (
+                      parameters.map((item) => (
+                        <div key={item.label} className="flex items-center justify-between gap-3 text-slate-300 light:text-slate-700">
+                          <span className="text-slate-500 light:text-slate-600">{item.label}</span>
+                          <span className="text-slate-200 light:text-slate-800">{formatParamValue(item.value)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-slate-500 light:text-slate-600">{t('empty')}</span>
+                    )}
+                  </div>
+                </div>
+
+                {hasDetailAttachments && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Paperclip className="w-4 h-4 text-slate-400" />
+                      <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
+                        {t('attachments')} ({detailAttachments.length})
+                      </h4>
+                    </div>
+                    <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
+                      <AttachmentList
+                        attachments={detailAttachments}
+                        size="md"
+                        maxVisible={10}
+                        onPreview={setPreviewAttachment}
+                      />
+                    </div>
+                  </div>
                 )}
-              </div>
-            </div>
 
-            {showDebugDetail.attachments && showDebugDetail.attachments.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Paperclip className="w-4 h-4 text-slate-400" />
-                  <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
-                    {t('attachments')} ({showDebugDetail.attachments.length})
-                  </h4>
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
-                  <AttachmentList
-                    attachments={showDebugDetail.attachments}
-                    size="md"
-                    maxVisible={10}
-                    onPreview={setPreviewAttachment}
+                {showDebugDetail.ocrUsed && hasDetailAttachments && (
+                  <OcrResultsPanel
+                    attachments={detailAttachments}
+                    provider={showDebugDetail.ocrProvider}
+                    defaultOpen={true}
+                    heightClassName="h-[260px]"
                   />
+                )}
+
+                {showDebugDetail.errorMessage && (
+                  <div>
+                    <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{t('errorMessage')}</h4>
+                    <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
+                      <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
+                        {showDebugDetail.errorMessage}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-4 border-t border-slate-700 light:border-slate-200">
+                  <p className="text-xs text-slate-500 light:text-slate-600">
+                    {t('createdAt')}: {showDebugDetail.timestamp.toLocaleString('zh-CN')}
+                  </p>
                 </div>
               </div>
-            )}
 
-            {showDebugDetail.ocrUsed && showDebugDetail.attachments && showDebugDetail.attachments.length > 0 && (
-              <OcrResultsPanel
-                attachments={showDebugDetail.attachments}
-                provider={showDebugDetail.ocrProvider}
-              />
-            )}
-
-            {showDebugDetail.errorMessage && (
-              <div>
-                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{t('errorMessage')}</h4>
-                <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
-                  <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
-                    {showDebugDetail.errorMessage}
-                  </pre>
-                </div>
+              <div className="h-full min-h-0 p-4 bg-slate-800/30 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
+                <ChatTranscript
+                  messages={transcriptMessages}
+                  assistantLabel={modelName}
+                  onPreviewAttachment={setPreviewAttachment}
+                />
               </div>
-            )}
-
-            <div className="pt-4 border-t border-slate-700 light:border-slate-200">
-              <p className="text-xs text-slate-500 light:text-slate-600">
-                {t('createdAt')}: {showDebugDetail.timestamp.toLocaleString('zh-CN')}
-              </p>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Debug Detail Expanded Modal */}

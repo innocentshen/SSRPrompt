@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, ChevronRight, FileText, Folder, Search, Unlink } from 'lucide-react';
 import type { Prompt, PromptGroup } from '../../types';
@@ -46,7 +46,7 @@ export function PromptCascader({
 
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
 
-  const buildGroupPath = (groupId: string | null): PromptGroup[] => {
+  const buildGroupPath = useCallback((groupId: string | null): PromptGroup[] => {
     if (!groupId) return [];
     const path: PromptGroup[] = [];
     let current: string | null = groupId;
@@ -60,12 +60,12 @@ export function PromptCascader({
       current = group.parentId ?? null;
     }
     return path.reverse();
-  };
+  }, [groupById]);
 
-  const getPromptPathLabel = (prompt: Prompt) => {
+  const getPromptPathLabel = useCallback((prompt: Prompt) => {
     const parts = prompt.groupId ? buildGroupPath(prompt.groupId).map((g) => g.name) : [tPrompts('ungrouped')];
     return [...parts, prompt.name].join(' / ');
-  };
+  }, [buildGroupPath, tPrompts]);
 
   const selectedPrompt = useMemo(() => prompts.find((p) => p.id === value) ?? null, [prompts, value]);
   const displayLabel = selectedPrompt ? getPromptPathLabel(selectedPrompt) : placeholder || clearLabel || tPrompts('selectPrompt');
@@ -131,7 +131,7 @@ export function PromptCascader({
         return getPromptPathLabel(p).toLowerCase().includes(q);
       })
       .sort((a, b) => getPromptPathLabel(a).localeCompare(getPromptPathLabel(b)));
-  }, [prompts, searchQuery, groupById]);
+  }, [prompts, searchQuery, getPromptPathLabel]);
 
   const openDropdown = () => {
     if (disabled) return;

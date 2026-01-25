@@ -1,18 +1,34 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, ChevronDown, ChevronRight, Clock, Zap, Paperclip, Eye, FileText, Image, Code, File, RotateCcw, Scale, Copy, Check, Square } from 'lucide-react';
-import { Badge, Button, MarkdownRenderer } from '../ui';
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  Clock,
+  Code,
+  Copy,
+  Eye,
+  File,
+  FileText,
+  Image,
+  Paperclip,
+  RotateCcw,
+  Scale,
+  Search,
+  Square,
+  XCircle,
+  Zap,
+} from 'lucide-react';
+import { Badge, Button, Collapsible, MarkdownRenderer } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
-import type { TestCase, TestCaseResult, EvaluationCriterion, FileAttachment, OcrProvider } from '../../types';
+import type { EvaluationCriterion, FileAttachment, OcrProvider, TestCase, TestCaseResult } from '../../types';
 import { getFileIconType } from '../../lib/file-utils';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
   results: TestCaseResult[];
   criteria: EvaluationCriterion[];
-  overallScores: Record<string, number>;
-  summary?: string;
   ocrProvider?: OcrProvider | null;
   onRetryOutput?: (testCaseId: string) => void;
   onRunAiEvaluation?: (testCaseId: string) => void;
@@ -22,12 +38,17 @@ interface EvaluationResultsViewProps {
   retryingAiEvaluationTestCaseId?: string | null;
 }
 
+type ResultFilter = 'all' | 'passed' | 'failed';
+
+function formatMsAsSeconds(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || Number.isNaN(ms)) return '-';
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export function EvaluationResultsView({
   testCases,
   results,
   criteria,
-  overallScores,
-  summary,
   ocrProvider,
   onRetryOutput,
   onRunAiEvaluation,
@@ -38,10 +59,12 @@ export function EvaluationResultsView({
 }: EvaluationResultsViewProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
-  const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
-  const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
+
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<ResultFilter>('all');
+  const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
-  const [copiedField, setCopiedField] = useState<{ resultId: string; field: 'expected' | 'model' } | null>(null);
+  const [copiedField, setCopiedField] = useState<'expected' | 'model' | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -52,11 +75,11 @@ export function EvaluationResultsView({
     };
   }, []);
 
-  const handleCopy = async (text: string, resultId: string, field: 'expected' | 'model') => {
+  const handleCopy = async (text: string, field: 'expected' | 'model') => {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedField({ resultId, field });
+      setCopiedField(field);
       if (copyTimeoutRef.current) {
         window.clearTimeout(copyTimeoutRef.current);
       }
@@ -68,32 +91,69 @@ export function EvaluationResultsView({
     }
   };
 
-  // 使用 Map 索引优化查询性能，避免 O(n²) 的查找问题
   const testCaseMap = useMemo(() => {
-    return new Map(testCases.map(tc => [tc.id, tc]));
+    return new Map(testCases.map((testCase) => [testCase.id, testCase]));
   }, [testCases]);
 
-  const getTestCase = (testCaseId: string) => testCaseMap.get(testCaseId);
+  const testCaseIndexMap = useMemo(() => {
+    return new Map(testCases.map((testCase, index) => [testCase.id, index]));
+  }, [testCases]);
 
-  const getTestCaseName = (testCaseId: string, index: number) => {
-    const testCase = getTestCase(testCaseId);
-    return testCase?.name || t('testCaseNum', { num: index + 1 });
-  };
+  const sortedResults = useMemo(() => {
+    const indexFallback = Number.MAX_SAFE_INTEGER;
+    return [...results].sort((a, b) => {
+      const ai = testCaseIndexMap.get(a.testCaseId) ?? indexFallback;
+      const bi = testCaseIndexMap.get(b.testCaseId) ?? indexFallback;
+      if (ai !== bi) return ai - bi;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+  }, [results, testCaseIndexMap]);
 
-  const getExpectedOutput = (testCaseId: string) => {
-    const testCase = getTestCase(testCaseId);
-    return testCase?.expectedOutput || null;
-  };
+  const filteredResults = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return sortedResults.filter((result) => {
+      if (filter === 'passed' && !result.passed) return false;
+      if (filter === 'failed' && result.passed) return false;
 
-  const getTestCaseNotes = (testCaseId: string) => {
-    const testCase = getTestCase(testCaseId);
-    return testCase?.notes || null;
-  };
+      if (!normalized) return true;
+      const testCase = testCaseMap.get(result.testCaseId);
+      const name = testCase?.name?.toLowerCase() ?? '';
+      const inputText = testCase?.inputText?.toLowerCase() ?? '';
+      const notes = testCase?.notes?.toLowerCase() ?? '';
+      const errorMessage = result.errorMessage?.toLowerCase() ?? '';
+      return (
+        name.includes(normalized) ||
+        inputText.includes(normalized) ||
+        notes.includes(normalized) ||
+        errorMessage.includes(normalized)
+      );
+    });
+  }, [sortedResults, query, filter, testCaseMap]);
 
-  const getTestCaseAttachments = (testCaseId: string) => {
-    const testCase = getTestCase(testCaseId);
-    return testCase?.attachments || [];
-  };
+  useEffect(() => {
+    if (filteredResults.length === 0) {
+      setActiveResultId(null);
+      return;
+    }
+    if (!activeResultId || !filteredResults.some((result) => result.id === activeResultId)) {
+      setActiveResultId(filteredResults[0].id);
+    }
+  }, [filteredResults, activeResultId]);
+
+  const activeResult = useMemo(() => {
+    if (!activeResultId) return null;
+    return filteredResults.find((result) => result.id === activeResultId) ?? null;
+  }, [filteredResults, activeResultId]);
+
+  const activeTestCase = activeResult ? (testCaseMap.get(activeResult.testCaseId) ?? null) : null;
+  const activeTestCaseIndex = activeResult ? (testCaseIndexMap.get(activeResult.testCaseId) ?? 0) : 0;
+  const activeAttachments = activeTestCase?.attachments ?? [];
+  const showOcrResults = !!activeResult && activeResult.ocrLatencyMs > 0 && activeAttachments.length > 0;
+
+  const enabledCriteria = criteria.filter((criterion) => criterion.enabled);
+
+  const passedCount = results.filter((result) => result.passed).length;
+  const failedCount = results.length - passedCount;
 
   const getFileIcon = (attachment: { type: string; name?: string }) => {
     const iconType = getFileIconType(attachment);
@@ -111,347 +171,356 @@ export function EvaluationResultsView({
     }
   };
 
-  const toggleOutputExpanded = (resultId: string) => {
-    setExpandedOutputs((prev) => {
-      const next = new Set(prev);
-      if (next.has(resultId)) {
-        next.delete(resultId);
-      } else {
-        next.add(resultId);
-      }
-      return next;
-    });
+  const filterButtonClassName = (value: ResultFilter) => {
+    const base = 'w-full inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded-md text-[11px] leading-none border transition-colors';
+    const isActive = filter === value;
+    if (isActive) {
+      return `${base} bg-cyan-500/15 text-cyan-300 light:text-cyan-700 border-cyan-500/40`;
+    }
+    return `${base} bg-slate-800/40 light:bg-slate-50 text-slate-400 light:text-slate-600 border-slate-700/60 light:border-slate-200 hover:text-slate-200 light:hover:text-slate-800 hover:border-slate-600 light:hover:border-slate-300`;
   };
 
-  const enabledCriteria = criteria.filter((c) => c.enabled);
-
-  const passedCount = results.filter((r) => r.passed).length;
-  const totalCount = results.length;
-  const passRate = totalCount > 0 ? (passedCount / totalCount) * 100 : 0;
-  const totalLlmMs = results.reduce((sum, r) => sum + (r.latencyMs || 0), 0);
-  const totalOcrMs = results.reduce((sum, r) => sum + (r.ocrLatencyMs || 0), 0);
-  const totalMs = totalLlmMs + totalOcrMs;
-
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-        <div className="p-4 bg-slate-800/50 light:bg-emerald-50 border border-slate-700 light:border-emerald-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-emerald-400 light:text-emerald-600">{passedCount}</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('passed')}</p>
-        </div>
-        <div className="p-4 bg-slate-800/50 light:bg-rose-50 border border-slate-700 light:border-rose-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-rose-400 light:text-rose-600">{totalCount - passedCount}</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('failed')}</p>
-        </div>
-        <div className="p-4 bg-slate-800/50 light:bg-cyan-50 border border-slate-700 light:border-cyan-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-cyan-400 light:text-cyan-600">{passRate.toFixed(0)}%</p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('passRate')}</p>
-        </div>
-        <div className="p-4 bg-slate-800/50 light:bg-teal-50 border border-slate-700 light:border-teal-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-teal-400 light:text-teal-600">
-            {results.reduce((sum, r) => sum + r.tokensInput, 0).toLocaleString()}
-          </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('inputTokens')}</p>
-        </div>
-        <div className="p-4 bg-slate-800/50 light:bg-sky-50 border border-slate-700 light:border-sky-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-sky-400 light:text-sky-600">
-            {results.reduce((sum, r) => sum + r.tokensOutput, 0).toLocaleString()}
-          </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('outputTokens')}</p>
-        </div>
-        <div className="p-4 bg-slate-800/50 light:bg-amber-50 border border-slate-700 light:border-amber-200 rounded-lg text-center">
-          <p className="text-3xl font-bold text-amber-400 light:text-amber-600">
-            {(totalMs / 1000).toFixed(1)}s
-          </p>
-          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('totalTime')}</p>
-          <p className="text-[10px] text-slate-500 light:text-slate-600 mt-1">
-            {t('llmTime')}: {(totalLlmMs / 1000).toFixed(1)}s · {t('ocrTime')}: {(totalOcrMs / 1000).toFixed(1)}s
-          </p>
-        </div>
-      </div>
-
-      {Object.keys(overallScores).length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t('scoreOverview')}</h4>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {Object.entries(overallScores).map(([key, value]) => (
-              <div
-                key={key}
-                className="p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400 light:text-slate-600">{key}</span>
-                  <span className="text-lg font-semibold text-cyan-400 light:text-cyan-600">
-                    {(value * 10).toFixed(1)}
-                  </span>
-                </div>
-                <div className="mt-2 h-1.5 bg-slate-700 light:bg-slate-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-500 to-cyan-400 light:from-cyan-500 light:to-cyan-400 rounded-full"
-                    style={{ width: `${value * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+    <div className="h-full min-h-0">
+      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] h-full min-h-0">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm h-full min-h-0">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">
+              {t('detailedResults')} ({filteredResults.length}/{results.length})
+            </h3>
           </div>
-        </div>
-      )}
 
-      {summary && (
-        <div className="p-4 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg">
-          <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">{t('evaluationSummary')}</h4>
-          <p className="text-sm text-slate-400 light:text-slate-600">{summary}</p>
-        </div>
-      )}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('searchTestCases')}
+                aria-label={tCommon('search')}
+                className="w-full pl-7 pr-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          </div>
 
-      <div>
-        <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-3">{t('detailedResults')}</h4>
-        <div className="space-y-2">
-          {results.map((result, index) => {
-            const attachments = getTestCaseAttachments(result.testCaseId);
-            const showOcrResults = result.ocrLatencyMs > 0 && attachments.length > 0;
-            return (
-            <div
-              key={result.id}
-              className="border border-slate-700 light:border-slate-200 rounded-lg bg-slate-800/30 light:bg-white overflow-hidden light:shadow-sm"
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+            <button type="button" className={filterButtonClassName('all')} onClick={() => setFilter('all')}>
+              {tCommon('all')}
+              <span className="opacity-70 tabular-nums text-[10px]">{results.length}</span>
+            </button>
+            <button type="button" className={filterButtonClassName('passed')} onClick={() => setFilter('passed')}>
+              {t('passed')}
+              <span className="opacity-70 tabular-nums text-[10px]">{passedCount}</span>
+            </button>
+            <button
+              type="button"
+              className={`${filterButtonClassName('failed')} col-span-2 sm:col-span-1`}
+              onClick={() => setFilter('failed')}
             >
-              <button
-                onClick={() =>
-                  setExpandedResultId(expandedResultId === result.id ? null : result.id)
-                }
-                className="w-full flex items-center gap-3 p-4 hover:bg-slate-800/50 light:hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {result.passed ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500 light:text-emerald-600 flex-shrink-0" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-rose-500 light:text-rose-600 flex-shrink-0" />
-                  )}
-                  <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
-                    {getTestCaseName(result.testCaseId, index)}
-                  </span>
-                  {attachments.length > 0 && (
-                    <span className="flex items-center gap-1 text-xs text-slate-500 light:text-slate-600">
-                      <Paperclip className="w-3 h-3" />
-                      {attachments.length}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 text-xs text-slate-500 light:text-slate-600">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {t('llmTime')}: {result.latencyMs}ms
-                  </span>
-                  {result.ocrLatencyMs > 0 && (
-                    <span className="flex items-center gap-1">
-                      <FileText className="w-3 h-3" />
-                      {t('ocrTime')}: {result.ocrLatencyMs}ms
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    {result.tokensInput + result.tokensOutput} tokens
-                  </span>
-                  {expandedResultId === result.id ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                </div>
-              </button>
+              {t('failed')}
+              <span className="opacity-70 tabular-nums text-[10px]">{failedCount}</span>
+            </button>
+          </div>
 
-              {expandedResultId === result.id && (
-                <div className="p-4 pt-0 space-y-4 border-t border-slate-700/50 light:border-slate-200">
-                  {(onRetryOutput || onRunAiEvaluation) && (
-                    <div className="flex items-center justify-end gap-2 pt-2">
-                      {onRunAiEvaluation && (
-                        <>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => onRunAiEvaluation(result.testCaseId)}
-                            loading={retryingAiEvaluationTestCaseId === result.testCaseId}
-                            disabled={retryingOutputTestCaseId === result.testCaseId}
-                            title={t('runAiEvaluation')}
-                          >
-                            <Scale className="w-3.5 h-3.5" />
-                            <span>{t('runAiEvaluation')}</span>
-                          </Button>
-                          {retryingAiEvaluationTestCaseId === result.testCaseId && onAbortAiEvaluation && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => onAbortAiEvaluation(result.testCaseId)}
-                              title={t('abort')}
-                              aria-label={t('abort')}
-                              className="px-2"
-                            >
-                              <Square className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      {onRetryOutput && (
-                        <>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => onRetryOutput(result.testCaseId)}
-                            loading={retryingOutputTestCaseId === result.testCaseId}
-                            disabled={retryingAiEvaluationTestCaseId === result.testCaseId}
-                            title={t('retryOutput')}
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>{t('retryOutput')}</span>
-                          </Button>
-                          {retryingOutputTestCaseId === result.testCaseId && onAbortRetryOutput && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => onAbortRetryOutput(result.testCaseId)}
-                              title={t('abort')}
-                              aria-label={t('abort')}
-                              className="px-2"
-                            >
-                              <Square className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                  <div>
-                    <button
-                      onClick={() => toggleOutputExpanded(result.id)}
-                      className="w-full flex items-center justify-between p-2 bg-slate-800/50 light:bg-slate-100 rounded-t border border-slate-700 light:border-slate-200 hover:bg-slate-800 light:hover:bg-slate-200 transition-colors"
-                    >
-                      <span className="text-xs font-medium text-slate-400 light:text-slate-600">{t('outputComparison')}</span>
-                      {expandedOutputs.has(result.id) ? (
-                        <ChevronDown className="w-4 h-4 text-slate-500 light:text-slate-400" />
+          {filteredResults.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
+              {t('noResults')}
+            </div>
+          ) : (
+            <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
+              {filteredResults.map((result) => {
+                const isActive = result.id === activeResultId;
+                const testCase = testCaseMap.get(result.testCaseId);
+                const index = testCaseIndexMap.get(result.testCaseId) ?? 0;
+                const attachmentsCount = testCase?.attachments?.length ?? 0;
+                const totalTokens = result.tokensInput + result.tokensOutput;
+
+                return (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={() => setActiveResultId(result.id)}
+                    className={`w-full text-left border rounded-lg px-3 py-2 transition-colors ${
+                      isActive
+                        ? 'border-cyan-500/50 bg-cyan-500/10'
+                        : 'border-slate-700/80 bg-slate-800/40 hover:bg-slate-800/60 light:bg-white light:border-slate-200 light:hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {result.passed ? (
+                        <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-500 light:text-emerald-600 flex-shrink-0" />
                       ) : (
-                        <ChevronRight className="w-4 h-4 text-slate-500 light:text-slate-400" />
+                        <XCircle className="w-4 h-4 mt-0.5 text-rose-500 light:text-rose-600 flex-shrink-0" />
                       )}
-                    </button>
-                    {expandedOutputs.has(result.id) && (
-                      <div className="grid grid-cols-2 gap-0 border border-t-0 border-slate-700 light:border-slate-200 rounded-b overflow-hidden">
-                        <div className="border-r border-slate-700 light:border-slate-200">
-                          <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
-                            <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">{t('expectedOutput')}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(getExpectedOutput(result.testCaseId) || '', result.id, 'expected')}
-                              disabled={!getExpectedOutput(result.testCaseId)}
-                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                              title={tCommon('copy')}
-                            >
-                              {copiedField?.resultId === result.id && copiedField.field === 'expected' ? (
-                                <Check className="w-3.5 h-3.5" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-xs text-slate-500 light:text-slate-500">{index + 1}</span>
+                            <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
+                              {testCase?.name || t('testCaseNum', { num: index + 1 })}
+                            </span>
                           </div>
-                          <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
-                            {getExpectedOutput(result.testCaseId) ? (
-                              <MarkdownRenderer content={getExpectedOutput(result.testCaseId)!} />
-                            ) : (
-                              <span className="text-slate-500 light:text-slate-400 text-xs">{t('noExpectedOutput')}</span>
-                            )}
-                          </div>
+                          {result.errorMessage && <Badge variant="error">{tCommon('error')}</Badge>}
                         </div>
-                        <div>
-                          <div className="px-3 py-1.5 bg-slate-800 light:bg-cyan-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
-                            <span className="text-xs font-medium text-cyan-400 light:text-cyan-600">{t('modelOutput')}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(result.modelOutput || '', result.id, 'model')}
-                              disabled={!result.modelOutput}
-                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-cyan-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                              title={tCommon('copy')}
-                            >
-                              {copiedField?.resultId === result.id && copiedField.field === 'model' ? (
-                                <Check className="w-3.5 h-3.5" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                          <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-64 overflow-y-auto">
-                            {result.modelOutput ? (
-                              <MarkdownRenderer content={result.modelOutput} />
-                            ) : (
-                              <span className="text-slate-500 light:text-slate-400 text-xs">{t('noOutput')}</span>
-                            )}
-                          </div>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 light:text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatMsAsSeconds(result.latencyMs)}
+                          </span>
+                          {result.ocrLatencyMs > 0 && (
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3 h-3" />
+                              {formatMsAsSeconds(result.ocrLatencyMs)}
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            {totalTokens.toLocaleString()}
+                          </span>
+                          {attachmentsCount > 0 && (
+                            <span className="flex items-center gap-1">
+                              <Paperclip className="w-3 h-3" />
+                              {attachmentsCount}
+                            </span>
+                          )}
                         </div>
                       </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm h-full min-h-0">
+          {activeResult ? (
+            <>
+              <div className="flex flex-wrap lg:flex-nowrap items-start justify-between gap-2 rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-3 py-2">
+                <div className="flex items-start gap-3 min-w-0">
+                  {activeResult.passed ? (
+                    <CheckCircle2 className="w-5 h-5 mt-0.5 text-emerald-500 light:text-emerald-600 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="w-5 h-5 mt-0.5 text-rose-500 light:text-rose-600 flex-shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-slate-500 light:text-slate-500">{activeTestCaseIndex + 1}</span>
+                      <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
+                        {activeTestCase?.name || t('testCaseNum', { num: activeTestCaseIndex + 1 })}
+                      </span>
+                      {activeResult.errorMessage && <Badge variant="error">{tCommon('error')}</Badge>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 light:text-slate-600">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        {t('llmTime')}: {formatMsAsSeconds(activeResult.latencyMs)}
+                      </span>
+                      {activeResult.ocrLatencyMs > 0 && (
+                        <span className="flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5" />
+                          {t('ocrTime')}: {formatMsAsSeconds(activeResult.ocrLatencyMs)}
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Zap className="w-3.5 h-3.5" />
+                        {(activeResult.tokensInput + activeResult.tokensOutput).toLocaleString()} tokens
+                      </span>
+                      {activeAttachments.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Paperclip className="w-3.5 h-3.5" />
+                          {activeAttachments.length}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {(onRetryOutput || onRunAiEvaluation) && (
+                  <div className="flex items-center gap-2 w-full lg:w-auto justify-end">
+                    {onRunAiEvaluation && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRunAiEvaluation(activeResult.testCaseId)}
+                          loading={retryingAiEvaluationTestCaseId === activeResult.testCaseId}
+                          disabled={retryingOutputTestCaseId === activeResult.testCaseId}
+                          title={t('runAiEvaluation')}
+                        >
+                          <Scale className="w-3.5 h-3.5" />
+                          <span>{t('runAiEvaluation')}</span>
+                        </Button>
+                        {retryingAiEvaluationTestCaseId === activeResult.testCaseId && onAbortAiEvaluation && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onAbortAiEvaluation(activeResult.testCaseId)}
+                            title={t('abort')}
+                            aria-label={t('abort')}
+                            className="px-2"
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </>
+                    )}
+                    {onRetryOutput && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRetryOutput(activeResult.testCaseId)}
+                          loading={retryingOutputTestCaseId === activeResult.testCaseId}
+                          disabled={retryingAiEvaluationTestCaseId === activeResult.testCaseId}
+                          title={t('retryOutput')}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>{t('retryOutput')}</span>
+                        </Button>
+                        {retryingOutputTestCaseId === activeResult.testCaseId && onAbortRetryOutput && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onAbortRetryOutput(activeResult.testCaseId)}
+                            title={t('abort')}
+                            aria-label={t('abort')}
+                            className="px-2"
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
+                )}
+              </div>
 
-                  {result.errorMessage && (
-                    <div>
-                      <p className="text-xs text-rose-400 light:text-rose-600 mb-1">{t('errorMessage')}</p>
-                      <div className="p-3 bg-rose-950/30 light:bg-rose-50 rounded border border-rose-900/50 light:border-rose-200 text-sm text-rose-300 light:text-rose-700">
-                        {result.errorMessage}
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
+                {activeResult.errorMessage && (
+                  <div className="p-3 bg-rose-950/30 light:bg-rose-50 rounded border border-rose-900/50 light:border-rose-200">
+                    <p className="text-xs text-rose-400 light:text-rose-600 mb-1">{t('errorMessage')}</p>
+                    <div className="text-sm text-rose-300 light:text-rose-700">{activeResult.errorMessage}</div>
+                  </div>
+                )}
+
+                <div className="border border-slate-700 light:border-slate-200 rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
+                    <div className="border-b lg:border-b-0 lg:border-r border-slate-700 light:border-slate-200">
+                      <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">{t('expectedOutput')}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(activeTestCase?.expectedOutput || '', 'expected')}
+                          disabled={!activeTestCase?.expectedOutput}
+                          className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={tCommon('copy')}
+                        >
+                          {copiedField === 'expected' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-80 overflow-y-auto">
+                        {activeTestCase?.expectedOutput ? (
+                          <MarkdownRenderer content={activeTestCase.expectedOutput} />
+                        ) : (
+                          <span className="text-slate-500 light:text-slate-400 text-xs">{t('noExpectedOutput')}</span>
+                        )}
                       </div>
                     </div>
-                  )}
 
-                  {enabledCriteria.length > 0 && Object.keys(result.scores).length > 0 && (
                     <div>
-                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('scoreDetails')}</p>
-                      <div className="space-y-2">
-                        {enabledCriteria.map((criterion) => (
-                          <div
-                            key={criterion.id}
-                            className="p-3 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200"
-                          >
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-slate-300 light:text-slate-700">
-                                {criterion.name}
-                              </span>
-                              <Badge
-                                variant={
-                                  (result.scores[criterion.name] || 0) >= 0.7
-                                    ? 'success'
-                                    : (result.scores[criterion.name] || 0) >= 0.4
+                      <div className="px-3 py-1.5 bg-slate-800 light:bg-sky-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-sky-400 light:text-sky-600">{t('modelOutput')}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(activeResult.modelOutput || '', 'model')}
+                          disabled={!activeResult.modelOutput}
+                          className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-sky-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-sky-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={tCommon('copy')}
+                        >
+                          {copiedField === 'model' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-80 overflow-y-auto">
+                        {activeResult.modelOutput ? (
+                          <MarkdownRenderer content={activeResult.modelOutput} />
+                        ) : (
+                          <span className="text-slate-500 light:text-slate-400 text-xs">{t('noOutput')}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {enabledCriteria.length > 0 && Object.keys(activeResult.scores || {}).length > 0 && (
+                  <Collapsible
+                    title={t('scoreDetails')}
+                    defaultOpen={true}
+                    icon={<Scale className="w-4 h-4 text-slate-400 light:text-slate-500" />}
+                  >
+                    <div className="space-y-2">
+                      {enabledCriteria.map((criterion) => (
+                        <div
+                          key={criterion.id}
+                          className="p-3 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-slate-300 light:text-slate-700">{criterion.name}</span>
+                            <Badge
+                              variant={
+                                (activeResult.scores[criterion.name] || 0) >= 0.7
+                                  ? 'success'
+                                  : (activeResult.scores[criterion.name] || 0) >= 0.4
                                     ? 'warning'
                                     : 'error'
-                                }
-                              >
-                                {((result.scores[criterion.name] || 0) * 10).toFixed(1)}/10
-                              </Badge>
-                            </div>
-                            {result.aiFeedback[criterion.name] && (
-                              <p className="text-xs text-slate-400 light:text-slate-600">
-                                {result.aiFeedback[criterion.name]}
-                              </p>
-                            )}
+                              }
+                            >
+                              {((activeResult.scores[criterion.name] || 0) * 10).toFixed(1)}/10
+                            </Badge>
                           </div>
-                        ))}
-                      </div>
+                          {activeResult.aiFeedback[criterion.name] && (
+                            <p className="text-xs text-slate-400 light:text-slate-600">{activeResult.aiFeedback[criterion.name]}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  )}
+                  </Collapsible>
+                )}
 
-                  {getTestCaseNotes(result.testCaseId) && (
-                    <div>
-                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('testNotes')}</p>
-                      <div className="p-3 bg-slate-800/50 light:bg-amber-50 rounded border border-slate-700 light:border-amber-200">
-                        <p className="text-sm text-slate-400 light:text-amber-700 whitespace-pre-wrap">
-                          {getTestCaseNotes(result.testCaseId)}
-                        </p>
-                      </div>
+                {activeTestCase?.inputText && (
+                  <Collapsible
+                    title={t('inputText')}
+                    defaultOpen={false}
+                    icon={<FileText className="w-4 h-4 text-slate-400 light:text-slate-500" />}
+                  >
+                    <div className="text-sm text-slate-300 light:text-slate-700">
+                      <MarkdownRenderer content={activeTestCase.inputText} />
                     </div>
-                  )}
+                  </Collapsible>
+                )}
 
-                  {attachments.length > 0 && (
-                    <div>
-                      <p className="text-xs text-slate-500 light:text-slate-600 mb-2 flex items-center gap-1">
-                        <Paperclip className="w-3 h-3" />
-                        {t('attachments')} ({attachments.length})
-                      </p>
+                {activeTestCase?.notes && (
+                  <Collapsible
+                    title={t('testNotes')}
+                    defaultOpen={false}
+                    icon={<FileText className="w-4 h-4 text-slate-400 light:text-slate-500" />}
+                  >
+                    <p className="text-sm text-slate-300 light:text-slate-700 whitespace-pre-wrap">{activeTestCase.notes}</p>
+                  </Collapsible>
+                )}
+
+                <Collapsible
+                  title={`${t('attachments')} (${activeAttachments.length})`}
+                  defaultOpen={false}
+                  disabled={activeAttachments.length === 0}
+                  icon={<Paperclip className="w-4 h-4 text-slate-400 light:text-slate-500" />}
+                >
+                  <div className="space-y-3">
+                    {activeAttachments.length > 0 && (
                       <div className="flex flex-wrap gap-2">
-                        {attachments.map((attachment, i) => {
+                        {activeAttachments.map((attachment, i) => {
                           const Icon = getFileIcon(attachment);
                           return (
                             <button
@@ -459,9 +528,10 @@ export function EvaluationResultsView({
                               onClick={() => setPreviewAttachment(attachment)}
                               className="flex items-center gap-2 px-3 py-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200 hover:border-cyan-500 light:hover:border-cyan-400 transition-colors"
                               title={t('clickToPreview')}
+                              type="button"
                             >
                               <Icon className="w-4 h-4 text-slate-400 light:text-slate-500" />
-                              <span className="text-sm text-slate-300 light:text-slate-700 max-w-[150px] truncate">
+                              <span className="text-sm text-slate-300 light:text-slate-700 max-w-[160px] truncate">
                                 {attachment.name}
                               </span>
                               <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600" />
@@ -469,21 +539,24 @@ export function EvaluationResultsView({
                           );
                         })}
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {showOcrResults && (
-                    <OcrResultsPanel attachments={attachments} provider={ocrProvider} />
-                  )}
-                </div>
-              )}
+                    {showOcrResults && <OcrResultsPanel attachments={activeAttachments} provider={ocrProvider} />}
+                  </div>
+                </Collapsible>
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
+              <div className="text-center">
+                <AlertCircle className="w-10 h-10 mx-auto mb-2 text-slate-600 light:text-slate-400" />
+                <p>{t('noResults')}</p>
+              </div>
             </div>
-          );
-          })}
+          )}
         </div>
       </div>
 
-      {/* Attachment Preview Modal */}
       <AttachmentModal
         attachment={previewAttachment}
         isOpen={!!previewAttachment}

@@ -9,6 +9,7 @@ interface ThinkingBlockProps {
   isStreaming?: boolean;
   durationMs?: number;
   defaultExpanded?: boolean;
+  className?: string;
 }
 
 function formatDuration(ms: number): string {
@@ -26,6 +27,7 @@ export function ThinkingBlock({
   isStreaming = false,
   durationMs,
   defaultExpanded = false,
+  className,
 }: ThinkingBlockProps) {
   const actualContent = content || thinking || '';
   const { t } = useTranslation('prompts');
@@ -70,7 +72,7 @@ export function ThinkingBlock({
   const displayDuration = durationMs ?? elapsedTime;
 
   return (
-    <div className="mb-4">
+    <div className={className ? `mb-4 ${className}` : 'mb-4'}>
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
@@ -129,7 +131,7 @@ export function ThinkingBlock({
           isStreaming
             ? 'bg-purple-500/5 border-purple-500/20'
             : 'bg-slate-800/30 light:bg-slate-50 border-slate-700 light:border-slate-200'
-        }`}>
+        } max-h-[280px] md:max-h-[360px] overflow-auto shadow-inner`}>
           <div className="text-sm text-slate-400 light:text-slate-600">
             {actualContent ? (
               <MarkdownRenderer content={actualContent} />

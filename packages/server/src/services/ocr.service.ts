@@ -19,6 +19,8 @@ import type {
   UpdateOcrSystemProviderSettingsDto,
   MineruOcrParams,
   MineruModelVersion,
+  DatalabOcrParams,
+  DatalabOcrMode,
   PaddleOcrParams,
   PaddleVlOcrParams,
 } from '@ssrprompt/shared';
@@ -30,6 +32,7 @@ type EffectiveOcrConfig = {
   apiKey: string | null;
   credentialSource: OcrCredentialSource;
   mineru: MineruOcrParams;
+  datalab: DatalabOcrParams;
   paddle: PaddleOcrParams;
   paddle_vl: PaddleVlOcrParams;
 };
@@ -39,6 +42,14 @@ const OCR_TEST_PREVIEW_LIMIT = 100_000;
 function normalizeBaseUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.trim().replace(/\/+$/, '') || null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -76,6 +87,21 @@ const MINERU_DEFAULT_PARAMS: MineruOcrParams = {
   language: 'ch',
   extraFormats: [],
   pageRanges: null,
+};
+
+const DATALAB_DEFAULT_PARAMS: DatalabOcrParams = {
+  mode: 'fast',
+  maxPages: null,
+  pageRange: null,
+  paginate: false,
+  addBlockIds: false,
+  disableImageExtraction: false,
+  disableImageCaptions: false,
+  outputFormat: null,
+  skipCache: false,
+  saveCheckpoint: false,
+  extras: null,
+  additionalConfig: null,
 };
 
 const PADDLE_DEFAULT_PARAMS: PaddleOcrParams = {
@@ -148,6 +174,43 @@ function normalizeMineruParams(_userId: string, raw: unknown): MineruOcrParams {
     language,
     extraFormats: Array.from(new Set(extraFormats)),
     pageRanges,
+  };
+}
+
+function normalizeDatalabParams(raw: unknown): DatalabOcrParams {
+  const defaults = DATALAB_DEFAULT_PARAMS;
+  if (!raw || typeof raw !== 'object') return defaults;
+
+  const record = raw as Record<string, unknown>;
+  const datalabRaw = record.datalab;
+  if (!datalabRaw || typeof datalabRaw !== 'object') return defaults;
+  const datalab = datalabRaw as Record<string, unknown>;
+
+  const toNumber = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+  const toBoolean = (value: unknown, fallback: boolean): boolean =>
+    typeof value === 'boolean' ? value : fallback;
+  const toString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+  const toMode = (value: unknown): DatalabOcrMode =>
+    value === 'balanced' || value === 'accurate' || value === 'fast' ? value : defaults.mode;
+
+  return {
+    mode: toMode(datalab.mode),
+    maxPages: toNumber(datalab.maxPages) ?? defaults.maxPages,
+    pageRange: toString(datalab.pageRange) ?? defaults.pageRange,
+    paginate: toBoolean(datalab.paginate, defaults.paginate),
+    addBlockIds: toBoolean(datalab.addBlockIds, defaults.addBlockIds),
+    disableImageExtraction: toBoolean(datalab.disableImageExtraction, defaults.disableImageExtraction),
+    disableImageCaptions: toBoolean(datalab.disableImageCaptions, defaults.disableImageCaptions),
+    outputFormat: toString(datalab.outputFormat) ?? defaults.outputFormat,
+    skipCache: toBoolean(datalab.skipCache, defaults.skipCache),
+    saveCheckpoint: toBoolean(datalab.saveCheckpoint, defaults.saveCheckpoint),
+    extras: toString(datalab.extras) ?? defaults.extras,
+    additionalConfig: toString(datalab.additionalConfig) ?? defaults.additionalConfig,
   };
 }
 
@@ -341,6 +404,58 @@ function mergePaddleVlParams(base: PaddleVlOcrParams, override?: Partial<PaddleV
   return next;
 }
 
+function mergeDatalabParams(base: DatalabOcrParams, override?: Partial<DatalabOcrParams>): DatalabOcrParams {
+  if (!override) return base;
+  const next = { ...base };
+
+  if (Object.prototype.hasOwnProperty.call(override, 'mode')) {
+    next.mode = override.mode === 'balanced' || override.mode === 'accurate' || override.mode === 'fast'
+      ? override.mode
+      : base.mode;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'maxPages')) {
+    next.maxPages = typeof override.maxPages === 'number' && Number.isFinite(override.maxPages) && override.maxPages > 0
+      ? Math.trunc(override.maxPages)
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'pageRange')) {
+    next.pageRange = typeof override.pageRange === 'string' && override.pageRange.trim() ? override.pageRange.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'paginate')) {
+    next.paginate = typeof override.paginate === 'boolean' ? override.paginate : base.paginate;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'addBlockIds')) {
+    next.addBlockIds = typeof override.addBlockIds === 'boolean' ? override.addBlockIds : base.addBlockIds;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'disableImageExtraction')) {
+    next.disableImageExtraction = typeof override.disableImageExtraction === 'boolean'
+      ? override.disableImageExtraction
+      : base.disableImageExtraction;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'disableImageCaptions')) {
+    next.disableImageCaptions = typeof override.disableImageCaptions === 'boolean'
+      ? override.disableImageCaptions
+      : base.disableImageCaptions;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'outputFormat')) {
+    next.outputFormat = typeof override.outputFormat === 'string' && override.outputFormat.trim() ? override.outputFormat.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'skipCache')) {
+    next.skipCache = typeof override.skipCache === 'boolean' ? override.skipCache : base.skipCache;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'saveCheckpoint')) {
+    next.saveCheckpoint = typeof override.saveCheckpoint === 'boolean' ? override.saveCheckpoint : base.saveCheckpoint;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'extras')) {
+    next.extras = typeof override.extras === 'string' && override.extras.trim() ? override.extras.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'additionalConfig')) {
+    next.additionalConfig = typeof override.additionalConfig === 'string' && override.additionalConfig.trim() ? override.additionalConfig.trim() : null;
+  }
+
+  return next;
+}
+
 function toMineruDataId(value: string): string {
   const v = value.trim().replace(/[^A-Za-z0-9_.-]/g, '_');
   return (v || 'ssrprompt').slice(0, 128);
@@ -484,10 +599,13 @@ function extractPaddleVlText(layoutParsingResult: unknown): string {
 
   if (layoutParsingResult && typeof layoutParsingResult === 'object') {
     const record = layoutParsingResult as Record<string, unknown>;
-    const markdownText = (record.markdown as any)?.text;
-    if (typeof markdownText === 'string') {
-      const v = markdownText.trim();
-      if (v) return v;
+    const markdown = record.markdown;
+    if (markdown && typeof markdown === 'object' && 'text' in markdown) {
+      const markdownText = (markdown as { text?: unknown }).text;
+      if (typeof markdownText === 'string') {
+        const v = markdownText.trim();
+        if (v) return v;
+      }
     }
     return extractPaddleText(record.prunedResult);
   }
@@ -545,7 +663,7 @@ async function paddleOcrExtract(
 
     const text = await res.text();
     const sanitizedText = text.replace(/^\uFEFF/, '');
-    let json: any;
+    let json: unknown;
     try {
       json = JSON.parse(sanitizedText);
     } catch {
@@ -559,20 +677,27 @@ async function paddleOcrExtract(
       });
     }
 
+    const jsonRecord = asRecord(json);
+
     if (!res.ok) {
-      throw new AppError(502, 'PROVIDER_ERROR', 'PaddleOCR request failed', { status: res.status, body: json });
+      throw new AppError(502, 'PROVIDER_ERROR', 'PaddleOCR request failed', { status: res.status, body: jsonRecord });
     }
 
-    if (json?.errorCode !== 0) {
-      throw new AppError(502, 'PROVIDER_ERROR', json?.errorMsg || 'PaddleOCR returned error', { body: json });
+    if (jsonRecord.errorCode !== 0) {
+      const errorMsg = typeof jsonRecord.errorMsg === 'string' ? jsonRecord.errorMsg : 'PaddleOCR returned error';
+      throw new AppError(502, 'PROVIDER_ERROR', errorMsg, { body: jsonRecord });
     }
 
-    const ocrResults = json?.result?.ocrResults;
+    const resultRecord = asRecord(jsonRecord.result);
+    const ocrResults = resultRecord.ocrResults;
     if (!Array.isArray(ocrResults) || ocrResults.length === 0) {
       return { pages: [], fullText: '' };
     }
 
-    const pages = ocrResults.map((r: any) => extractPaddleText(r?.prunedResult));
+    const pages = ocrResults.map((item) => {
+      const record = isRecord(item) ? item : null;
+      return extractPaddleText(record ? record.prunedResult : item);
+    });
     const fullText = pages.filter(Boolean).join('\n\n');
     return { pages, fullText };
   } catch (err) {
@@ -638,7 +763,7 @@ async function paddleOcrVlExtract(
 
     const text = await res.text();
     const sanitizedText = text.replace(/^\uFEFF/, '');
-    let json: any;
+    let json: unknown;
     try {
       json = JSON.parse(sanitizedText);
     } catch {
@@ -652,20 +777,27 @@ async function paddleOcrVlExtract(
       });
     }
 
+    const jsonRecord = asRecord(json);
+
     if (!res.ok) {
-      throw new AppError(502, 'PROVIDER_ERROR', 'PaddleOCR-VL request failed', { status: res.status, body: json });
+      throw new AppError(502, 'PROVIDER_ERROR', 'PaddleOCR-VL request failed', { status: res.status, body: jsonRecord });
     }
 
-    if (json?.errorCode !== 0) {
-      throw new AppError(502, 'PROVIDER_ERROR', json?.errorMsg || 'PaddleOCR-VL returned error', { body: json });
+    if (jsonRecord.errorCode !== 0) {
+      const errorMsg = typeof jsonRecord.errorMsg === 'string' ? jsonRecord.errorMsg : 'PaddleOCR-VL returned error';
+      throw new AppError(502, 'PROVIDER_ERROR', errorMsg, { body: jsonRecord });
     }
 
-    const layoutParsingResults = json?.result?.layoutParsingResults;
+    const resultRecord = asRecord(jsonRecord.result);
+    const layoutParsingResults = resultRecord.layoutParsingResults;
     if (!Array.isArray(layoutParsingResults) || layoutParsingResults.length === 0) {
       return { pages: [], fullText: '' };
     }
 
-    const pages = layoutParsingResults.map((r: any) => extractPaddleVlText(r)).map((p: string) => p.trim()).filter(Boolean);
+    const pages = layoutParsingResults
+      .map((item) => extractPaddleVlText(item))
+      .map((page) => page.trim())
+      .filter(Boolean);
     const fullText = pages.join('\n\n');
     return { pages, fullText };
   } catch (err) {
@@ -681,6 +813,7 @@ async function paddleOcrVlExtract(
 
 async function datalabExtract(
   config: { baseUrl: string; apiKey: string },
+  params: DatalabOcrParams,
   file: { buffer: Buffer; mimeType: string; filename: string }
 ): Promise<{ pages: string[]; fullText: string; pageCount?: number }> {
   const baseUrl = config.baseUrl;
@@ -697,6 +830,19 @@ async function datalabExtract(
   bytes.set(file.buffer);
   form.append('file', new Blob([bytes], { type: file.mimeType }), file.filename);
 
+  if (params.mode) form.append('mode', params.mode);
+  if (typeof params.maxPages === 'number') form.append('max_pages', String(params.maxPages));
+  if (params.pageRange) form.append('page_range', params.pageRange);
+  form.append('paginate', String(params.paginate));
+  form.append('add_block_ids', String(params.addBlockIds));
+  form.append('disable_image_extraction', String(params.disableImageExtraction));
+  form.append('disable_image_captions', String(params.disableImageCaptions));
+  if (params.outputFormat) form.append('output_format', params.outputFormat);
+  form.append('skip_cache', String(params.skipCache));
+  form.append('save_checkpoint', String(params.saveCheckpoint));
+  if (params.extras) form.append('extras', params.extras);
+  if (params.additionalConfig) form.append('additional_config', params.additionalConfig);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 180_000);
 
@@ -712,9 +858,10 @@ async function datalabExtract(
     console.log(`[OCR:Datalab] Upload completed in ${Date.now() - uploadStart}ms, status: ${startRes.status}`);
 
     const startText = await startRes.text();
-    let startJson: any;
+    let startJson: Record<string, unknown>;
     try {
-      startJson = JSON.parse(startText);
+      const parsed = JSON.parse(startText);
+      startJson = asRecord(parsed);
     } catch {
       throw new AppError(502, 'PROVIDER_ERROR', 'Datalab returned non-JSON response', { status: startRes.status, body: startText.slice(0, 2000) });
     }
@@ -723,8 +870,14 @@ async function datalabExtract(
       throw new AppError(502, 'PROVIDER_ERROR', 'Datalab request failed', { status: startRes.status, body: startJson });
     }
 
-    const requestId = startJson?.request_id || startJson?.requestId;
-    const requestCheckUrl = startJson?.request_check_url || startJson?.requestCheckUrl;
+    const requestId =
+      typeof startJson.request_id === 'string'
+        ? startJson.request_id
+        : (typeof startJson.requestId === 'string' ? startJson.requestId : null);
+    const requestCheckUrl =
+      typeof startJson.request_check_url === 'string'
+        ? startJson.request_check_url
+        : (typeof startJson.requestCheckUrl === 'string' ? startJson.requestCheckUrl : null);
     console.log(`[OCR:Datalab] Got request_id: ${requestId}, polling...`);
 
     const checkUrl: string | null =
@@ -742,12 +895,12 @@ async function datalabExtract(
         throw new AppError(504, 'PROVIDER_ERROR', 'Datalab timeout (180s)');
       }
 
-      // eslint-disable-next-line no-await-in-loop
       const pollRes = await fetch(checkUrl, { method: 'GET', headers, signal: controller.signal });
       const pollText = await pollRes.text();
-      let pollJson: any;
+      let pollJson: Record<string, unknown>;
       try {
-        pollJson = JSON.parse(pollText);
+        const parsed = JSON.parse(pollText);
+        pollJson = asRecord(parsed);
       } catch {
         throw new AppError(502, 'PROVIDER_ERROR', 'Datalab returned non-JSON response (poll)', { status: pollRes.status, body: pollText.slice(0, 2000) });
       }
@@ -756,15 +909,31 @@ async function datalabExtract(
         throw new AppError(502, 'PROVIDER_ERROR', 'Datalab poll failed', { status: pollRes.status, body: pollJson });
       }
 
-      const status = String(pollJson?.status || '').toLowerCase();
+      const status = String(pollJson.status || '').toLowerCase();
       console.log(`[OCR:Datalab] Poll status: ${status}, elapsed: ${Date.now() - pollStart}ms`);
 
       if (status === 'completed' || status === 'complete' || status === 'success') {
-        const markdown = typeof pollJson?.markdown === 'string' ? pollJson.markdown : '';
-        const pageCount = typeof pollJson?.page_count === 'number' ? pollJson.page_count : undefined;
-        const pages = Array.isArray(pollJson?.pages) && pollJson.pages.every((p: any) => typeof p === 'string')
-          ? (pollJson.pages as string[])
-          : (markdown ? [markdown] : []);
+        const outputText = (() => {
+          if (typeof pollJson.markdown === 'string' && pollJson.markdown.trim()) return pollJson.markdown;
+          if (typeof pollJson.html === 'string' && pollJson.html.trim()) return pollJson.html;
+          if (typeof pollJson.json === 'string' && pollJson.json.trim()) return pollJson.json;
+          if (pollJson.json && typeof pollJson.json === 'object') {
+            return JSON.stringify(pollJson.json, null, 2);
+          }
+          if (typeof pollJson.chunks === 'string' && pollJson.chunks.trim()) return pollJson.chunks;
+          if (pollJson.chunks && typeof pollJson.chunks === 'object') {
+            return JSON.stringify(pollJson.chunks, null, 2);
+          }
+          if (typeof pollJson.extraction_schema_json === 'string' && pollJson.extraction_schema_json.trim()) {
+            return pollJson.extraction_schema_json;
+          }
+          return '';
+        })();
+        const pageCount = typeof pollJson.page_count === 'number' ? pollJson.page_count : undefined;
+        const pagesValue = pollJson.pages;
+        const pages = Array.isArray(pagesValue) && pagesValue.every((page) => typeof page === 'string')
+          ? pagesValue
+          : (outputText ? [outputText] : []);
         return {
           pages,
           fullText: pages.filter(Boolean).join('\n\n'),
@@ -773,11 +942,10 @@ async function datalabExtract(
       }
 
       if (status === 'failed' || status === 'error') {
-        const err = pollJson?.error || pollJson?.message || pollJson?.detail || 'Datalab OCR failed';
+        const err = pollJson.error || pollJson.message || pollJson.detail || 'Datalab OCR failed';
         throw new AppError(502, 'PROVIDER_ERROR', String(err), { body: pollJson });
       }
 
-      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 1000));
     }
   } catch (err) {
@@ -791,11 +959,12 @@ async function datalabExtract(
   }
 }
 
-async function parseJsonOrThrow(res: Response, providerName: string): Promise<any> {
+async function parseJsonOrThrow(res: Response, providerName: string): Promise<Record<string, unknown>> {
   const text = await res.text();
   const sanitizedText = text.replace(/^\uFEFF/, '');
   try {
-    return JSON.parse(sanitizedText);
+    const parsed = JSON.parse(sanitizedText);
+    return asRecord(parsed);
   } catch {
     const contentType = res.headers.get('content-type');
     const snippet = sanitizedText.trim().replace(/\s+/g, ' ').slice(0, 240);
@@ -895,18 +1064,25 @@ async function mineruExtract(
     });
 
     let submitJson = await parseJsonOrThrow(submitRes, 'MinerU');
-    if (!submitRes.ok || submitJson?.code !== 0) {
-      throw new AppError(502, 'PROVIDER_ERROR', submitJson?.msg || 'MinerU extract task submit failed', { status: submitRes.status, body: submitJson });
+    const submitCode = submitJson.code as number | string | undefined;
+    if (!submitRes.ok || submitCode !== 0) {
+      const message = typeof submitJson.msg === 'string' ? submitJson.msg : 'MinerU extract task submit failed';
+      throw new AppError(502, 'PROVIDER_ERROR', message, { status: submitRes.status, body: submitJson });
     }
 
-    const taskId = submitJson?.data?.task_id ?? submitJson?.data?.taskId;
+    const submitData = asRecord(submitJson.data);
+    const taskId =
+      typeof submitData.task_id === 'string'
+        ? submitData.task_id
+        : (typeof submitData.taskId === 'string' ? submitData.taskId : null);
     if (typeof taskId !== 'string' || !taskId.trim()) {
       throw new AppError(502, 'PROVIDER_ERROR', 'MinerU did not return task_id', { body: submitJson });
     }
 
     while (true) {
-      const state = String(submitJson?.data?.state || '').toLowerCase();
-      const fullZipUrl = submitJson?.data?.full_zip_url ?? submitJson?.data?.fullZipUrl;
+      const currentData = asRecord(submitJson.data);
+      const state = String(currentData.state || '').toLowerCase();
+      const fullZipUrl = currentData.full_zip_url ?? currentData.fullZipUrl;
 
       if (state === 'done') {
         if (typeof fullZipUrl !== 'string' || !fullZipUrl) {
@@ -943,7 +1119,7 @@ async function mineruExtract(
       }
 
       if (state === 'failed' || state === 'error') {
-        const err = submitJson?.data?.err_msg ?? submitJson?.data?.errMsg ?? submitJson?.msg ?? 'MinerU OCR failed';
+        const err = currentData.err_msg ?? currentData.errMsg ?? submitJson.msg ?? 'MinerU OCR failed';
         throw new AppError(502, 'PROVIDER_ERROR', String(err), { body: submitJson });
       }
 
@@ -957,8 +1133,10 @@ async function mineruExtract(
       const pollUrl = joinUrl(config.baseUrl, `/extract/task/${encodeURIComponent(taskId)}`);
       const pollRes = await fetch(pollUrl, { method: 'GET', headers, signal: controller.signal });
       submitJson = await parseJsonOrThrow(pollRes, 'MinerU');
-      if (!pollRes.ok || submitJson?.code !== 0) {
-        throw new AppError(502, 'PROVIDER_ERROR', submitJson?.msg || 'MinerU task poll failed', { status: pollRes.status, body: submitJson });
+      const pollCode = submitJson.code as number | string | undefined;
+      if (!pollRes.ok || pollCode !== 0) {
+        const message = typeof submitJson.msg === 'string' ? submitJson.msg : 'MinerU task poll failed';
+        throw new AppError(502, 'PROVIDER_ERROR', message, { status: pollRes.status, body: submitJson });
       }
     }
   } catch (err) {
@@ -1026,6 +1204,7 @@ export class OcrService {
       baseUrl: string | null;
       apiKey: string | null;
       enabled: boolean;
+      datalab: Partial<DatalabOcrParams>;
       paddle: Partial<PaddleOcrParams>;
       paddle_vl: Partial<PaddleVlOcrParams>;
       mineru: Partial<MineruOcrParams>;
@@ -1038,7 +1217,8 @@ export class OcrService {
     const provider = override?.provider ?? (row?.provider as OcrProvider | undefined) ?? 'paddle';
     const credentialSource = override?.credentialSource ?? (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system';
 
-    const mineruFromRow = normalizeMineruParams(userId, (row as any)?.providerParams);
+    const providerParams = row?.providerParams ?? null;
+    const mineruFromRow = normalizeMineruParams(userId, providerParams);
     const mineruOverride = override?.mineru;
     const mineru: MineruOcrParams = mineruOverride
       ? {
@@ -1056,10 +1236,13 @@ export class OcrService {
         }
       : mineruFromRow;
 
-    const paddleFromRow = normalizePaddleParams((row as any)?.providerParams);
+    const datalabFromRow = normalizeDatalabParams(providerParams);
+    const datalab = mergeDatalabParams(datalabFromRow, override?.datalab);
+
+    const paddleFromRow = normalizePaddleParams(providerParams);
     const paddle = mergePaddleParams(paddleFromRow, override?.paddle);
 
-    const paddleVlFromRow = normalizePaddleVlParams((row as any)?.providerParams);
+    const paddleVlFromRow = normalizePaddleVlParams(providerParams);
     const paddle_vl = mergePaddleVlParams(paddleVlFromRow, override?.paddle_vl);
 
     if (credentialSource === 'system') {
@@ -1072,6 +1255,7 @@ export class OcrService {
         credentialSource,
         baseUrl: defaults.baseUrl,
         apiKey: defaults.apiKey,
+        datalab,
         paddle,
         paddle_vl,
         mineru,
@@ -1092,6 +1276,7 @@ export class OcrService {
       credentialSource,
       baseUrl,
       apiKey,
+      datalab,
       paddle,
       paddle_vl,
       mineru,
@@ -1117,6 +1302,7 @@ export class OcrService {
       baseUrl: effective.baseUrl,
       hasApiKey,
       apiKeyLast4: row?.apiKeyLast4 ?? null,
+      datalab: effective.datalab,
       paddle: effective.paddle,
       paddle_vl: effective.paddle_vl,
       mineru: effective.mineru,
@@ -1135,13 +1321,24 @@ export class OcrService {
     const nextProvider: OcrProvider = (data.provider ?? (row?.provider as OcrProvider | undefined) ?? 'paddle');
     const nextCredentialSource: OcrCredentialSource = (data.credentialSource ?? (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system');
 
-    let update: any = {};
+    const update: {
+      enabled?: boolean;
+      provider?: OcrProvider;
+      credentialSource?: OcrCredentialSource;
+      baseUrl?: string | null;
+      apiKey?: string | null;
+      apiKeyLast4?: string | null;
+      providerParams?: Prisma.JsonObject;
+    } = {};
     if (typeof data.enabled === 'boolean') update.enabled = data.enabled;
     if (data.provider) update.provider = data.provider;
     if (data.credentialSource) update.credentialSource = data.credentialSource;
 
-    const existingParams = (row as any)?.providerParams;
-    const nextProviderParams = existingParams && typeof existingParams === 'object' ? { ...existingParams } : {};
+    const existingParams = row?.providerParams ?? null;
+    const nextProviderParams: Record<string, unknown> =
+      existingParams && typeof existingParams === 'object' && !Array.isArray(existingParams)
+        ? { ...(existingParams as Record<string, unknown>) }
+        : {};
     let hasProviderParamsUpdate = false;
 
     if (data.mineru) {
@@ -1176,8 +1373,14 @@ export class OcrService {
       hasProviderParamsUpdate = true;
     }
 
+    if (data.datalab) {
+      const current = normalizeDatalabParams(existingParams);
+      nextProviderParams.datalab = mergeDatalabParams(current, data.datalab);
+      hasProviderParamsUpdate = true;
+    }
+
     if (hasProviderParamsUpdate) {
-      update.providerParams = nextProviderParams;
+      update.providerParams = nextProviderParams as Prisma.JsonObject;
     }
 
     if (nextCredentialSource === 'custom') {
@@ -1291,10 +1494,10 @@ export class OcrService {
       if (Object.keys(update).length === 0) continue;
 
       await prisma.ocrSystemProviderConfig.upsert({
-        where: { provider: provider as any },
+        where: { provider },
         update,
         create: {
-          provider: provider as any,
+          provider,
           baseUrl: (update.baseUrl as string | null | undefined) ?? null,
           apiKey: (update.apiKey as string | null | undefined) ?? null,
           apiKeyLast4: (update.apiKeyLast4 as string | null | undefined) ?? null,
@@ -1424,6 +1627,7 @@ export class OcrService {
 
       const { pages, fullText, pageCount } = await datalabExtract(
         { baseUrl: effective.baseUrl, apiKey: effective.apiKey! },
+        effective.datalab,
         file
       );
 
@@ -1471,7 +1675,7 @@ export class OcrService {
       where: {
         userId,
         fileId: { in: uniqueIds },
-        ...(provider ? { provider: provider as any } : {}),
+        ...(provider ? { provider } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -1519,7 +1723,7 @@ export class OcrService {
         userId_fileId_provider: {
           userId,
           fileId,
-          provider: effective.provider as any,
+          provider: effective.provider,
         },
       },
     });
@@ -1575,7 +1779,11 @@ export class OcrService {
         pages = result.pages;
         fullText = result.fullText;
       } else {
-        const result = await datalabExtract({ baseUrl: effective.baseUrl, apiKey: effective.apiKey! }, { buffer, mimeType, filename });
+        const result = await datalabExtract(
+          { baseUrl: effective.baseUrl, apiKey: effective.apiKey! },
+          effective.datalab,
+          { buffer, mimeType, filename }
+        );
         pages = result.pages;
         fullText = result.fullText;
       }
@@ -1585,23 +1793,23 @@ export class OcrService {
           userId_fileId_provider: {
             userId,
             fileId,
-            provider: effective.provider as any,
+            provider: effective.provider,
           },
         },
         update: {
           status: 'success',
           errorMessage: null,
           fullText,
-          pages: pages as any,
+          pages: pages as Prisma.JsonArray,
         },
         create: {
           user: { connect: { id: userId } },
           file: { connect: { id: fileId } },
-          provider: effective.provider as any,
+          provider: effective.provider,
           status: 'success',
           errorMessage: null,
           fullText,
-          pages: pages as any,
+          pages: pages as Prisma.JsonArray,
         },
       });
 
@@ -1614,7 +1822,7 @@ export class OcrService {
           userId_fileId_provider: {
             userId,
             fileId,
-            provider: effective.provider as any,
+            provider: effective.provider,
           },
         },
         update: {
@@ -1626,7 +1834,7 @@ export class OcrService {
         create: {
           user: { connect: { id: userId } },
           file: { connect: { id: fileId } },
-          provider: effective.provider as any,
+          provider: effective.provider,
           status: 'failed',
           errorMessage: message,
           fullText: '',

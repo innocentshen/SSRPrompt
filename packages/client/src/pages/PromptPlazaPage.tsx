@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Search, FileText, Clock, User, Copy, Loader2 } from 'lucide-react';
@@ -25,6 +25,14 @@ function safeParseMessageJson(raw: string): Array<{ role: string; content: strin
   } catch {
     return null;
   }
+}
+
+type PromptRole = 'system' | 'user' | 'assistant';
+
+function normalizeRole(role: string): PromptRole | null {
+  const r = role.toLowerCase();
+  if (r === 'system' || r === 'user' || r === 'assistant') return r;
+  return null;
 }
 
 export function PromptPlazaPage() {
@@ -85,6 +93,22 @@ export function PromptPlazaPage() {
     return activeSnapshot.content;
   }, [activeSnapshot]);
 
+  const activePromptMessages = useMemo(() => {
+    if (!activeSnapshot) return [] as Array<{ role: PromptRole; content: string }>;
+
+    const raw = activeSnapshot.messages.length > 0
+      ? activeSnapshot.messages
+      : (safeParseMessageJson(activeSnapshot.content) ?? []);
+
+    return raw
+      .map((m) => {
+        const role = normalizeRole(m.role);
+        if (!role) return null;
+        return { role, content: m.content } satisfies { role: PromptRole; content: string };
+      })
+      .filter((m): m is { role: PromptRole; content: string } => Boolean(m));
+  }, [activeSnapshot]);
+
   const activePromptConfig = useMemo<PromptConfig>(() => {
     const config = (activeSnapshot?.config || {}) as Record<string, unknown>;
     const reasoning = config.reasoning as { enabled?: boolean; effort?: 'default' | 'none' | 'low' | 'medium' | 'high' } | undefined;
@@ -115,7 +139,7 @@ export function PromptPlazaPage() {
     }));
   }, [activeSnapshot]);
 
-  const loadList = async () => {
+  const loadList = useCallback(async () => {
     setLoading(true);
     try {
       const data = await promptsApi.listPublic();
@@ -125,9 +149,9 @@ export function PromptPlazaPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast, t]);
 
-  const loadDetail = async (promptId: string) => {
+  const loadDetail = useCallback(async (promptId: string) => {
     try {
       const data = await promptsApi.getPublicById(promptId);
       setDetail(data);
@@ -141,18 +165,17 @@ export function PromptPlazaPage() {
       setDetail(null);
       setVersions([]);
     }
-  };
+  }, [showToast, t]);
 
   useEffect(() => {
     fetchProvidersAndModels();
     loadList();
-  }, [fetchProvidersAndModels]);
+  }, [fetchProvidersAndModels, loadList]);
 
   useEffect(() => {
     if (!selectedId) return;
     loadDetail(selectedId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, loadDetail]);
 
   const handleCopy = async () => {
     if (!selectedId) return;
@@ -337,8 +360,10 @@ export function PromptPlazaPage() {
                 testInput={testInput}
                 onTestInputChange={setTestInput}
                 promptText={activePromptText}
+                promptMessages={activePromptMessages.length > 0 ? activePromptMessages : undefined}
                 config={activePromptConfig}
                 outputSchema={activePromptConfig.output_schema}
+                promptId={activeSnapshot.id}
                 saveTrace={false}
                 showFileUpload={true}
                 className="lg:col-span-3 bg-slate-900/20 light:bg-slate-100"

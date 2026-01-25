@@ -8,6 +8,8 @@ export { PromptOptimizer } from './PromptOptimizer';
 export { PromptObserver } from './PromptObserver';
 export { StructuredOutputEditor } from './StructuredOutputEditor';
 export { ThinkingBlock } from './ThinkingBlock';
+export { ChatTranscript } from './ChatTranscript';
+export type { ChatTranscriptMessage } from './ChatTranscript';
 export { AttachmentPreview, AttachmentList } from './AttachmentPreview';
 export { AttachmentModal } from './AttachmentModal';
 export { PromptTestPanel } from './PromptTestPanel';

@@ -1,10 +1,6 @@
 import { useEffect, ReactNode, memo } from 'react';
 import { CheckCircle2, XCircle, AlertCircle, X } from 'lucide-react';
-import { useUIStore, type Toast, type ToastType } from '../../store/useUIStore';
-
-// Re-export for backward compatibility
-export { useToast } from '../../store/useUIStore';
-export type { ToastType };
+import { useUIStore, type Toast } from '../../store/useUIStore';
 
 const icons = {
   success: CheckCircle2,

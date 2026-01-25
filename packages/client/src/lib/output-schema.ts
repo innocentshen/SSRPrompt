@@ -8,6 +8,8 @@ export interface ApiOutputSchema {
   strict?: boolean;
 }
 
+type JsonSchema = Parameters<typeof fromJsonSchema>[0];
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -48,7 +50,7 @@ export function toFrontendOutputSchema(value: unknown): FrontendOutputSchema | u
   if (isApiOutputSchema(value)) {
     const strict = typeof value.strict === 'boolean' ? value.strict : true;
     const name = value.name || 'response';
-    const converted = fromJsonSchema(value.schema as any, name);
+    const converted = fromJsonSchema(value.schema as unknown as JsonSchema, name);
     return { ...converted, enabled: true, name, strict };
   }
 

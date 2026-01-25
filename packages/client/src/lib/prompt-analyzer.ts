@@ -1,6 +1,6 @@
 import type { PromptMessage, PromptVariable } from '../types';
 import { chatApi } from '../api/chat';
-import { getOptimizationSettings } from '../components/Settings/OptimizationSettings';
+import { getOptimizationSettings } from './optimization-settings';
 import i18n from '../i18n';
 
 export type SuggestionType = 'clarity' | 'structure' | 'specificity' | 'examples' | 'constraints';

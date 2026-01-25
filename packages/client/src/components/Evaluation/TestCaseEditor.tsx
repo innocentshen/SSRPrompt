@@ -1,18 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2, Paperclip, X, FileText, Image, Loader2, Eye, EyeOff, Maximize2, Code, File, Play } from 'lucide-react';
+import { Trash2, Loader2, Eye, EyeOff, Maximize2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button, Modal, MarkdownRenderer } from '../ui';
-import { AttachmentModal } from '../Prompt/AttachmentModal';
-import type { TestCase, FileAttachment, ProviderType } from '../../types';
-import { getFileInputAccept, isSupportedFileType, getFileIconType } from '../../lib/file-utils';
-import { uploadFileAttachment } from '../../lib/ai-service';
-
-interface FileUploadCapabilities {
-  accept: string;
-  canUploadImage: boolean;
-  canUploadPdf: boolean;
-  canUploadText: boolean;
-}
+import type { TestCase } from '../../types';
 
 interface TestCaseEditorProps {
   testCase: TestCase;
@@ -22,13 +12,9 @@ interface TestCaseEditorProps {
   onDelete: () => void;
   onRunSingle?: () => void;
   isRunning?: boolean;
-  isSaving?: boolean;
   isSelected?: boolean;
   onSelectChange?: (selected: boolean) => void;
-  fileUploadCapabilities?: FileUploadCapabilities;
-  providerType?: ProviderType;
-  modelId?: string;
-  supportsVision?: boolean;
+  variant?: 'accordion' | 'panel';
 }
 
 interface LocalInputProps {
@@ -96,71 +82,31 @@ export function TestCaseEditor({
   isRunning,
   isSelected,
   onSelectChange,
+  variant = 'accordion',
 }: TestCaseEditorProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
-  const [isExpanded, setIsExpanded] = useState(false);
+  const isPanel = variant === 'panel';
+  const [isExpanded, setIsExpanded] = useState(isPanel);
   const [previewInput, setPreviewInput] = useState(false);
   const [previewExpected, setPreviewExpected] = useState(false);
+  const [expectedCollapsed, setExpectedCollapsed] = useState(false);
   const [expandedField, setExpandedField] = useState<'input' | 'expected' | null>(null);
   const [expandedValue, setExpandedValue] = useState('');
   const [expandedPreview, setExpandedPreview] = useState(false);
-  const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isPanel) {
+      setIsExpanded(true);
+    }
+  }, [isPanel]);
+
+  useEffect(() => {
+    setExpectedCollapsed(false);
+  }, [testCase.id]);
 
   const handleUpdate = async (updates: Partial<TestCase>) => {
     await onUpdate({ ...testCase, ...updates });
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    if (isUploading) return;
-
-    const maxSize = 20 * 1024 * 1024;
-    const newAttachments: FileAttachment[] = [];
-
-    setIsUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        if (!isSupportedFileType(file)) {
-          continue; // Skip unsupported files
-        }
-
-        // 根据模型能力检查是否允许上传
-        if (file.size > maxSize) {
-          continue;
-        }
-
-        try {
-          const attachment = await uploadFileAttachment(file);
-          newAttachments.push(attachment);
-        } catch {
-          // Ignore upload failures per file (user can retry)
-        }
-      }
-
-      if (newAttachments.length > 0) {
-        const updatedAttachments = [...testCase.attachments, ...newAttachments];
-        await handleUpdate({
-          attachments: updatedAttachments,
-        });
-      }
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  const removeAttachment = async (attachmentIndex: number) => {
-    const updatedAttachments = testCase.attachments.filter((_, i) => i !== attachmentIndex);
-    await handleUpdate({
-      attachments: updatedAttachments,
-    });
   };
 
   const updateVariable = async (varName: string, value: string) => {
@@ -170,22 +116,6 @@ export function TestCaseEditor({
         [varName]: value,
       },
     });
-  };
-
-  const getFileIcon = (attachment: { type: string; name?: string }) => {
-    const iconType = getFileIconType(attachment);
-    switch (iconType) {
-      case 'image':
-        return Image;
-      case 'pdf':
-        return FileText;
-      case 'code':
-        return Code;
-      case 'text':
-        return FileText;
-      default:
-        return File;
-    }
   };
 
   const openExpandModal = (field: 'input' | 'expected') => {
@@ -205,135 +135,211 @@ export function TestCaseEditor({
     setExpandedPreview(false);
   };
 
+  const isContentVisible = isPanel ? true : isExpanded;
+
   return (
-    <div className="border border-slate-700 light:border-slate-200 rounded-lg bg-slate-800/30 light:bg-white overflow-hidden light:shadow-sm">
-      <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={isExpanded}
-        onClick={() => setIsExpanded(!isExpanded)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setIsExpanded((prev) => !prev);
-          }
-        }}
-        className="w-full flex items-center justify-between p-4 hover:bg-slate-800/50 light:hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
-      >
-        <div className="flex items-center gap-3">
-          {onSelectChange && (
-            <input
-              type="checkbox"
-              checked={!!isSelected}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onSelectChange(e.target.checked)}
-              className="w-4 h-4 accent-cyan-500"
-              aria-label={t('selectTestCase')}
-            />
-          )}
-          <span className="w-6 h-6 rounded-full bg-slate-700 light:bg-cyan-100 flex items-center justify-center text-xs font-medium text-slate-300 light:text-cyan-700">
-            {index + 1}
-          </span>
-          <span className="text-sm font-medium text-slate-200 light:text-slate-800">
-            {testCase.name || t('testCaseNum', { num: index + 1 })}
-          </span>
-          {testCase.attachments.length > 0 && (
-            <span className="text-xs text-slate-500 light:text-slate-600">
-              ({t('attachmentsCount', { count: testCase.attachments.length })})
+    <div className={`border border-slate-700 light:border-slate-200 rounded-lg bg-slate-800/30 light:bg-white overflow-hidden light:shadow-sm ${isPanel ? 'h-full flex flex-col' : ''}`}>
+      {!isPanel && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
+          onClick={() => setIsExpanded(!isExpanded)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setIsExpanded((prev) => !prev);
+            }
+          }}
+          className="w-full flex items-center justify-between p-4 hover:bg-slate-800/50 light:hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+        >
+          <div className="flex items-center gap-3">
+            {onSelectChange && (
+              <input
+                type="checkbox"
+                checked={!!isSelected}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => onSelectChange(e.target.checked)}
+                className="w-4 h-4 accent-cyan-500"
+                aria-label={t('selectTestCase')}
+              />
+            )}
+            <span className="w-6 h-6 rounded-full bg-slate-700 light:bg-cyan-100 flex items-center justify-center text-xs font-medium text-slate-300 light:text-cyan-700">
+              {index + 1}
             </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {onRunSingle && (
+            <span className="text-sm font-medium text-slate-200 light:text-slate-800">
+              {testCase.name || t('testCaseNum', { num: index + 1 })}
+            </span>
+            {testCase.attachments.length > 0 && (
+              <span className="text-xs text-slate-500 light:text-slate-600">
+                ({t('attachmentsCount', { count: testCase.attachments.length })})
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {onRunSingle && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRunSingle();
+                }}
+                disabled={isRunning}
+                title={t('runThisCase')}
+              >
+                {isRunning ? (
+                  <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-cyan-400" />
+                )}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                onRunSingle();
+                onDelete();
               }}
-              disabled={isRunning}
-              title={t('runThisCase')}
             >
-              {isRunning ? (
-                <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-cyan-400" />
-              )}
+              <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-          </Button>
-        </div>
-      </div>
-
-      {isExpanded && (
-        <div className="p-4 pt-0 space-y-4 border-t border-slate-700/50 light:border-slate-200">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              {t('testCaseName')}
-            </label>
-            <LocalInput
-              value={testCase.name}
-              onChange={(value) => handleUpdate({ name: value })}
-              placeholder={t('enterTestCaseName')}
-              className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 text-sm"
-            />
           </div>
+        </div>
+      )}
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                {t('inputText')}
-              </label>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => openExpandModal('input')}
-                  className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
-                  title={t('expandEdit')}
-                >
-                  <Maximize2 className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewInput(!previewInput)}
-                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
-                    previewInput
-                      ? 'bg-cyan-500/20 text-cyan-400 light:text-cyan-600'
-                      : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
-                  }`}
-                >
-                  {previewInput ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  {previewInput ? tCommon('edit') : t('preview')}
-                </button>
+      {isContentVisible && (
+        <div className={`p-3 ${isPanel ? '' : 'pt-0'} flex flex-col gap-4 ${isPanel ? 'flex-1 min-h-0 overflow-y-auto' : ''} ${isPanel ? '' : 'border-t border-slate-700/50 light:border-slate-200'}`}>
+          <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+            <div className="rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 p-3 flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                  {t('inputText')}
+                </label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => openExpandModal('input')}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
+                    title={t('expandEdit')}
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewInput(!previewInput)}
+                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+                      previewInput
+                        ? 'bg-cyan-500/20 text-cyan-400 light:text-cyan-600'
+                        : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+                    }`}
+                  >
+                    {previewInput ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    {previewInput ? tCommon('edit') : t('preview')}
+                  </button>
+                </div>
               </div>
+              {previewInput ? (
+                <div className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-600 light:border-slate-300 rounded-lg text-sm overflow-auto">
+                  {testCase.inputText ? (
+                    <MarkdownRenderer content={testCase.inputText} />
+                  ) : (
+                    <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
+                  )}
+                </div>
+              ) : (
+                <LocalInput
+                  as="textarea"
+                  value={testCase.inputText}
+                  onChange={(value) => handleUpdate({ inputText: value })}
+                  placeholder={t('enterTestContent')}
+                  rows={8}
+                  className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
+                />
+              )}
             </div>
-            {previewInput ? (
-              <div className="w-full min-h-[80px] px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-600 light:border-slate-300 rounded-lg text-sm overflow-auto max-h-48">
-                {testCase.inputText ? (
-                  <MarkdownRenderer content={testCase.inputText} />
-                ) : (
-                  <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
-                )}
+
+            <div
+              className={`rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 p-3 flex flex-col flex-1 min-h-0 ${
+                expectedCollapsed ? 'lg:hidden' : ''
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                  {t('expectedOutputOptional')}
+                </label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setExpectedCollapsed(true)}
+                    className="hidden lg:flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
+                    title={tCommon('collapse')}
+                    aria-label={tCommon('collapse')}
+                  >
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openExpandModal('expected')}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
+                    title={t('expandEdit')}
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewExpected(!previewExpected)}
+                    className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+                      previewExpected
+                        ? 'bg-cyan-500/20 text-cyan-400 light:text-cyan-600'
+                        : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+                    }`}
+                  >
+                    {previewExpected ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    {previewExpected ? tCommon('edit') : t('preview')}
+                  </button>
+                </div>
               </div>
-            ) : (
-              <LocalInput
-                as="textarea"
-                value={testCase.inputText}
-                onChange={(value) => handleUpdate({ inputText: value })}
-                placeholder={t('enterTestContent')}
-                rows={3}
-                className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm font-mono min-h-[80px]"
-              />
+
+              {previewExpected ? (
+                <div className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-600 light:border-slate-300 rounded-lg text-sm overflow-auto">
+                  {testCase.expectedOutput ? (
+                    <MarkdownRenderer content={testCase.expectedOutput} />
+                  ) : (
+                    <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
+                  )}
+                </div>
+              ) : (
+                <LocalInput
+                  as="textarea"
+                  value={testCase.expectedOutput || ''}
+                  onChange={(value) => handleUpdate({ expectedOutput: value || null })}
+                  placeholder={t('expectedOutputPlaceholder')}
+                  rows={8}
+                  className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
+                />
+              )}
+            </div>
+
+            {expectedCollapsed && (
+              <div className="hidden lg:flex w-10 rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setExpectedCollapsed(false)}
+                  className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 light:text-slate-500 hover:text-cyan-400 light:hover:text-cyan-700 transition-colors"
+                  title={tCommon('expand')}
+                  aria-label={tCommon('expand')}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span
+                    className="text-[11px] font-medium"
+                    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+                  >
+                    {t('expectedOutput')}
+                  </span>
+                </button>
+              </div>
             )}
           </div>
 
@@ -360,121 +366,7 @@ export function TestCaseEditor({
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
-              {t('attachments')}
-            </label>
-            <div className="space-y-2">
-              {isUploading && (
-                <div className="flex items-center gap-2 p-2 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-lg">
-                  <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
-                  <span className="text-xs text-slate-400 light:text-slate-600">{t('uploading')}</span>
-                </div>
-              )}
-              {testCase.attachments.length > 0 && (
-                testCase.attachments.map((attachment, i) => {
-                  const Icon = getFileIcon(attachment);
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-center gap-2 p-2 bg-slate-800 light:bg-slate-50 rounded border border-slate-700 light:border-slate-200 group"
-                    >
-                      <button
-                        onClick={() => setPreviewAttachment(attachment)}
-                        className="flex-1 flex items-center gap-2 min-w-0 hover:text-cyan-400 light:hover:text-cyan-600 transition-colors"
-                        title={t('clickToPreview')}
-                      >
-                        <Icon className="w-4 h-4 text-slate-400 light:text-slate-500 flex-shrink-0" />
-                        <span className="text-sm text-slate-300 light:text-slate-700 truncate">
-                          {attachment.name}
-                        </span>
-                        <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600 flex-shrink-0" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeAttachment(i);
-                        }}
-                        className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors flex-shrink-0"
-                        title={t('deleteAttachment')}
-                      >
-                        <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileSelect}
-                accept={getFileInputAccept()}
-                multiple
-                className="hidden"
-              />
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={isUploading}
-                onClick={() => {
-                  fileInputRef.current?.click();
-                }}
-              >
-                <Paperclip className="w-4 h-4" />
-                <span>{t('addAttachment')}</span>
-              </Button>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                {t('expectedOutputOptional')}
-              </label>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => openExpandModal('expected')}
-                  className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
-                  title={t('expandEdit')}
-                >
-                  <Maximize2 className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewExpected(!previewExpected)}
-                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
-                    previewExpected
-                      ? 'bg-cyan-500/20 text-cyan-400 light:text-cyan-600'
-                      : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
-                  }`}
-                >
-                  {previewExpected ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  {previewExpected ? tCommon('edit') : t('preview')}
-                </button>
-              </div>
-            </div>
-            {previewExpected ? (
-              <div className="w-full min-h-[56px] px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-600 light:border-slate-300 rounded-lg text-sm overflow-auto max-h-48">
-                {testCase.expectedOutput ? (
-                  <MarkdownRenderer content={testCase.expectedOutput} />
-                ) : (
-                  <span className="text-slate-500 light:text-slate-400">{t('noContent')}</span>
-                )}
-              </div>
-            ) : (
-              <LocalInput
-                as="textarea"
-                value={testCase.expectedOutput || ''}
-                onChange={(value) => handleUpdate({ expectedOutput: value || null })}
-                placeholder={t('expectedOutputPlaceholder')}
-                rows={2}
-                className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm font-mono min-h-[56px]"
-              />
-            )}
-          </div>
-
-          <div>
+          <div className="rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 p-3">
             <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-2">
               {t('notesOptional')}
             </label>
@@ -483,14 +375,13 @@ export function TestCaseEditor({
               value={testCase.notes || ''}
               onChange={(value) => handleUpdate({ notes: value || null })}
               placeholder={t('notesPlaceholder')}
-              rows={2}
-              className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm min-h-[56px]"
+              rows={4}
+              className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm min-h-[96px]"
             />
             <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
               {t('notesHint')}
             </p>
           </div>
-
         </div>
       )}
 
@@ -532,23 +423,13 @@ export function TestCaseEditor({
               className="w-full h-[60vh] px-4 py-3 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
             />
           )}
-          <div className="flex justify-end gap-3">
-            <Button variant="ghost" onClick={() => { setExpandedField(null); setExpandedValue(''); setExpandedPreview(false); }}>
-              {tCommon('cancel')}
-            </Button>
-            <Button onClick={closeExpandModal}>
-              {tCommon('save')}
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={closeExpandModal}>
+              {tCommon('close')}
             </Button>
           </div>
         </div>
       </Modal>
-
-      {/* Attachment Preview Modal */}
-      <AttachmentModal
-        attachment={previewAttachment}
-        isOpen={!!previewAttachment}
-        onClose={() => setPreviewAttachment(null)}
-      />
     </div>
   );
 }

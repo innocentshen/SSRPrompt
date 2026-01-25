@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users, Shield, Trash2, Search } from 'lucide-react';
 import { Button, useToast } from '../ui';
@@ -33,11 +33,7 @@ export function UserManagement() {
     });
   }, [users, query, statusFilter]);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [usersData, rolesData] = await Promise.all([
         usersApi.list(),
@@ -51,7 +47,11 @@ export function UserManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleStatusChange = async (userId: string, status: string) => {
     try {

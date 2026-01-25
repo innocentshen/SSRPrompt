@@ -37,7 +37,7 @@ function EditableCriterion({
     setLocalDescription(criterion.description || '');
     setLocalPrompt(criterion.prompt || '');
     setLocalWeight(String(criterion.weight));
-  }, [criterion.id]);
+  }, [criterion.id, criterion.name, criterion.description, criterion.prompt, criterion.weight]);
 
   const handleBlur = (field: 'name' | 'description' | 'prompt' | 'weight') => {
     let hasChanged = false;

@@ -3,7 +3,6 @@ import { z } from 'zod';
 
 function isValidUrl(value: string): boolean {
   try {
-    // eslint-disable-next-line no-new
     new URL(value);
     return true;
   } catch {
@@ -161,7 +160,7 @@ function validateEnv(): Env {
     return envSchema.parse(process.env);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      console.error('❌ Environment validation failed:');
+      console.error('Environment validation failed:');
       error.errors.forEach((err) => {
         console.error(`  - ${err.path.join('.')}: ${err.message}`);
       });
@@ -173,6 +172,6 @@ function validateEnv(): Env {
 
 export const env = validateEnv();
 
-console.log('✅ Environment validated successfully');
+console.log('Environment validated successfully');
 console.log(`   NODE_ENV: ${env.NODE_ENV}`);
 console.log(`   PORT: ${env.PORT}`);

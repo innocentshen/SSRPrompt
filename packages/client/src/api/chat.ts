@@ -31,6 +31,7 @@ export interface ChatCompletionOptions {
   modelId: string;
   messages: ChatMessage[];
   promptId?: string;
+  chatRunId?: string;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;

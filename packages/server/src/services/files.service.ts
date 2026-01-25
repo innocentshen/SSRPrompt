@@ -1,10 +1,10 @@
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
-import { Readable } from 'node:stream';
 import { AppError, NotFoundError } from '@ssrprompt/shared';
 import type { StoredFile } from '@prisma/client';
 import { filesRepository } from '../repositories/files.repository.js';
 import { getS3Client } from '../config/s3.js';
+import { toNodeReadable } from '../utils/stream.js';
 
 export type UploadFileInput = {
   originalName: string;
@@ -99,10 +99,7 @@ export class FilesService {
       throw new AppError(500, 'INTERNAL_ERROR', 'Missing file body from storage');
     }
 
-    const stream =
-      typeof (body as any).pipe === 'function'
-        ? (body as Readable)
-        : Readable.fromWeb(body as any);
+    const stream = toNodeReadable(body);
 
     const chunks: Buffer[] = [];
     for await (const chunk of stream) {

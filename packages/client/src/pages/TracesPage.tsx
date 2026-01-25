@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Eye,
@@ -14,18 +14,16 @@ import {
   Search,
   Trash2,
   History,
-  Copy,
-  Check,
-  Maximize2,
   Paperclip,
   Loader2,
 } from 'lucide-react';
-import { Button, Badge, Select, Modal, Input, useToast, MarkdownRenderer } from '../components/ui';
+import { Button, Badge, Select, Modal, Input, useToast } from '../components/ui';
 import { tracesApi, promptsApi, modelsApi } from '../api';
 import type { Trace, TraceListItem, PromptListItem, Model, OcrProvider } from '../types';
 import type { FileAttachment } from '../lib/ai-service';
 import { AttachmentList } from '../components/Prompt/AttachmentPreview';
 import { AttachmentModal } from '../components/Prompt/AttachmentModal';
+import { ChatTranscript, type ChatTranscriptMessage } from '../components/Prompt/ChatTranscript';
 import { OcrResultsPanel } from '../components/Prompt/OcrResultsPanel';
 
 // API returns camelCase, use directly
@@ -39,10 +37,22 @@ interface PromptStats {
   errorCount: number;
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const stripOcrFileBlocks = (content: string, fileNames: string[]) => {
+  if (!content || fileNames.length === 0) return content;
+  const escaped = fileNames.map(escapeRegExp).join('|');
+  if (!escaped) return content;
+  const pattern = new RegExp(`\\[File: (?:${escaped})\\]\\r?\\n\`\`\`[\\s\\S]*?\`\`\`\\r?\\n?`, 'g');
+  const cleaned = content.replace(pattern, '').replace(/\n{3,}/g, '\n\n').trim();
+  return cleaned;
+};
+
 export function TracesPage() {
   const { showToast } = useToast();
   const { t } = useTranslation('traces');
   const { t: tCommon } = useTranslation('common');
+  const { t: tPrompts } = useTranslation('prompts');
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [prompts, setPrompts] = useState<PromptListItem[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -53,9 +63,6 @@ export function TracesPage() {
   const [loading, setLoading] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [copiedField, setCopiedField] = useState<'input' | 'output' | null>(null);
-  const [expandedField, setExpandedField] = useState<'input' | 'output' | null>(null);
-  const [expandedContent, setExpandedContent] = useState('');
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
 
@@ -71,11 +78,18 @@ export function TracesPage() {
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const formatParamValue = (value: unknown) => {
+    if (value === undefined || value === null) return '-';
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [tracesRes, promptsRes, modelsRes] = await Promise.all([
@@ -92,7 +106,11 @@ export function TracesPage() {
       showToast('error', t('loadFailed'));
     }
     setLoading(false);
-  };
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleDeleteTraces = async () => {
     if (!selectedPromptId) return;
@@ -124,23 +142,12 @@ export function TracesPage() {
     }
   };
 
-  const getPromptName = (id: string | null) => prompts.find((p) => p.id === id)?.name || t('notLinked');
-  const getModelName = (id: string | null) => models.find((m) => m.id === id)?.name || '-';
+  const getPromptName = useCallback(
+    (id: string | null) => prompts.find((p) => p.id === id)?.name || t('notLinked'),
+    [prompts, t]
+  );
+  const getModelName = useCallback((id: string | null) => models.find((m) => m.id === id)?.name || '-', [models]);
 
-  const handleCopy = async (text: string, field: 'input' | 'output') => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch {
-      showToast('error', t('copyFailed'));
-    }
-  };
-
-  const handleExpand = (content: string, field: 'input' | 'output') => {
-    setExpandedContent(content);
-    setExpandedField(field);
-  };
 
   // 检查 trace 是否有附件
   const hasAttachments = (trace: Trace): boolean => {
@@ -191,6 +198,82 @@ export function TracesPage() {
     const filtered = ocrFileIds.length > 0 ? attachments.filter((a) => ocrFileIds.includes(a.fileId)) : attachments;
     return { hasOcr, provider: metadata?.ocrProvider as OcrProvider | undefined, attachments: filtered };
   }, [selectedTrace]);
+
+  const selectedTraceParameters = useMemo(() => {
+    if (!selectedTrace) return [];
+    const metadata = selectedTrace.metadata as Record<string, unknown> | null;
+    const candidate =
+      (metadata?.modelParameters as Record<string, unknown> | undefined) ||
+      (metadata?.model_parameters as Record<string, unknown> | undefined) ||
+      (metadata?.parameters as Record<string, unknown> | undefined);
+
+    if (!candidate || typeof candidate !== 'object') return [];
+
+    return [
+      { label: tPrompts('temperature'), value: candidate.temperature },
+      { label: tPrompts('topP'), value: candidate.top_p ?? candidate.topP },
+      { label: tPrompts('maxTokens'), value: candidate.max_tokens ?? candidate.maxTokens },
+      { label: tPrompts('frequencyPenalty'), value: candidate.frequency_penalty ?? candidate.frequencyPenalty },
+      { label: tPrompts('presencePenalty'), value: candidate.presence_penalty ?? candidate.presencePenalty },
+    ].filter((item) => item.value !== undefined && item.value !== null);
+  }, [selectedTrace, tPrompts]);
+
+  const displayInput = useMemo(() => {
+    if (!selectedTrace) return '';
+    if (!selectedTraceOcr.hasOcr || selectedTraceOcr.attachments.length === 0) {
+      return selectedTrace.input;
+    }
+    const fileNames = selectedTraceOcr.attachments.map((attachment) => attachment.name).filter(Boolean);
+    return stripOcrFileBlocks(selectedTrace.input, fileNames);
+  }, [selectedTrace, selectedTraceOcr]);
+
+  const transcriptMessages = useMemo(() => {
+    if (!selectedTrace) return null;
+
+    const metadata = selectedTrace.metadata as Record<string, unknown> | null;
+    const rawMessages = (metadata?.messages as unknown) ?? null;
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) return null;
+
+    const fileNames =
+      selectedTraceOcr.hasOcr && selectedTraceOcr.attachments.length > 0
+        ? selectedTraceOcr.attachments.map((attachment) => attachment.name).filter(Boolean)
+        : [];
+    const normalizeContent = (content: string) => (fileNames.length > 0 ? stripOcrFileBlocks(content, fileNames) : content);
+
+    const base = rawMessages
+      .map((item, idx): ChatTranscriptMessage | null => {
+        if (!item || typeof item !== 'object') return null;
+        const record = item as Record<string, unknown>;
+        const roleValue = record.role;
+        if (roleValue !== 'system' && roleValue !== 'user' && roleValue !== 'assistant') return null;
+        const role = roleValue as ChatTranscriptMessage['role'];
+        const content = typeof record.content === 'string' ? normalizeContent(record.content) : '';
+        return { id: `${selectedTrace.id}_ctx_${idx}`, role, content };
+      })
+      .filter((message): message is ChatTranscriptMessage => message !== null);
+
+    if (base.length === 0) return null;
+
+    const messages: ChatTranscriptMessage[] = base.slice();
+    const attachments = selectedTrace.attachments ?? undefined;
+    if (attachments && attachments.length > 0) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          messages[i] = { ...messages[i], attachments };
+          break;
+        }
+      }
+    }
+
+    messages.push({
+      id: `${selectedTrace.id}_assistant`,
+      role: 'assistant',
+      content: selectedTrace.output || '',
+      thinking: selectedTrace.thinkingContent || undefined,
+    });
+
+    return messages;
+  }, [selectedTrace, selectedTraceOcr]);
 
   // Group traces by prompt and calculate stats
   const promptStatsList = useMemo(() => {
@@ -244,7 +327,7 @@ export function TracesPage() {
       .sort((a, b) => b.count - a.count);
 
     return [allStats, ...otherStats];
-  }, [traces, prompts]);
+  }, [traces, getPromptName, t]);
 
   // Filter prompts by search query
   const filteredPromptStats = useMemo(() => {
@@ -285,7 +368,7 @@ export function TracesPage() {
       avgLatency: 0,
       errorCount: 0,
     };
-  }, [selectedPromptId, promptStatsList]);
+  }, [selectedPromptId, promptStatsList, getPromptName]);
 
   const errorRate = currentStats.count
     ? ((currentStats.errorCount / currentStats.count) * 100).toFixed(1)
@@ -504,152 +587,138 @@ export function TracesPage() {
         isOpen={!!selectedTrace}
         onClose={() => setSelectedTrace(null)}
         title={t("traceDetail")}
-        size="lg"
+        size="wide"
       >
         {selectedTrace && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("status")}</p>
-                <Badge variant={selectedTrace.status === 'success' ? 'success' : 'error'}>
-                  {selectedTrace.status === 'success' ? t('success') : t('failed')}
-                </Badge>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("latency")}</p>
-                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{selectedTrace.latencyMs}ms</p>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("input")} Tokens</p>
-                <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{selectedTrace.tokensInput}</p>
-              </div>
-              <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("output")} Tokens</p>
-                <p className="text-sm font-medium text-teal-400 light:text-teal-600">{selectedTrace.tokensOutput}</p>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-sm font-medium text-slate-300 light:text-slate-700 mb-2">Prompt</h4>
-              <p className="text-sm text-slate-400 light:text-slate-600">
-                {getPromptName(selectedTrace.promptId)}
-              </p>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t("input")}</h4>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleExpand(selectedTrace.input, 'input')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={t("enlarge")}
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleCopy(selectedTrace.input, 'input')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={t("copy")}
-                  >
-                    {copiedField === 'input' ? (
-                      <Check className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
+          <div className="h-[72vh] overflow-hidden">
+            <div className="h-full grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <div className="h-full overflow-y-auto space-y-4 pr-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("status")}</p>
+                  <Badge variant={selectedTrace.status === 'success' ? 'success' : 'error'}>
+                    {selectedTrace.status === 'success' ? t('success') : t('failed')}
+                  </Badge>
+                </div>
+                <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("latency")}</p>
+                  <p className="text-sm font-medium text-slate-200 light:text-slate-800">{selectedTrace.latencyMs}ms</p>
+                </div>
+                <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("input")} Tokens</p>
+                  <p className="text-sm font-medium text-cyan-400 light:text-cyan-600">{selectedTrace.tokensInput}</p>
+                </div>
+                <div className="p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("output")} Tokens</p>
+                  <p className="text-sm font-medium text-teal-400 light:text-teal-600">{selectedTrace.tokensOutput}</p>
                 </div>
               </div>
-              <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
-                <MarkdownRenderer content={selectedTrace.input} />
-              </div>
-            </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">{t("output")}</h4>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleExpand(selectedTrace.output || '', 'output')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={t("enlarge")}
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleCopy(selectedTrace.output || '', 'output')}
-                    className="p-1.5 rounded hover:bg-slate-700 light:hover:bg-slate-200 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-slate-700 transition-colors"
-                    title={t("copy")}
-                  >
-                    {copiedField === 'output' ? (
-                      <Check className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
+              <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("prompt")}</p>
+                <p className="text-sm text-slate-200 light:text-slate-800">{getPromptName(selectedTrace.promptId)}</p>
               </div>
-              <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-40 overflow-y-auto">
-                {selectedTrace.output ? (
-                  <MarkdownRenderer content={selectedTrace.output} />
-                ) : (
-                  <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
-                )}
-              </div>
-            </div>
 
-            {hasAttachments(selectedTrace) && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Paperclip className="w-4 h-4 text-slate-400" />
-                  <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
-                    {t('attachments')} ({getAttachmentCount(selectedTrace)})
-                  </h4>
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
-                  {attachmentsLoading ? (
-                    <div className="flex items-center gap-2 text-slate-400 light:text-slate-500">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="text-sm">{t('loadingAttachments')}</span>
-                    </div>
-                  ) : selectedTrace.attachments && selectedTrace.attachments.length > 0 ? (
-                    <AttachmentList
-                      attachments={selectedTrace.attachments as FileAttachment[]}
-                      size="md"
-                      maxVisible={10}
-                      onPreview={setPreviewAttachment}
-                    />
+              <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("model")}</p>
+                <p className="text-sm text-slate-200 light:text-slate-800">{getModelName(selectedTrace.modelId)}</p>
+              </div>
+
+              <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{tPrompts("modelParameters")}</p>
+                <div className="mt-2 space-y-1 text-xs">
+                  {selectedTraceParameters.length > 0 ? (
+                    selectedTraceParameters.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-3 text-slate-300 light:text-slate-700">
+                        <span className="text-slate-500 light:text-slate-600">{item.label}</span>
+                        <span className="text-slate-200 light:text-slate-800">{formatParamValue(item.value)}</span>
+                      </div>
+                    ))
                   ) : (
-                    <div className="flex items-center gap-2 text-slate-500 light:text-slate-400">
-                      <span className="text-sm">{t('attachmentLoadFailed')}</span>
-                    </div>
+                    <span className="text-slate-500 light:text-slate-600">{t('empty')}</span>
                   )}
                 </div>
               </div>
-            )}
 
-            {selectedTraceOcr.hasOcr && selectedTraceOcr.attachments.length > 0 && (
-              <OcrResultsPanel
-                attachments={selectedTraceOcr.attachments}
-                provider={selectedTraceOcr.provider}
-              />
-            )}
-
-            {selectedTrace.errorMessage && (
-              <div>
-                <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{tCommon("error")}</h4>
-                <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
-                  <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
-                    {selectedTrace.errorMessage}
-                  </pre>
+              {hasAttachments(selectedTrace) && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Paperclip className="w-4 h-4 text-slate-400" />
+                    <h4 className="text-sm font-medium text-slate-300 light:text-slate-700">
+                      {t('attachments')} ({getAttachmentCount(selectedTrace)})
+                    </h4>
+                  </div>
+                  <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg min-h-[60px]">
+                    {attachmentsLoading ? (
+                      <div className="flex items-center gap-2 text-slate-400 light:text-slate-500">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-sm">{t('loadingAttachments')}</span>
+                      </div>
+                    ) : selectedTrace.attachments && selectedTrace.attachments.length > 0 ? (
+                      <AttachmentList
+                        attachments={selectedTrace.attachments as FileAttachment[]}
+                        size="md"
+                        maxVisible={10}
+                        onPreview={setPreviewAttachment}
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 text-slate-500 light:text-slate-400">
+                        <span className="text-sm">{t('attachmentLoadFailed')}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="pt-4 border-t border-slate-700 light:border-slate-200">
-              <p className="text-xs text-slate-500 light:text-slate-600">
-                {t('createdAt')}: {formatDate(selectedTrace.createdAt)}
-              </p>
+              {selectedTraceOcr.hasOcr && selectedTraceOcr.attachments.length > 0 && (
+                <OcrResultsPanel
+                  attachments={selectedTraceOcr.attachments}
+                  provider={selectedTraceOcr.provider}
+                  defaultOpen={true}
+                  heightClassName="h-[260px]"
+                />
+              )}
+
+              {selectedTrace.errorMessage && (
+                <div>
+                  <h4 className="text-sm font-medium text-rose-400 light:text-rose-600 mb-2">{tCommon("error")}</h4>
+                  <div className="p-4 bg-rose-500/10 light:bg-rose-50 border border-rose-500/30 light:border-rose-200 rounded-lg">
+                    <pre className="text-sm text-rose-300 light:text-rose-700 whitespace-pre-wrap font-mono">
+                      {selectedTrace.errorMessage}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-slate-700 light:border-slate-200">
+                <p className="text-xs text-slate-500 light:text-slate-600">
+                  {t('createdAt')}: {formatDate(selectedTrace.createdAt)}
+                </p>
+              </div>
+            </div>
+
+            <div className="h-full min-h-0 p-4 bg-slate-800/30 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg overflow-y-auto">
+              <ChatTranscript
+                messages={
+                  transcriptMessages ?? [
+                    {
+                      id: `${selectedTrace.id}_user`,
+                      role: 'user',
+                      content: displayInput,
+                      attachments: selectedTrace.attachments ?? undefined,
+                    },
+                    {
+                      id: `${selectedTrace.id}_assistant`,
+                      role: 'assistant',
+                      content: selectedTrace.output || '',
+                      thinking: selectedTrace.thinkingContent || undefined,
+                    },
+                  ]
+                }
+                assistantLabel={getModelName(selectedTrace.modelId)}
+                onPreviewAttachment={setPreviewAttachment}
+              />
+            </div>
             </div>
           </div>
         )}
@@ -677,45 +746,6 @@ export function TracesPage() {
               <Trash2 className="w-4 h-4" />
               {t('confirmDeleteBtn')}
             </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Expanded content modal */}
-      <Modal
-        isOpen={!!expandedField}
-        onClose={() => {
-          setExpandedField(null);
-          setExpandedContent('');
-        }}
-        title={expandedField === 'input' ? t('inputContent') : t('outputContent')}
-        size="xl"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-end">
-            <button
-              onClick={() => handleCopy(expandedContent, expandedField!)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-700 light:bg-slate-200 text-slate-300 light:text-slate-700 hover:bg-slate-600 light:hover:bg-slate-300 transition-colors text-sm"
-            >
-              {copiedField === expandedField ? (
-                <>
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span>{tCommon("copied")}</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>{t("copy")}</span>
-                </>
-              )}
-            </button>
-          </div>
-          <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-[60vh] overflow-y-auto">
-            {expandedContent ? (
-              <MarkdownRenderer content={expandedContent} />
-            ) : (
-              <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
-            )}
           </div>
         </div>
       </Modal>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
@@ -120,10 +120,6 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
   const parameterPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadModels();
-  }, []);
-
-  useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
     };
@@ -142,7 +138,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showParameterPanel]);
 
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     try {
       const [modelsData, providersData] = await Promise.all([
         modelsApi.list(),
@@ -181,7 +177,11 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
 
       showToast('error', t('loadFailed'));
     }
-  };
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
 
   const getModelInfo = (modelId: string) => {
     const model = models.find((m) => m.id === modelId);
@@ -200,6 +200,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
   }, []);
 
   const currentModel = useMemo(() => models.find((m) => m.id === selectedModelId) || null, [models, selectedModelId]);
+  const supportsVision = currentModel?.supportsVision ?? false;
   const [fileProcessing, setFileProcessing] = useState<'auto' | 'vision' | 'ocr' | 'none'>('auto');
   const [ocrProviderOverride, setOcrProviderOverride] = useState<OcrProvider | ''>('');
 
@@ -207,8 +208,8 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     if (fileProcessing === 'none') return 'none';
     if (fileProcessing === 'vision') return 'vision';
     if (fileProcessing === 'ocr') return 'ocr';
-    return currentModel?.supportsVision ? 'vision' : 'ocr';
-  }, [fileProcessing, currentModel?.supportsVision]);
+    return supportsVision ? 'vision' : 'ocr';
+  }, [fileProcessing, supportsVision]);
 
   const hasBinaryAttachments = useMemo(() => (
     attachedFiles.some((file) => file.type.startsWith('image/') || file.type === 'application/pdf')
@@ -222,10 +223,10 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
   const llmActive = isLoading && processingStage === 'llm';
 
   useEffect(() => {
-    if (fileProcessing === 'vision' && currentModel && !currentModel.supportsVision) {
+    if (fileProcessing === 'vision' && !supportsVision) {
       setFileProcessing('auto');
     }
-  }, [fileProcessing, currentModel?.supportsVision]);
+  }, [fileProcessing, supportsVision]);
 
   const handleSelectTemplate = (template: Template) => {
     setSelectedTemplate(template);

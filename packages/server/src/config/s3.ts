@@ -49,7 +49,9 @@ export async function checkS3Connection(options?: { timeoutMs?: number }): Promi
     await client.send(new HeadBucketCommand({ Bucket: bucket }), { abortSignal: controller.signal });
     console.log(`[S3] OK (bucket: ${bucket}, endpoint: ${endpoint})`);
   } catch (error) {
-    const name = (error as any)?.name ? String((error as any).name) : 'S3Error';
+    const errorRecord =
+      error && typeof error === 'object' ? (error as { name?: unknown }) : null;
+    const name = errorRecord?.name ? String(errorRecord.name) : 'S3Error';
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[S3] ERROR (bucket: ${bucket}, endpoint: ${endpoint}): ${name}: ${message}`);
   } finally {

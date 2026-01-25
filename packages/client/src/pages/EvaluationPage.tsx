@@ -201,6 +201,11 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+function formatMsAsSeconds(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || Number.isNaN(ms)) return '-';
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 type TabType = 'testcases' | 'criteria' | 'history' | 'results';
 
 // 缓存数据类型（不包含附件文件本体，仅 fileId 引用，避免内存过大）
@@ -257,7 +262,7 @@ export function EvaluationPage() {
   const [runs, setRuns] = useState<EvaluationRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<EvaluationRun | null>(null);
   const [runningCount, setRunningCount] = useState(0);
-  const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(null);
+  const runningTestCaseId: string | null = null;
   const [retryingOutputTestCaseId, setRetryingOutputTestCaseId] = useState<string | null>(null);
   const [retryingAiEvaluationTestCaseId, setRetryingAiEvaluationTestCaseId] = useState<string | null>(null);
   const [retryingAllScores, setRetryingAllScores] = useState(false);
@@ -300,7 +305,7 @@ export function EvaluationPage() {
 
   const hasEvaluationFilter = evaluationQuery.trim() !== '' || evaluationStatusFilter !== 'all';
 
-  const selectEvaluation = (evaluation: EvaluationWithRelations | null) => {
+  const selectEvaluation = useCallback((evaluation: EvaluationWithRelations | null) => {
     setSelectedEvaluation(evaluation);
 
     if (!evaluation) {
@@ -332,7 +337,7 @@ export function EvaluationPage() {
     setResults([]);
     setRuns([]);
     setSelectedRun(null);
-  };
+  }, []);
 
   // 计算当前评测模型的文件上传能力
   const fileUploadCapabilities = useMemo(() => {
@@ -360,10 +365,6 @@ export function EvaluationPage() {
       supportsVision: model?.supportsVision ?? true,
     };
   }, [selectedEvaluation?.modelId, models, providers]);
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   // 监听缓存失效事件，当其他页面更新数据时刷新
   useEffect(() => {
@@ -562,10 +563,14 @@ export function EvaluationPage() {
       return selectedRun;
     }
     return runs.find((r) => r.status === 'running' || r.status === 'pending') || null;
-  }, [selectedRun?.id, selectedRun?.status, runs]);
+  }, [selectedRun, runs]);
+
+  const activeRunId = activeRun?.id ?? null;
+  const activeRunStatus = activeRun?.status ?? null;
+  const selectedRunId = selectedRun?.id ?? null;
 
   useEffect(() => {
-    if (!selectedEvaluation || !activeRun) {
+    if (!selectedEvaluationId || !activeRunId) {
       if (runPollerRef.current) {
         clearInterval(runPollerRef.current);
         runPollerRef.current = null;
@@ -573,9 +578,9 @@ export function EvaluationPage() {
       return;
     }
 
-    const evalId = selectedEvaluation.id;
-    const pollRunId = activeRun.id;
-    const shouldUpdateResults = selectedRun?.id === pollRunId;
+    const evalId = selectedEvaluationId;
+    const pollRunId = activeRunId;
+    const shouldUpdateResults = selectedRunId === pollRunId;
     let canceled = false;
     let polling = false;
 
@@ -683,7 +688,7 @@ export function EvaluationPage() {
         runPollerRef.current = null;
       }
     };
-  }, [selectedEvaluation?.id, activeRun?.id, activeRun?.status, selectedRun?.id]);
+  }, [activeRunId, activeRunStatus, selectedEvaluationId, selectedRunId]);
 
   // Keep the selected test case IDs in sync with the loaded test cases.
   useEffect(() => {
@@ -787,9 +792,9 @@ export function EvaluationPage() {
     } else {
       setEvalModelConfig(DEFAULT_PROMPT_CONFIG);
     }
-  }, [selectedEvaluationId]);
+  }, [selectedEvaluation?.config?.model_parameters]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     // 检查是否有 prompts 更新（精确更新缓存，而不是全量刷新）
     if (cacheEvents.hasPendingUpdates('prompts')) {
       const updatedPrompts = cacheEvents.consumePendingUpdates('prompts') as Prompt[];
@@ -827,7 +832,7 @@ export function EvaluationPage() {
       setPromptGroups(listCache.promptGroups);
       setModels(listCache.models);
       setProviders(listCache.providers);
-      if (listCache.evaluations.length > 0 && !selectedEvaluation) {
+      if (listCache.evaluations.length > 0 && !selectedEvaluationIdRef.current) {
         selectEvaluation(listCache.evaluations[0]);
       }
       setListLoading(false);
@@ -882,7 +887,7 @@ export function EvaluationPage() {
       setModels(loadedModels);
       setProviders(loadedProviders);
 
-      if (loadedEvaluations.length > 0 && !selectedEvaluation) {
+      if (loadedEvaluations.length > 0 && !selectedEvaluationIdRef.current) {
         selectEvaluation(loadedEvaluations[0]);
       }
     } catch (error) {
@@ -890,7 +895,11 @@ export function EvaluationPage() {
     } finally {
       setListLoading(false);
     }
-  };
+  }, [selectEvaluation]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // 更新缓存的辅助函数
   const updateEvaluationCache = (evaluationId: string, updates: Partial<EvaluationCacheData>) => {
@@ -1055,8 +1064,8 @@ export function EvaluationPage() {
     }
   };
 
-  const handleAddTestCase = async () => {
-    if (!selectedEvaluation) return;
+  const handleAddTestCase = async (): Promise<TestCase | null> => {
+    if (!selectedEvaluation) return null;
 
     try {
       // 先调用 API 创建测试用例
@@ -1073,10 +1082,12 @@ export function EvaluationPage() {
       const newTestCases = [...testCases, savedTestCase];
       setTestCases(newTestCases);
       updateEvaluationCache(selectedEvaluation.id, { testCases: newTestCases });
+      return savedTestCase;
     } catch (e) {
       console.error('Failed to add test case:', e);
       showToast('error', t('updateFailed'));
     }
+    return null;
   };
 
   const handleUpdateTestCase = async (testCase: TestCase) => {
@@ -1120,6 +1131,57 @@ export function EvaluationPage() {
       .map((tc, idx) => ({ ...tc, orderIndex: idx }));
     setTestCases(newTestCases);
     updateEvaluationCache(selectedEvaluation.id, { testCases: newTestCases });
+  };
+
+  const handleCopyTestCase = async (testCase: TestCase): Promise<TestCase | null> => {
+    if (!selectedEvaluation) return null;
+
+    const baseName = testCase.name?.trim();
+    const name = baseName ? `${baseName} ${t('copy')}` : t('testCaseNum', { num: testCases.length + 1 });
+
+    try {
+      const savedTestCase = await testCasesApi.create(selectedEvaluation.id, {
+        name,
+        inputText: testCase.inputText,
+        inputVariables: testCase.inputVariables,
+        attachments: testCase.attachments,
+        expectedOutput: testCase.expectedOutput ?? undefined,
+        notes: testCase.notes ?? undefined,
+        orderIndex: testCases.length,
+      });
+
+      const newTestCases = [...testCases, savedTestCase];
+      setTestCases(newTestCases);
+      updateEvaluationCache(selectedEvaluation.id, { testCases: newTestCases });
+      return savedTestCase;
+    } catch (e) {
+      console.error('Failed to copy test case:', e);
+      showToast('error', t('copyTestCaseFailed'));
+      return null;
+    }
+  };
+
+  const handleDeleteSelectedTestCases = async (ids: string[]) => {
+    if (!selectedEvaluation || ids.length === 0) return;
+
+    const results = await Promise.allSettled(ids.map((id) => testCasesApi.delete(id)));
+    const deletedIds = ids.filter((_, index) => results[index].status === 'fulfilled');
+
+    if (deletedIds.length === 0) {
+      showToast('error', t('deleteFailed'));
+      return;
+    }
+
+    const newTestCases = testCases
+      .filter((testCase) => !deletedIds.includes(testCase.id))
+      .map((testCase, idx) => ({ ...testCase, orderIndex: idx }));
+    setTestCases(newTestCases);
+    updateEvaluationCache(selectedEvaluation.id, { testCases: newTestCases });
+    setSelectedTestCaseIds(new Set());
+
+    if (deletedIds.length < ids.length) {
+      showToast('error', t('deleteFailed'));
+    }
   };
 
   const handleAddCriterion = async (
@@ -1475,359 +1537,6 @@ export function EvaluationPage() {
       updateListCache({ evaluations: next });
       return next;
     });
-  };
-
-  const handleRunSingleTestCase = async (testCase: TestCase) => {
-    if (!selectedEvaluation) return;
-    if (!selectedEvaluation.modelId) {
-      showToast('error', t('selectModelFirst'));
-      return;
-    }
-
-    const model = models.find((m) => m.id === selectedEvaluation.modelId);
-    const provider = providers.find((p) => p.id === model?.providerId);
-    const prompt = await ensurePromptDetail(selectedEvaluation.promptId);
-
-    if (!model || !provider) {
-      showToast('error', t('modelOrProviderNotFound'));
-      return;
-    }
-
-    const evalId = selectedEvaluation.id;
-    const evalConfig = selectedEvaluation.config;
-    const judgeModelId = selectedEvaluation.judgeModelId;
-    const enabledCriteria = criteria.filter((c) => c.enabled);
-    // 获取当前的模型参数
-    const modelParams = resolveModelParameters(evalConfig, prompt);
-
-    setRunningTestCaseId(testCase.id);
-
-    // 创建执行记录
-    let runData: EvaluationRun;
-    try {
-      runData = await runsApi.create(evalId, {
-        modelParameters: modelParams ? modelParams as Record<string, unknown> : undefined,
-        testCaseIds: [testCase.id],
-      });
-    } catch {
-      showToast('error', t('createExecutionRecordFailed'));
-      setRunningTestCaseId(null);
-      return;
-    }
-
-    const currentRun: EvaluationRun = runData.status === 'running'
-      ? runData
-      : { ...runData, status: 'running' as EvaluationStatus };
-    // 更新状态并同步更新缓存
-    setRuns(prev => {
-      const newRuns = [currentRun, ...prev];
-      const cached = evaluationCache.get(evalId);
-      if (cached) {
-        evaluationCache.set(evalId, { ...cached, runs: newRuns });
-      }
-      return newRuns;
-    });
-    setSelectedRun(currentRun);
-    setResults([]);
-    updateEvaluationCache(evalId, { results: [], selectedRunId: currentRun.id });
-
-    const abortController: RunAbortController = {
-      aborted: false,
-      controller: chatApi.createAbortController(),
-    };
-    abortControllersRef.current.set(currentRun.id, abortController);
-
-    // Ensure backend reflects the active running state (older servers default to pending)
-    if (runData.status !== 'running') {
-      try {
-        await runsApi.update(currentRun.id, { status: 'running' });
-      } catch (e) {
-        console.error('Failed to update run status:', e);
-      }
-    }
-
-    // Mark evaluation as running (single test case run)
-    try {
-      await evaluationsApi.update(evalId, { status: 'running' });
-    } catch (e) {
-      console.error('Failed to update evaluation status:', e);
-    }
-    setSelectedEvaluation((prev) => (prev?.id === evalId ? { ...prev, status: 'running' } : prev));
-    setEvaluations((prev) => {
-      const next = prev.map((e) =>
-        e.id === evalId ? { ...e, status: 'running' as EvaluationStatus } : e
-      );
-      updateListCache({ evaluations: next });
-      return next;
-    });
-
-    try {
-      const finalPrompt = buildFinalPromptForTestCase(testCase, prompt);
-
-      const files: FileAttachment[] = testCase.attachments || [];
-      const fileProcessing = evalConfig.file_processing || 'auto';
-      const includeFiles = fileProcessing !== 'none' && (fileProcessing !== 'vision' || model.supportsVision);
-
-      // Build user message content with attachments
-      let userContent: string | ContentPart[] = finalPrompt;
-      if (files.length > 0 && includeFiles) {
-        const contentParts: ContentPart[] = [
-          { type: 'text' as const, text: finalPrompt }
-        ];
-        for (const file of files) {
-          contentParts.push({
-            type: 'file_ref' as const,
-            file_ref: { fileId: file.fileId },
-          });
-        }
-        userContent = contentParts;
-      }
-
-      const aiResult = await chatApi.complete({
-        modelId: model.id,
-        messages: [{ role: 'user', content: userContent }],
-        temperature: modelParams?.temperature,
-        top_p: modelParams?.top_p,
-        max_tokens: modelParams?.max_tokens,
-        frequency_penalty: modelParams?.frequency_penalty,
-        presence_penalty: modelParams?.presence_penalty,
-        saveTrace: false,
-        isEvalCase: true,
-        fileProcessing,
-        ocrProvider: evalConfig.ocr_provider,
-      }, abortController.controller.signal);
-
-      const scores: Record<string, number> = {};
-      const aiFeedback: Record<string, string> = {};
-      let passed = true;
-
-      // AI 评判（与批量评测逻辑保持一致）
-      if (enabledCriteria.length > 0 && judgeModelId) {
-        const judgeModel = models.find((m) => m.id === judgeModelId);
-        const judgeProvider = providers.find((p) => p.id === judgeModel?.providerId);
-
-        if (judgeModel && judgeProvider) {
-          for (const criterion of enabledCriteria) {
-            try {
-              let evalPrompt = criterion.prompt || '';
-              evalPrompt = evalPrompt.replace(/{{input}}/g, testCase.inputText || '');
-              evalPrompt = evalPrompt.replace(/{{output}}/g, aiResult.content);
-              if (testCase.expectedOutput) {
-                evalPrompt = evalPrompt.replace(/{{#expected}}[\s\S]*?{{\/expected}}/g,
-                  evalPrompt.match(/{{#expected}}([\s\S]*?){{\/expected}}/)?.[1]?.replace(/{{expected}}/g, testCase.expectedOutput) || ''
-                );
-                evalPrompt = evalPrompt.replace(/{{expected}}/g, testCase.expectedOutput);
-              } else {
-                evalPrompt = evalPrompt.replace(/{{#expected}}[\s\S]*?{{\/expected}}/g, '');
-              }
-
-              const evalResponse = await chatApi.complete({
-                modelId: judgeModel.id,
-                messages: [{ role: 'user', content: evalPrompt }],
-                saveTrace: false,
-                isEvalCase: true,
-              }, abortController.controller.signal);
-
-              const jsonMatch = evalResponse.content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                const score = Math.min(1, Math.max(0, (parsed.score || 0) / 10));
-                scores[criterion.name] = score;
-                aiFeedback[criterion.name] = parsed.reason || '';
-              }
-            } catch (error) {
-              if (isAbortError(error) || abortController.controller.signal.aborted) {
-                throw error;
-              }
-              console.error('Judge error:', error);
-              scores[criterion.name] = 0;
-              aiFeedback[criterion.name] = t('evaluationFailed');
-            }
-          }
-
-          // 判断是否通过（使用加权平均，与批量评测一致）
-          const avgScore = Object.keys(scores).length > 0
-            ? Object.keys(scores).reduce((sum, name) => {
-                const criterion = enabledCriteria.find(c => c.name === name);
-                return sum + scores[name] * (criterion?.weight || 1);
-              }, 0) / enabledCriteria.reduce((sum, c) => sum + c.weight, 0)
-            : 1;
-          passed = avgScore >= (evalConfig?.pass_threshold || 0.6);
-        }
-      }
-
-      // 保存结果
-      const resultData = {
-        testCaseId: testCase.id,
-        modelOutput: aiResult.content,
-        scores,
-        aiFeedback: aiFeedback,
-        latencyMs: aiResult.latencyMs,
-        ocrLatencyMs: aiResult.ocrLatencyMs || 0,
-        tokensInput: aiResult.usage?.prompt_tokens || 0,
-        tokensOutput: aiResult.usage?.completion_tokens || 0,
-        passed,
-      };
-
-      let savedResult: TestCaseResult;
-      try {
-        savedResult = await runsApi.addResult(currentRun.id, resultData);
-      } catch (e) {
-        console.error('Failed to save result:', e);
-        throw new Error(t('saveResultFailed'));
-      }
-
-      const newResults = [savedResult];
-
-      // 计算总分
-      const overallScores: Record<string, number> = {};
-      for (const criterion of enabledCriteria) {
-        if (scores[criterion.name] !== undefined) {
-          overallScores[criterion.name] = scores[criterion.name];
-        }
-      }
-
-      const evalResults = {
-        passedCases: passed ? 1 : 0,
-        totalCases: 1,
-        completedCases: 1,
-        scores: overallScores,
-        llmTimeMs: aiResult.latencyMs,
-        ocrTimeMs: aiResult.ocrLatencyMs || 0,
-        summary: t('singleTestComplete') + ', ' + (passed ? t('passed') : t('notPassed')),
-      };
-
-      // Update run status to backend
-      try {
-        await runsApi.update(currentRun.id, {
-          status: 'completed',
-          results: evalResults,
-          totalTokensInput: aiResult.usage?.prompt_tokens || 0,
-          totalTokensOutput: aiResult.usage?.completion_tokens || 0,
-        });
-      } catch (e) {
-        console.error('Failed to update run:', e);
-      }
-
-      // Update local state
-      const completedRun: EvaluationRun = {
-        ...currentRun,
-        status: 'completed',
-        results: evalResults,
-        totalTokensInput: aiResult.usage?.prompt_tokens || 0,
-        totalTokensOutput: aiResult.usage?.completion_tokens || 0,
-        completedAt: new Date().toISOString(),
-      };
-
-      setRuns(prev => {
-        const newRuns = prev.map(r => r.id === currentRun.id ? completedRun : r);
-        const cached = evaluationCache.get(evalId);
-        if (cached) {
-          evaluationCache.set(evalId, { ...cached, runs: newRuns });
-        }
-        return newRuns;
-      });
-      setResults(newResults);
-      setSelectedRun(completedRun);
-      setActiveTab('results');
-
-      // Update evaluation status (single test case run)
-      try {
-        await evaluationsApi.update(evalId, {
-          status: 'completed',
-          results: evalResults,
-        });
-      } catch (e) {
-        console.error('Failed to update evaluation:', e);
-      }
-      setSelectedEvaluation((prev) =>
-        prev?.id === evalId ? { ...prev, status: 'completed', results: evalResults } : prev
-      );
-      setEvaluations((prev) => {
-        const next = prev.map((e) =>
-          e.id === evalId ? { ...e, status: 'completed' as EvaluationStatus, results: evalResults } : e
-        );
-        updateListCache({ evaluations: next });
-        return next;
-      });
-
-      abortControllersRef.current.delete(currentRun.id);
-      showToast('success', t('singleTestComplete') + ', ' + (passed ? t('passed') : t('notPassed')));
-    } catch (error) {
-      if (isAbortError(error) || abortController.aborted || abortController.controller.signal.aborted) {
-        abortControllersRef.current.delete(currentRun.id);
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : t('evaluationExecutionFailed');
-
-      // 保存错误结果
-      const errorResult = {
-        testCaseId: testCase.id,
-        modelOutput: '',
-        scores: {},
-        aiFeedback: {},
-        latencyMs: 0,
-        ocrLatencyMs: 0,
-        tokensInput: 0,
-        tokensOutput: 0,
-        passed: false,
-        errorMessage: errorMessage,
-      };
-
-      try {
-        await runsApi.addResult(currentRun.id, errorResult);
-      } catch (e) {
-        console.error('Failed to save error result:', e);
-      }
-
-      // Update run status to backend
-      try {
-        await runsApi.update(currentRun.id, {
-          status: 'failed',
-          errorMessage: errorMessage,
-        });
-      } catch (e) {
-        console.error('Failed to update run:', e);
-      }
-
-      const failedRun: EvaluationRun = {
-        ...currentRun,
-        status: 'failed',
-        errorMessage: errorMessage,
-        completedAt: new Date().toISOString(),
-      };
-
-      setRuns(prev => {
-        const newRuns = prev.map(r => r.id === currentRun.id ? failedRun : r);
-        const cached = evaluationCache.get(evalId);
-        if (cached) {
-          evaluationCache.set(evalId, { ...cached, runs: newRuns });
-        }
-        return newRuns;
-      });
-
-      // Update evaluation status (single test case run)
-      try {
-        await evaluationsApi.update(evalId, { status: 'failed' });
-      } catch (e) {
-        console.error('Failed to update evaluation status:', e);
-      }
-      if (selectedEvaluation?.id === evalId) {
-        setSelectedEvaluation((prev) => (prev ? { ...prev, status: 'failed' } : prev));
-      }
-      setEvaluations((prev) => {
-        const next = prev.map((e) =>
-          e.id === evalId ? { ...e, status: 'failed' as EvaluationStatus } : e
-        );
-        updateListCache({ evaluations: next });
-        return next;
-      });
-
-      abortControllersRef.current.delete(currentRun.id);
-      showToast('error', errorMessage);
-    } finally {
-      setRunningTestCaseId(null);
-    }
   };
 
   const buildFinalPromptForTestCase = (testCase: TestCase, prompt: PromptSnapshot | null | undefined) => {
@@ -2428,6 +2137,28 @@ export function EvaluationPage() {
     selectedEvaluation?.config.ocr_provider ??
     null;
 
+  const resultsMetrics = useMemo(() => {
+    const totalCount = results.length;
+    const passed = results.filter((result) => result.passed).length;
+    const failed = totalCount - passed;
+    const passRate = totalCount > 0 ? (passed / totalCount) * 100 : 0;
+    const tokensInput = results.reduce((sum, result) => sum + result.tokensInput, 0);
+    const tokensOutput = results.reduce((sum, result) => sum + result.tokensOutput, 0);
+    const llmMs = results.reduce((sum, result) => sum + (result.latencyMs || 0), 0);
+    const ocrMs = results.reduce((sum, result) => sum + (result.ocrLatencyMs || 0), 0);
+    return {
+      totalCount,
+      passed,
+      failed,
+      passRate,
+      tokensInput,
+      tokensOutput,
+      llmMs,
+      ocrMs,
+      totalMs: llmMs + ocrMs,
+    };
+  }, [results]);
+
   return (
     <div className="h-full flex overflow-hidden bg-slate-950 light:bg-slate-50">
       <div className="w-80 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col overflow-hidden">
@@ -2790,7 +2521,7 @@ export function EvaluationPage() {
             </div>
 
             {/* Content - scrollable */}
-            <div className="flex-1 overflow-y-auto p-6 pt-4">
+            <div className="flex-1 overflow-y-auto p-6 pt-4 flex flex-col min-h-0">
               {detailsLoading ? (
                 <div className="space-y-6">
                   {/* Loading indicator at top */}
@@ -2820,23 +2551,25 @@ export function EvaluationPage() {
                   </div>
                 </div>
               ) : (
-              <div>
+              <div className="flex-1 min-h-0 flex flex-col">
                 {activeTab === 'testcases' && (
-                  <TestCaseList
-                    testCases={testCases}
-                    variables={promptVariables}
-                    onAdd={handleAddTestCase}
-                    onUpdate={handleUpdateTestCase}
-                    onDelete={handleDeleteTestCase}
-                    onRunSingle={handleRunSingleTestCase}
-                    runningTestCaseId={runningTestCaseId}
-                    selectedTestCaseIds={selectedTestCaseIds}
-                    onToggleSelect={toggleTestCaseSelected}
-                    fileUploadCapabilities={fileUploadCapabilities}
-                    providerType={currentModelInfo.providerType}
-                    modelId={currentModelInfo.modelId}
-                    supportsVision={currentModelInfo.supportsVision}
-                  />
+                  <div className="flex-1 min-h-0">
+                    <TestCaseList
+                      testCases={testCases}
+                      variables={promptVariables}
+                      onAdd={handleAddTestCase}
+                      onUpdate={handleUpdateTestCase}
+                      onDelete={handleDeleteTestCase}
+                      onCopy={handleCopyTestCase}
+                      onDeleteSelected={handleDeleteSelectedTestCases}
+                      onRunSelected={runEvaluation}
+                      runningTestCaseId={runningTestCaseId}
+                      selectedTestCaseIds={selectedTestCaseIds}
+                      onToggleSelect={toggleTestCaseSelected}
+                      onSetSelectedIds={(ids) => setSelectedTestCaseIds(new Set(ids))}
+                      fileUploadCapabilities={fileUploadCapabilities}
+                    />
+                  </div>
                 )}
 
                 {activeTab === 'criteria' && (
@@ -2862,8 +2595,8 @@ export function EvaluationPage() {
 
                 {activeTab === 'results' && (
                   results.length > 0 && selectedRun ? (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                    <div className="flex-1 min-h-0 flex flex-col gap-4">
+                      <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
                         <div className="flex items-center gap-3 flex-wrap">
                           <span className="text-sm text-slate-400 light:text-slate-600">{t('currentViewing')}</span>
                           <Badge variant={statusConfig[selectedRun.status].variant}>
@@ -2885,7 +2618,56 @@ export function EvaluationPage() {
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
+
+                        <div className="hidden lg:block w-px h-7 bg-slate-700/60 light:bg-slate-300/80" />
+
+                        <div className="flex-1 flex justify-center">
+                          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-base font-semibold text-emerald-400 light:text-emerald-600">
+                              {resultsMetrics.passed}
+                            </span>
+                            <span className="text-xs text-slate-500 light:text-slate-600">{t('passed')}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-base font-semibold text-rose-400 light:text-rose-600">
+                              {resultsMetrics.failed}
+                            </span>
+                            <span className="text-xs text-slate-500 light:text-slate-600">{t('failed')}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-base font-semibold text-cyan-400 light:text-cyan-600">
+                              {resultsMetrics.passRate.toFixed(0)}%
+                            </span>
+                            <span className="text-xs text-slate-500 light:text-slate-600">{t('passRate')}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-base font-semibold text-teal-400 light:text-teal-600">
+                              {resultsMetrics.tokensInput.toLocaleString()}
+                            </span>
+                            <span className="text-xs text-slate-500 light:text-slate-600">{t('inputTokens')}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-base font-semibold text-sky-400 light:text-sky-600">
+                              {resultsMetrics.tokensOutput.toLocaleString()}
+                            </span>
+                            <span className="text-xs text-slate-500 light:text-slate-600">{t('outputTokens')}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-amber-400 light:text-amber-600">
+                                {formatMsAsSeconds(resultsMetrics.totalMs)}
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('totalTime')}</span>
+                            </div>
+                            <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
+                              {t('llmTime')}: {formatMsAsSeconds(resultsMetrics.llmMs)} | {t('ocrTime')}: {formatMsAsSeconds(resultsMetrics.ocrMs)}
+                            </div>
+                          </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
                           {selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) && (
                             <Button
                               variant="secondary"
@@ -2918,20 +2700,20 @@ export function EvaluationPage() {
                           )}
                         </div>
                       </div>
-                      <EvaluationResultsView
-                        testCases={testCases}
-                        results={results}
-                        criteria={criteria}
-                        overallScores={(selectedRun.results as { scores?: Record<string, number> })?.scores || {}}
-                        summary={(selectedRun.results as { summary?: string })?.summary}
-                        ocrProvider={selectedRunOcrProvider}
-                        onRetryOutput={handleRetryOutput}
-                        onRunAiEvaluation={selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
-                        onAbortRetryOutput={handleAbortRetryOutput}
-                        onAbortAiEvaluation={handleAbortAiEvaluation}
-                        retryingOutputTestCaseId={retryingOutputTestCaseId}
-                        retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
-                      />
+                      <div className="flex-1 min-h-0">
+                        <EvaluationResultsView
+                          testCases={testCases}
+                          results={results}
+                          criteria={criteria}
+                          ocrProvider={selectedRunOcrProvider}
+                          onRetryOutput={handleRetryOutput}
+                          onRunAiEvaluation={selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
+                          onAbortRetryOutput={handleAbortRetryOutput}
+                          onAbortAiEvaluation={handleAbortAiEvaluation}
+                          retryingOutputTestCaseId={retryingOutputTestCaseId}
+                          retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
+                        />
+                      </div>
                     </div>
                   ) : (
                     <div className="flex items-center justify-center py-12 text-slate-500 light:text-slate-600">

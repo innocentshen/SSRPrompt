@@ -6,7 +6,7 @@ import {
   chatCompletion,
   type ChatMessage,
 } from '../services/chat.service.js';
-import type { Model, Provider } from '@prisma/client';
+import type { Model, Provider, Prisma } from '@prisma/client';
 import { tracesRepository } from '../repositories/traces.repository.js';
 import { AppError, type OcrProvider } from '@ssrprompt/shared';
 import { prisma } from '../config/database.js';
@@ -52,6 +52,7 @@ const ChatCompletionSchema = z.object({
   modelId: z.string().uuid(),
   messages: z.array(ChatMessageSchema).min(1),
   promptId: z.string().uuid().optional(),
+  chatRunId: z.string().optional(),
   temperature: z.number().min(0).max(2).optional(),
   top_p: z.number().min(0).max(1).optional(),
   max_tokens: z.number().positive().optional(),
@@ -131,20 +132,20 @@ async function resolveModelMaxContextLength(
 /**
  * Extract textual input content for trace storage.
  */
-function extractInputContent(messages: ChatMessage[]): string {
-  return messages
-    .map((m) => {
-      if (typeof m.content === 'string') return m.content;
+function extractMessageText(message: ChatMessage): string {
+  if (typeof message.content === 'string') return message.content;
 
-      const parts = m.content as Array<{ type: string; text?: string }>;
-      const textParts = parts
-        .filter((p) => p.type === 'text' && typeof p.text === 'string' && p.text.length > 0)
-        .map((p) => p.text)
-        .join('\n');
-
-      return textParts || '[含附件内容]';
-    })
+  const parts = message.content as Array<{ type: string; text?: string }>;
+  const textParts = parts
+    .filter((p) => p.type === 'text' && typeof p.text === 'string' && p.text.length > 0)
+    .map((p) => p.text)
     .join('\n');
+
+  return textParts || '[含附件内容]';
+}
+
+function extractInputContent(messages: ChatMessage[]): string {
+  return messages.map(extractMessageText).join('\n');
 }
 
 function parseDataUrl(value: string): { mimeType: string; base64: string } | null {
@@ -431,7 +432,10 @@ export const chatController = {
     const ocrLatencyMs = expanded.ocrLatencyMs;
     const timingsMeta = ocrLatencyMs > 0 ? { timings: { ocrLatencyMs } } : {};
     const ocrMeta = expanded.ocrFileIds.length > 0
-      ? { ocrProvider: expanded.ocrProvider, ocrFileIds: expanded.ocrFileIds }
+      ? {
+          ...(expanded.ocrProvider ? { ocrProvider: expanded.ocrProvider } : {}),
+          ocrFileIds: expanded.ocrFileIds,
+        }
       : {};
 
     // Context budget check (no chunking). Estimate tokens conservatively.
@@ -461,6 +465,18 @@ export const chatController = {
       reasoning: data.reasoning,
       responseFormat: data.responseFormat,
     };
+    const modelParameters = Object.fromEntries(
+      Object.entries({
+        temperature: data.temperature,
+        top_p: data.top_p,
+        max_tokens: data.max_tokens,
+        frequency_penalty: data.frequency_penalty,
+        presence_penalty: data.presence_penalty,
+        reasoning: data.reasoning,
+        responseFormat: data.responseFormat,
+      }).filter(([, value]) => value !== undefined)
+    ) as Prisma.InputJsonObject;
+    const paramsMeta = Object.keys(modelParameters).length > 0 ? { modelParameters } : {};
 
     if (data.stream) {
       // Set SSE headers
@@ -534,7 +550,7 @@ export const chatController = {
               prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
-              metadata: {
+              metadata: ({
                 ...(expanded.attachments.length > 0
                   ? {
                       files: expanded.attachments.map((a) => ({
@@ -544,10 +560,13 @@ export const chatController = {
                         size: a.size,
                       })),
                     }
-                  : {}),
+                   : {}),
+                  ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
+                  messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
                   ...timingsMeta,
                   ...ocrMeta,
-                },
+                  ...paramsMeta,
+                } satisfies Prisma.InputJsonObject),
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);
@@ -582,7 +601,7 @@ export const chatController = {
               prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
-              metadata: expanded.attachments.length > 0
+              metadata: (expanded.attachments.length > 0
                 ? {
                     files: expanded.attachments.map((a) => ({
                       fileId: a.fileId,
@@ -590,10 +609,19 @@ export const chatController = {
                       type: a.type,
                       size: a.size,
                     })),
+                    ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
+                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
                     ...timingsMeta,
                     ...ocrMeta,
+                    ...paramsMeta,
                   }
-                : { ...timingsMeta, ...ocrMeta },
+                : {
+                    ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
+                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    ...timingsMeta,
+                    ...ocrMeta,
+                    ...paramsMeta,
+                  }) satisfies Prisma.InputJsonObject,
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);
@@ -625,7 +653,7 @@ export const chatController = {
               prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
-              metadata: expanded.attachments.length > 0
+              metadata: (expanded.attachments.length > 0
                 ? {
                     files: expanded.attachments.map((a) => ({
                       fileId: a.fileId,
@@ -633,10 +661,19 @@ export const chatController = {
                       type: a.type,
                       size: a.size,
                     })),
+                    ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
+                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
                     ...timingsMeta,
                     ...ocrMeta,
+                    ...paramsMeta,
                   }
-                : { ...timingsMeta, ...ocrMeta },
+                : {
+                    ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
+                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    ...timingsMeta,
+                    ...ocrMeta,
+                    ...paramsMeta,
+                  }) satisfies Prisma.InputJsonObject,
             });
           } catch (traceError) {
             console.error('Failed to save trace:', traceError);

@@ -441,6 +441,7 @@ model Trace {
   user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, createdAt(sort: Desc)])
   @@index([promptId])
   @@index([createdAt(sort: Desc)])
   @@map("traces")

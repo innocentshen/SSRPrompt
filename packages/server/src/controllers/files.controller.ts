@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { AppError } from '@ssrprompt/shared';
-import { Readable } from 'node:stream';
 import { filesService } from '../services/files.service.js';
+import { toNodeReadable } from '../utils/stream.js';
 
 type MulterRequest = Request & { file?: Express.Multer.File };
 
@@ -115,10 +115,7 @@ export class FilesController {
         throw new AppError(500, 'INTERNAL_ERROR', 'Missing file body from storage');
       }
 
-      const stream =
-        typeof (body as any).pipe === 'function'
-          ? (body as Readable)
-          : Readable.fromWeb(body as any);
+      const stream = toNodeReadable(body);
 
       stream.on('error', (err) => {
         next(err);

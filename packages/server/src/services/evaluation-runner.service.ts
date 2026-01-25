@@ -410,7 +410,7 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
   const evaluation = run.evaluation;
   const userId = resolvedUserId;
   const evalConfig = (evaluation.config || {}) as EvaluationConfig;
-  const runConfig = (run.runConfig || {}) as Record<string, unknown>;
+  const runConfig = (run.runConfig || {}) as Prisma.JsonObject;
   const promptSnapshot = await resolvePromptSnapshot(
     (runConfig.promptId as string | null | undefined) ?? evaluation.promptId,
     (runConfig.promptVersion as number | null | undefined) ?? null
@@ -473,12 +473,12 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
 
     const currentResolved = (runConfig.ocrProviderResolved as OcrProvider | undefined) ?? null;
     if (resolvedOcrProvider && currentResolved !== resolvedOcrProvider) {
-      const nextRunConfig = { ...runConfig, ocrProviderResolved: resolvedOcrProvider };
+      const nextRunConfig: Prisma.JsonObject = { ...runConfig, ocrProviderResolved: resolvedOcrProvider };
       await prisma.evaluationRun.update({
         where: { id: runId },
-        data: { runConfig: nextRunConfig as any },
+        data: { runConfig: nextRunConfig },
       });
-      runConfig.ocrProviderResolved = resolvedOcrProvider as any;
+      runConfig.ocrProviderResolved = resolvedOcrProvider ?? null;
     }
   }
 

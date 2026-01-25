@@ -77,14 +77,14 @@ async function main() {
 
   // Start server
   const server = app.listen(env.PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${env.PORT}`);
-    console.log(`📚 API available at http://localhost:${env.PORT}/api/v1`);
-    console.log(`📖 Swagger docs at http://localhost:${env.PORT}/api-docs`);
+    console.log(`Server running on http://localhost:${env.PORT}`);
+    console.log(`API available at http://localhost:${env.PORT}/api/v1`);
+    console.log(`Swagger docs at http://localhost:${env.PORT}/api-docs`);
   });
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
-      console.error(`❌ Port ${env.PORT} is already in use.`);
+      console.error(`Error: Port ${env.PORT} is already in use.`);
       console.error('   Stop the other process, or start the server with a different PORT.');
       console.error('   Example (PowerShell): $env:PORT=3002; pnpm run dev:server');
       process.exit(1);
