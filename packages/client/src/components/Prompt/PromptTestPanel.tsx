@@ -177,6 +177,7 @@ export function PromptTestPanel({
   const [internalThinking, setInternalThinking] = useState('');
   const [running, setRunning] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
   const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [processingStage, setProcessingStage] = useState<'idle' | 'ocr' | 'llm'>('idle');
@@ -236,6 +237,7 @@ export function PromptTestPanel({
     setProcessingStage('idle');
     setIsReplaying(false);
     setPreviewAttachment(null);
+    setLastLatencyMs(null);
     setInternalThinking('');
     setInternalOutput('');
 
@@ -470,6 +472,7 @@ export function PromptTestPanel({
     runAbortControllerRef.current = runAbortController;
 
     setRunning(true);
+    setLastLatencyMs(null);
     setInternalOutput('');
     setInternalThinking('');
     setIsThinking(false);
@@ -578,11 +581,11 @@ export function PromptTestPanel({
           setInternalThinking(finalThinking);
           setIsThinking(false);
 
-          const outputText = `${content}\n\n---\n**${t('processingTime')}:** ${(latencyMs / 1000).toFixed(2)}s`;
-          latestOutput = outputText;
-          setInternalOutput(outputText);
+          setLastLatencyMs(latencyMs);
+          latestOutput = content;
+          setInternalOutput(content);
           onThinkingChange?.(finalThinking);
-          onOutputChange?.(outputText);
+          onOutputChange?.(content);
 
           // Call onRunComplete callback
           onRunComplete?.({
@@ -606,6 +609,7 @@ export function PromptTestPanel({
           runAbortControllerRef.current = null;
           setProcessingStage('idle');
           setIsThinking(false);
+          setLastLatencyMs(Date.now() - startTime);
           onThinkingChange?.(latestThinking);
           onOutputChange?.(latestOutput);
           setRunning(false);
@@ -617,6 +621,7 @@ export function PromptTestPanel({
           const errorMessage = error.message;
           const errorOutput = `**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`;
           latestOutput = errorOutput;
+          setLastLatencyMs(Date.now() - startTime);
           setInternalOutput(errorOutput);
           onThinkingChange?.('');
           onOutputChange?.(errorOutput);
@@ -1484,9 +1489,16 @@ export function PromptTestPanel({
           {testMode === 'single' ? (
             <div className="flex-1 flex flex-col min-h-0 gap-3">
               <div className="flex items-center justify-between flex-shrink-0">
-                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-                  {t('outputResult')}
-                </label>
+                <div className="flex items-center gap-2 min-w-0">
+                  <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                    {t('outputResult')}
+                  </label>
+                  {lastLatencyMs !== null && !running && (
+                    <span className="text-xs text-slate-500 light:text-slate-600 whitespace-nowrap">
+                      {t('processingTime')}: {(lastLatencyMs / 1000).toFixed(2)}s
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -1575,11 +1587,26 @@ export function PromptTestPanel({
                     disabled={running}
                     style={{ height: chatComposerHeight }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
+                      if (e.key !== 'Enter') return;
+
+                      // Ctrl/Cmd+Enter inserts a newline.
+                      if (e.ctrlKey || e.metaKey) {
                         e.preventDefault();
-                        if (running) return;
-                        void handleRunSingle();
+                        const target = e.currentTarget;
+                        const start = target.selectionStart ?? testInput.length;
+                        const end = target.selectionEnd ?? testInput.length;
+                        const nextValue = testInput.slice(0, start) + '\n' + testInput.slice(end);
+                        onTestInputChange(nextValue);
+                        requestAnimationFrame(() => {
+                          target.selectionStart = start + 1;
+                          target.selectionEnd = start + 1;
+                        });
+                        return;
                       }
+
+                      e.preventDefault();
+                      if (running) return;
+                      void handleRunSingle();
                     }}
                     className="w-full p-3 pb-16 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500 disabled:opacity-60"
                   />
@@ -1587,7 +1614,7 @@ export function PromptTestPanel({
                   <div className="absolute bottom-2 left-2 right-2 z-10 flex items-end justify-between gap-2">
                     {showFileUpload ? (
                       <div className="flex items-center gap-2 flex-wrap">
-                        <div className="w-32">
+                        <div className="w-20">
                           <Select
                             value={fileProcessing}
                             onChange={(e) => setFileProcessing(e.target.value as typeof fileProcessing)}
@@ -1637,6 +1664,10 @@ export function PromptTestPanel({
                     ) : (
                       <div />
                     )}
+
+                    <div className="flex-1 pb-1 text-center text-[10px] text-slate-500 light:text-slate-600 select-none whitespace-nowrap">
+                      {t('enterToSendHint')}
+                    </div>
 
                     <Button
                       variant={running ? 'danger' : 'primary'}
@@ -1915,12 +1946,29 @@ export function PromptTestPanel({
                     disabled={running || isReplaying}
                     style={{ height: chatComposerHeight }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
+                      if (e.key !== 'Enter') return;
+
+                      // Ctrl/Cmd+Enter inserts a newline.
+                      if (e.ctrlKey || e.metaKey) {
                         e.preventDefault();
-                        if (running || isReplaying) return;
-                        if (currentChatRun) void handleChatSend();
-                        else void handleChatRunFirstTurn();
+                        const target = e.currentTarget;
+                        const currentValue = currentChatRun ? chatInput : testInput;
+                        const start = target.selectionStart ?? currentValue.length;
+                        const end = target.selectionEnd ?? currentValue.length;
+                        const nextValue = currentValue.slice(0, start) + '\n' + currentValue.slice(end);
+                        if (currentChatRun) setChatInput(nextValue);
+                        else onTestInputChange(nextValue);
+                        requestAnimationFrame(() => {
+                          target.selectionStart = start + 1;
+                          target.selectionEnd = start + 1;
+                        });
+                        return;
                       }
+
+                      e.preventDefault();
+                      if (running || isReplaying) return;
+                      if (currentChatRun) void handleChatSend();
+                      else void handleChatRunFirstTurn();
                     }}
                     className="w-full p-3 pb-16 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500 disabled:opacity-60"
                   />
@@ -1928,7 +1976,7 @@ export function PromptTestPanel({
                   <div className="absolute bottom-2 left-2 right-2 z-10 flex items-end justify-between gap-2">
                     {showFileUpload ? (
                       <div className="flex items-center gap-2 flex-wrap">
-                        <div className="w-32">
+                        <div className="w-20">
                           <Select
                             value={fileProcessing}
                             onChange={(e) => setFileProcessing(e.target.value as typeof fileProcessing)}
@@ -1978,6 +2026,10 @@ export function PromptTestPanel({
                     ) : (
                       <div />
                     )}
+
+                    <div className="flex-1 pb-1 text-center text-[10px] text-slate-500 light:text-slate-600 select-none whitespace-nowrap">
+                      {t('enterToSendHint')}
+                    </div>
 
                     <Button
                       variant={running ? 'danger' : 'primary'}

@@ -70,6 +70,9 @@ export function ThinkingBlock({
   }
 
   const displayDuration = durationMs ?? elapsedTime;
+  const showDuration =
+    (typeof durationMs === 'number' && durationMs > 0) ||
+    (isStreaming && elapsedTime > 0);
 
   return (
     <div className={className ? `mb-4 ${className}` : 'mb-4'}>
@@ -109,7 +112,7 @@ export function ThinkingBlock({
             )}
           </span>
 
-          {displayDuration > 0 && (
+          {showDuration && (
             <span className="flex items-center gap-1 text-xs text-slate-500 light:text-slate-500">
               <Clock className="w-3 h-3" />
               {formatDuration(displayDuration)}

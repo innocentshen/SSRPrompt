@@ -47,7 +47,7 @@ const DEFAULT_PROMPT_CONFIG: Required<Pick<PromptConfig, 'temperature' | 'top_p'
   top_p: 0.7,
   frequency_penalty: 0,
   presence_penalty: 0,
-  max_tokens: 4096,
+  max_tokens: 8000,
 };
 
 const RUN_CONCURRENCY = Number(process.env.EVALUATION_RUN_CONCURRENCY || '2');

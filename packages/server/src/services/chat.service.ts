@@ -236,7 +236,7 @@ export function buildRequestBody(
       model: model.modelId,
       messages: transformedMessages,
       system,
-      max_tokens: options.max_tokens || 4096,
+      max_tokens: options.max_tokens || 8000,
       temperature: options.temperature,
       top_p: options.top_p,
       stream: options.stream ?? true,

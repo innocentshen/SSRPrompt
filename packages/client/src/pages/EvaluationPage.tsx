@@ -2661,7 +2661,7 @@ export function EvaluationPage() {
                               <span className="text-xs text-slate-500 light:text-slate-600">{t('totalTime')}</span>
                             </div>
                             <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
-                              {t('llmTime')}: {formatMsAsSeconds(resultsMetrics.llmMs)} | {t('ocrTime')}: {formatMsAsSeconds(resultsMetrics.ocrMs)}
+                              {t('llmCumulative')}: {formatMsAsSeconds(resultsMetrics.llmMs)} | {t('ocrCumulative')}: {formatMsAsSeconds(resultsMetrics.ocrMs)}
                             </div>
                           </div>
                           </div>

@@ -210,6 +210,8 @@
   "saveResultFailed": "結果儲存失敗，請稍後再試",
   "llmTime": "LLM 時間",
   "ocrTime": "OCR 時間",
+  "llmCumulative": "LLM累計",
+  "ocrCumulative": "OCR累計",
   "retryOutput": "重試輸出",
   "retryOutputSuccess": "輸出已重試並覆蓋",
   "retryOutputFailed": "重試失敗",

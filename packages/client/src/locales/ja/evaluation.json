@@ -210,6 +210,8 @@
   "saveResultFailed": "結果の保存に失敗しました。再試行してください。",
   "llmTime": "LLM 時間",
   "ocrTime": "OCR 時間",
+  "llmCumulative": "LLM 累計",
+  "ocrCumulative": "OCR 累計",
   "retryOutput": "出力を再試行",
   "retryOutputSuccess": "出力を再試行して上書きしました",
   "retryOutputFailed": "再試行に失敗しました",

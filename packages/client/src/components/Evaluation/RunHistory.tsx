@@ -418,7 +418,7 @@ export function RunHistory({ runs, selectedRunId, onSelectRun, onDeleteRun, onAb
                     <p className="text-sm text-slate-300 light:text-slate-700">{formatDuration(run.startedAt, run.completedAt)}</p>
                     {(typeof llmTimeMs === 'number' || typeof ocrTimeMs === 'number') && (
                       <p className="text-[10px] text-slate-500 light:text-slate-600 mt-0.5">
-                        {t('llmTime')}: {((llmTimeMs || 0) / 1000).toFixed(1)}s · {t('ocrTime')}: {((ocrTimeMs || 0) / 1000).toFixed(1)}s
+                        {t('llmCumulative')}: {((llmTimeMs || 0) / 1000).toFixed(1)}s · {t('ocrCumulative')}: {((ocrTimeMs || 0) / 1000).toFixed(1)}s
                       </p>
                     )}
                   </div>

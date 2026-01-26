@@ -68,7 +68,7 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
   top_p: 0.7,
   frequency_penalty: 0,
   presence_penalty: 0,
-  max_tokens: 4096,
+  max_tokens: 8000,
   reasoning: {
     enabled: false,
     effort: 'default',

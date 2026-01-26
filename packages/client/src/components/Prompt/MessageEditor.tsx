@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Trash2, GripVertical, ChevronDown, ChevronRight, User, Bot, Settings } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { PromptMessage, PromptMessageRole } from '../../types/database';
 
 interface MessageEditorProps {
@@ -38,6 +39,7 @@ export function MessageEditor({
   isDragging = false,
   dragHandleProps,
 }: MessageEditorProps) {
+  const { t } = useTranslation('prompts');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
 
@@ -150,8 +152,8 @@ export function MessageEditor({
             className="w-full min-h-[120px] px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 resize-y"
           />
           <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-            <span>Supports Jinja2 template syntax: {"{{ variable }}"}</span>
-            <span>{message.content.length} characters</span>
+            <span>{t('jinja2TemplateHint', { example: '{{ variable }}' })}</span>
+            <span>{t('characterCount', { count: message.content.length })}</span>
           </div>
         </div>
       )}

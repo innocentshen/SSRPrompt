@@ -215,17 +215,18 @@ export async function streamChatCompletionEnhanced(
             }
 
             // Handle reasoning delta (OpenRouter format)
-            if (delta?.reasoning) {
-              fullThinking += delta.reasoning;
-              callbacks.onThinkingToken?.(delta.reasoning);
-              await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
-            }
-
-            // Handle reasoning_content delta (alternative format)
-            if (delta?.reasoning_content) {
-              fullThinking += delta.reasoning_content;
-              callbacks.onThinkingToken?.(delta.reasoning_content);
-              await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+            // Handle reasoning delta (provider-dependent).
+            // Some providers may emit both `reasoning` and `reasoning_content` with the same value.
+            const reasoningParts = [delta?.reasoning_content, delta?.reasoning].filter(
+              (value): value is string => typeof value === 'string' && value.length > 0
+            );
+            if (reasoningParts.length > 0) {
+              const uniqueReasoningParts = [...new Set(reasoningParts)];
+              for (const part of uniqueReasoningParts) {
+                fullThinking += part;
+                callbacks.onThinkingToken?.(part);
+                await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+              }
             }
 
             // Capture reasoning_details from final message

@@ -148,8 +148,8 @@ export function PromptsPage() {
     left: { temperature: number; top_p: number; max_tokens: number; frequency_penalty: number; presence_penalty: number; reasoning?: { enabled: boolean; effort: ReasoningEffort } };
     right: { temperature: number; top_p: number; max_tokens: number; frequency_penalty: number; presence_penalty: number; reasoning?: { enabled: boolean; effort: ReasoningEffort } };
   }>({
-    left: { temperature: 0.7, top_p: 1, max_tokens: 4096, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
-    right: { temperature: 0.7, top_p: 1, max_tokens: 4096, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
+    left: { temperature: 0.7, top_p: 1, max_tokens: 8000, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
+    right: { temperature: 0.7, top_p: 1, max_tokens: 8000, frequency_penalty: 0, presence_penalty: 0, reasoning: undefined },
   });
   const compareAbortControllersRef = useRef<{ left: AbortController | null; right: AbortController | null }>({ left: null, right: null });
   const [searchQuery, setSearchQuery] = useState('');
@@ -2684,7 +2684,7 @@ export function PromptsPage() {
                             max="32000"
                             step="1"
                             value={compareParams.left.max_tokens}
-                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 8000 } }))}
                             className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
                           />
                         </div>
@@ -2777,7 +2777,7 @@ export function PromptsPage() {
                             max="32000"
                             step="1"
                             value={compareParams.right.max_tokens}
-                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 4096 } }))}
+                            onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 8000 } }))}
                             className="w-20 px-2 py-1 text-xs bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800"
                           />
                         </div>

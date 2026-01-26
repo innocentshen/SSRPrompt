@@ -11,7 +11,7 @@ export const DEFAULTS = {
   TOP_P: 1.0,
   FREQUENCY_PENALTY: 0,
   PRESENCE_PENALTY: 0,
-  MAX_TOKENS: 4096,
+  MAX_TOKENS: 8000,
 
   // Evaluation
   PASS_THRESHOLD: 70,

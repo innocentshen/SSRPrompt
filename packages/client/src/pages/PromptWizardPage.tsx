@@ -230,6 +230,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
 
   const handleSelectTemplate = (template: Template) => {
     setSelectedTemplate(template);
+    setAttachedFiles([]);
     const initialPrompt = template.initialPromptKey ? t(template.initialPromptKey) : '';
     if (template.id === 'custom') {
       setMessages([]);
@@ -265,7 +266,6 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     setStreamingThinking('');
     setIsThinking(false);
     setProcessingStage('idle');
-    setAttachedFiles([]);
 
     try {
       abortControllerRef.current?.abort();
@@ -468,11 +468,28 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
     abortControllerRef.current?.abort();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter') return;
+
+    // Ctrl/Cmd+Enter inserts a newline.
+    if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      handleSendMessage();
+      const target = e.currentTarget;
+      const start = target.selectionStart ?? inputMessage.length;
+      const end = target.selectionEnd ?? inputMessage.length;
+      const nextValue = inputMessage.slice(0, start) + '\n' + inputMessage.slice(end);
+      setInputMessage(nextValue);
+      requestAnimationFrame(() => {
+        target.selectionStart = start + 1;
+        target.selectionEnd = start + 1;
+        target.style.height = 'auto';
+        target.style.height = Math.min(target.scrollHeight, 280) + 'px';
+      });
+      return;
     }
+
+    e.preventDefault();
+    handleSendMessage();
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -556,7 +573,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
           top_p: 0.7,
           frequency_penalty: 0,
           presence_penalty: 0,
-          max_tokens: 4096,
+          max_tokens: 8000,
         },
       });
 
@@ -904,33 +921,6 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                         modelId={models.find(m => m.id === selectedModelId)?.modelId}
                         supportsReasoning={models.find(m => m.id === selectedModelId)?.supportsReasoning}
                       />
-                      <div className="mt-3 pt-3 border-t border-slate-700 light:border-slate-200 space-y-2">
-                        <Select
-                          label={tEval('fileProcessing')}
-                          value={fileProcessing}
-                          onChange={(e) => setFileProcessing(e.target.value as typeof fileProcessing)}
-                          options={[
-                            { value: 'auto', label: tEval('fileProcessingAuto') },
-                            ...(currentModel?.supportsVision ? [{ value: 'vision', label: tEval('fileProcessingVision') }] : []),
-                            { value: 'ocr', label: tEval('fileProcessingOcr') },
-                            { value: 'none', label: tEval('fileProcessingNone') },
-                          ]}
-                        />
-                        {(fileProcessing === 'ocr' ||
-                          ((fileProcessing || 'auto') === 'auto' && currentModel && !currentModel.supportsVision)) && (
-                          <Select
-                            value={ocrProviderOverride}
-                            onChange={(e) => setOcrProviderOverride(e.target.value as OcrProvider | '')}
-                            options={[
-                              { value: '', label: tEval('ocrProviderFollow') },
-                              { value: 'paddle', label: 'PaddleOCR' },
-                              { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                              { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                              { value: 'mineru', label: tEval('ocrProviderMineru') },
-                            ]}
-                          />
-                        )}
-                      </div>
                     </div>
                   )}
                 </div>
@@ -988,35 +978,78 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                   onChange={handleFileSelect}
                   className="hidden"
                 />
-                <div className="flex items-end gap-2 p-3 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-xl focus-within:ring-2 focus-within:ring-cyan-500/50 focus-within:border-cyan-500">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 rounded-lg transition-colors text-slate-400 light:text-slate-500 hover:text-cyan-400 light:hover:text-cyan-600 hover:bg-slate-700 light:hover:bg-slate-100"
-                    title={t('wizardUploadFile')}
-                  >
-                    <Paperclip className="w-5 h-5" />
-                  </button>
-                  <textarea
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    placeholder={t('wizardInputPlaceholder')}
-                    rows={1}
-                    className="flex-1 bg-transparent text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none min-h-[24px] max-h-[120px]"
-                    style={{ height: 'auto' }}
-                    onInput={(e) => {
-                      const target = e.target as HTMLTextAreaElement;
-                      target.style.height = 'auto';
-                      target.style.height = Math.min(target.scrollHeight, 120) + 'px';
-                    }}
-                  />
+                <textarea
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder={t('wizardInputPlaceholder')}
+                  rows={1}
+                  className="w-full p-3 pb-16 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-xl text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 min-h-[64px] max-h-[280px]"
+                  style={{ height: 'auto' }}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = 'auto';
+                    target.style.height = Math.min(target.scrollHeight, 280) + 'px';
+                  }}
+                />
+
+                <div className="absolute bottom-2 left-2 right-2 z-10 flex items-end justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="w-32">
+                      <Select
+                        value={fileProcessing}
+                        onChange={(e) => setFileProcessing(e.target.value as typeof fileProcessing)}
+                        options={[
+                          { value: 'auto', label: tEval('fileProcessingAuto') },
+                          ...(supportsVision ? [{ value: 'vision', label: tEval('fileProcessingVision') }] : []),
+                          { value: 'ocr', label: tEval('fileProcessingOcr') },
+                          { value: 'none', label: tEval('fileProcessingNone') },
+                        ]}
+                        className="py-1 px-2 pr-8 text-xs"
+                      />
+                    </div>
+
+                    {(fileProcessing === 'ocr' ||
+                      ((fileProcessing || 'auto') === 'auto' && currentModel && !currentModel.supportsVision)) && (
+                      <div className="w-40">
+                        <Select
+                          value={ocrProviderOverride}
+                          onChange={(e) => setOcrProviderOverride(e.target.value as OcrProvider | '')}
+                          options={[
+                            { value: '', label: tEval('ocrProviderFollow') },
+                            { value: 'paddle', label: 'PaddleOCR' },
+                            { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
+                            { value: 'datalab', label: tEval('ocrProviderDatalab') },
+                            { value: 'mineru', label: tEval('ocrProviderMineru') },
+                          ]}
+                          className="py-1 px-2 pr-8 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      title={t('wizardUploadFile')}
+                      className="!p-2"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  <div className="flex-1 pb-1 text-center text-[10px] text-slate-500 light:text-slate-600 select-none whitespace-nowrap">
+                    {t('enterToSendHint')}
+                  </div>
+
                   <Button
                     onClick={isLoading ? handleStopGenerating : handleSendMessage}
                     disabled={isLoading ? false : ((!inputMessage.trim() && attachedFiles.length === 0) || !selectedModelId)}
                     size="sm"
                     variant={isLoading ? 'danger' : 'primary'}
-                    className="rounded-lg whitespace-nowrap"
+                    className="rounded-full flex-shrink-0 whitespace-nowrap"
                     title={isLoading ? tCommon('stop') : undefined}
                     aria-label={isLoading ? tCommon('stop') : undefined}
                   >
