@@ -1,4 +1,5 @@
 {
+  "openExternal": "在新分頁開啟",
   "readOnly": "唯讀",
   "loading": "載入中...",
   "save": "儲存",
@@ -84,5 +85,12 @@
   "ocrResultsMissing": "未找到OCR結果",
   "ocrResultsEmpty": "OCR結果為空",
   "ocrResultsFailed": "OCR失敗",
-  "ocrResultsError": "OCR結果載入失敗"
+  "ocrResultsError": "OCR結果載入失敗",
+  "markdown": "Markdown",
+  "plainText": "純文字",
+  "html": "HTML",
+  "preview": "預覽",
+  "source": "原始碼",
+  "split": "分欄",
+  "allowScripts": "執行腳本"
 }

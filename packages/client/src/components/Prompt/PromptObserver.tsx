@@ -20,6 +20,7 @@ import { AttachmentModal } from './AttachmentModal';
 import { ChatTranscript, type ChatTranscriptMessage } from './ChatTranscript';
 import { OcrResultsPanel } from './OcrResultsPanel';
 import type { Trace, Model, FileAttachment, OcrProvider } from '../../types';
+import { extractThinking } from '../../lib/ai-service';
 
 interface TraceStats {
   totalCalls: number;
@@ -184,6 +185,21 @@ export function PromptObserver({ promptId, promptName, models }: PromptObserverP
     return stripOcrFileBlocks(selectedTrace.input, fileNames);
   }, [selectedTrace, selectedTraceOcr]);
 
+  const assistantResponse = useMemo(() => {
+    if (!selectedTrace) {
+      return { content: '', thinking: undefined as string | undefined };
+    }
+
+    const rawOutput = selectedTrace.output || '';
+    const extracted = extractThinking(rawOutput);
+    const storedThinking = (selectedTrace.thinkingContent ?? '').trim();
+    const mergedThinking = [storedThinking, extracted.thinking].filter(Boolean).join('\n\n').trim();
+    return {
+      content: extracted.content,
+      thinking: mergedThinking ? mergedThinking : undefined,
+    };
+  }, [selectedTrace]);
+
   const transcriptMessages = useMemo(() => {
     if (!selectedTrace) return null;
 
@@ -205,7 +221,10 @@ export function PromptObserver({ promptId, promptName, models }: PromptObserverP
         if (roleValue !== 'system' && roleValue !== 'user' && roleValue !== 'assistant') return null;
         const role = roleValue as ChatTranscriptMessage['role'];
         const content = typeof record.content === 'string' ? normalizeContent(record.content) : '';
-        return { id: `${selectedTrace.id}_ctx_${idx}`, role, content };
+        const modelId = typeof record.modelId === 'string' ? record.modelId : undefined;
+        const thinking = typeof record.thinking === 'string' ? record.thinking : undefined;
+        const resolvedAssistantLabel = role === 'assistant' && modelId ? getModelName(modelId) : undefined;
+        return { id: `${selectedTrace.id}_ctx_${idx}`, role, content, thinking, modelId, assistantLabel: resolvedAssistantLabel };
       })
       .filter((message): message is ChatTranscriptMessage => message !== null);
 
@@ -225,12 +244,14 @@ export function PromptObserver({ promptId, promptName, models }: PromptObserverP
     messages.push({
       id: `${selectedTrace.id}_assistant`,
       role: 'assistant',
-      content: selectedTrace.output || '',
-      thinking: selectedTrace.thinkingContent || undefined,
+      content: assistantResponse.content,
+      thinking: assistantResponse.thinking,
+      modelId: selectedTrace.modelId || undefined,
+      assistantLabel: getModelName(selectedTrace.modelId),
     });
 
     return messages;
-  }, [selectedTrace, selectedTraceOcr]);
+  }, [assistantResponse.content, assistantResponse.thinking, selectedTrace, selectedTraceOcr]);
 
   const filteredTraces = traces.filter((t) => {
     if (filterStatus === 'all') return true;
@@ -515,8 +536,10 @@ export function PromptObserver({ promptId, promptName, models }: PromptObserverP
                     {
                       id: `${selectedTrace.id}_assistant`,
                       role: 'assistant',
-                      content: selectedTrace.output || '',
-                      thinking: selectedTrace.thinkingContent || undefined,
+                      content: assistantResponse.content,
+                      thinking: assistantResponse.thinking,
+                      modelId: selectedTrace.modelId || undefined,
+                      assistantLabel: getModelName(selectedTrace.modelId),
                     },
                   ]
                 }

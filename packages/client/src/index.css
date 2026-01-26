@@ -161,4 +161,19 @@
   html.light .markdown-content tbody tr:nth-child(even) {
     @apply bg-white;
   }
+
+  .animate-cursor-blink {
+    animation: cursorBlink 1s steps(1) infinite;
+  }
+
+  @keyframes cursorBlink {
+    0%,
+    50% {
+      opacity: 1;
+    }
+    51%,
+    100% {
+      opacity: 0;
+    }
+  }
 }

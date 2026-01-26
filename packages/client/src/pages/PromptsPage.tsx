@@ -31,13 +31,14 @@ import {
   Globe,
   Play,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, MarkdownRenderer, Tabs, Collapsible, ModelSelector } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel, ChatTranscript } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { DebugRun } from '../components/Prompt';
 import { promptsApi, promptGroupsApi, ApiError } from '../api';
 import { chatApi, type ContentPart } from '../api/chat';
 import { uploadFileAttachment, extractThinking, type FileAttachment } from '../lib/ai-service';
+import { useOutputRenderPreferences } from '../lib/output-renderer-prefs';
 import { analyzePrompt, type PromptAnalysisResult } from '../lib/prompt-analyzer';
 import { inferReasoningSupport } from '../lib/model-capabilities';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
@@ -109,6 +110,7 @@ export function PromptsPage() {
   const { t: tEval } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
   const { t: tTraces } = useTranslation('traces');
+  const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
 
   // Use global store for providers and models (shared across pages, with caching)
   const {
@@ -2829,6 +2831,10 @@ export function PromptsPage() {
             <div className="flex flex-col min-h-0">
               <div className="flex items-center justify-between pb-2">
                 <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('outputResult')}</h3>
+                <OutputRendererControls
+                  preferences={outputRenderPrefs}
+                  onChange={setOutputRenderPrefs}
+                />
               </div>
               <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="flex flex-col min-h-0 gap-2">
@@ -2873,7 +2879,11 @@ export function PromptsPage() {
                           />
                         )}
                         {compareResults.left?.content ? (
-                          <MarkdownRenderer content={compareResults.left.content} />
+                          <OutputRenderer
+                            content={compareResults.left.content}
+                            preferences={outputRenderPrefs}
+                            isStreaming={compareRunning.left}
+                          />
                         ) : compareRunning.left ? (
                           !compareResults.left?.isThinking && (
                             <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
@@ -2931,7 +2941,11 @@ export function PromptsPage() {
                           />
                         )}
                         {compareResults.right?.content ? (
-                          <MarkdownRenderer content={compareResults.right.content} />
+                          <OutputRenderer
+                            content={compareResults.right.content}
+                            preferences={outputRenderPrefs}
+                            isStreaming={compareRunning.right}
+                          />
                         ) : compareRunning.right ? (
                           !compareResults.right?.isThinking && (
                             <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
@@ -3127,7 +3141,15 @@ export function PromptsPage() {
       >
         {debugDetailExpanded && (
           <div className="space-y-4">
-            <div className="flex items-center justify-end">
+            <div className="flex items-center justify-between gap-3">
+              {debugDetailExpanded.field === 'output' ? (
+                <OutputRendererControls
+                  preferences={outputRenderPrefs}
+                  onChange={setOutputRenderPrefs}
+                />
+              ) : (
+                <span />
+              )}
               <button
                 onClick={() => handleDebugDetailCopy(debugDetailExpanded.content, debugDetailExpanded.field)}
                 className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-700 light:bg-slate-200 text-slate-300 light:text-slate-700 hover:bg-slate-600 light:hover:bg-slate-300 transition-colors text-sm"
@@ -3147,7 +3169,16 @@ export function PromptsPage() {
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg max-h-[60vh] overflow-y-auto">
               {debugDetailExpanded.content ? (
-                <MarkdownRenderer content={debugDetailExpanded.content} />
+                <OutputRenderer
+                  content={debugDetailExpanded.content}
+                  preferences={
+                    debugDetailExpanded.field === 'output'
+                      ? outputRenderPrefs
+                      : outputRenderPrefs.format === 'text'
+                        ? { ...outputRenderPrefs, format: 'text' }
+                        : { ...outputRenderPrefs, format: 'markdown' }
+                  }
+                />
               ) : (
                 <span className="text-sm text-slate-500 light:text-slate-400">{t('empty')}</span>
               )}

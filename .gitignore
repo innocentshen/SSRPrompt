@@ -24,6 +24,7 @@ dist-ssr
 
 # Temporary artifacts
 tmp-*
+.tmp/
 
 # 环境变量和敏感配置
 .env

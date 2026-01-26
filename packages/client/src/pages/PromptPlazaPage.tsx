@@ -278,9 +278,9 @@ export function PromptPlazaPage() {
               </div>
             </div>
 
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden">
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem_minmax(0,1fr)] gap-0 overflow-hidden">
               {/* Preview */}
-              <div className="lg:col-span-6 border-r border-slate-700 light:border-slate-200 overflow-hidden flex flex-col">
+              <div className="min-w-0 border-r border-slate-700 light:border-slate-200 overflow-hidden flex flex-col">
                 <div className="p-4 border-b border-slate-700 light:border-slate-200 flex items-center justify-between">
                   <div className="text-sm font-medium text-slate-200 light:text-slate-800">{t('preview')}</div>
                   <div className="flex items-center gap-2">
@@ -305,7 +305,7 @@ export function PromptPlazaPage() {
               </div>
 
               {/* Run Config (read-only) */}
-              <div className="lg:col-span-3 border-r border-slate-700 light:border-slate-200 overflow-hidden flex flex-col bg-slate-900/10 light:bg-slate-50">
+              <div className="border-r border-slate-700 light:border-slate-200 overflow-hidden flex flex-col bg-slate-900/10 light:bg-slate-50">
                 <div className="flex-shrink-0 p-4 border-b border-slate-700 light:border-slate-200 flex items-center justify-between">
                   <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">{t('runConfig')}</h3>
                   <Badge variant="default">{tCommon('readOnly')}</Badge>
@@ -366,7 +366,7 @@ export function PromptPlazaPage() {
                 promptId={activeSnapshot.id}
                 saveTrace={false}
                 showFileUpload={true}
-                className="lg:col-span-3 bg-slate-900/20 light:bg-slate-100"
+                className="min-w-0 bg-slate-900/20 light:bg-slate-100"
               />
             </div>
           </>

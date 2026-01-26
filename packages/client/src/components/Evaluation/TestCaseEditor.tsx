@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Trash2, Loader2, Eye, EyeOff, Maximize2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, Loader2, Eye, EyeOff, Maximize2, Play, ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
 import { Button, Modal, MarkdownRenderer } from '../ui';
+import { useToast } from '../../store/useUIStore';
 import type { TestCase } from '../../types';
 
 interface TestCaseEditorProps {
@@ -24,9 +25,10 @@ interface LocalInputProps {
   className?: string;
   rows?: number;
   as?: 'input' | 'textarea';
+  inputRef?: RefObject<HTMLInputElement | HTMLTextAreaElement>;
 }
 
-function LocalInput({ value, onChange, placeholder, className, rows, as = 'input' }: LocalInputProps) {
+function LocalInput({ value, onChange, placeholder, className, rows, as = 'input', inputRef }: LocalInputProps) {
   const [localValue, setLocalValue] = useState(value);
   const isComposing = useRef(false);
 
@@ -66,10 +68,10 @@ function LocalInput({ value, onChange, placeholder, className, rows, as = 'input
   };
 
   if (as === 'textarea') {
-    return <textarea {...commonProps} rows={rows} />;
+    return <textarea {...commonProps} rows={rows} ref={inputRef as unknown as RefObject<HTMLTextAreaElement>} />;
   }
 
-  return <input type="text" {...commonProps} />;
+  return <input type="text" {...commonProps} ref={inputRef as unknown as RefObject<HTMLInputElement>} />;
 }
 
 export function TestCaseEditor({
@@ -84,6 +86,7 @@ export function TestCaseEditor({
   onSelectChange,
   variant = 'accordion',
 }: TestCaseEditorProps) {
+  const { showToast } = useToast();
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
   const isPanel = variant === 'panel';
@@ -94,6 +97,10 @@ export function TestCaseEditor({
   const [expandedField, setExpandedField] = useState<'input' | 'expected' | null>(null);
   const [expandedValue, setExpandedValue] = useState('');
   const [expandedPreview, setExpandedPreview] = useState(false);
+  const [copiedField, setCopiedField] = useState<'input' | 'expected' | null>(null);
+
+  const inputTextRef = useRef<HTMLTextAreaElement | null>(null);
+  const expectedOutputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (isPanel) {
@@ -133,6 +140,23 @@ export function TestCaseEditor({
     setExpandedField(null);
     setExpandedValue('');
     setExpandedPreview(false);
+  };
+
+  const handleCopy = async (field: 'input' | 'expected') => {
+    const text = field === 'input'
+      ? (previewInput ? testCase.inputText : (inputTextRef.current?.value ?? testCase.inputText))
+      : (previewExpected ? (testCase.expectedOutput || '') : (expectedOutputRef.current?.value ?? (testCase.expectedOutput || '')));
+
+    if (!text.trim()) return;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      showToast('success', tCommon('copied'));
+      window.setTimeout(() => setCopiedField((prev) => (prev === field ? null : prev)), 1200);
+    } catch {
+      showToast('error', tCommon('error'));
+    }
   };
 
   const isContentVisible = isPanel ? true : isExpanded;
@@ -220,6 +244,16 @@ export function TestCaseEditor({
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
+                    onClick={() => void handleCopy('input')}
+                    disabled={!(previewInput ? testCase.inputText : (inputTextRef.current?.value ?? testCase.inputText)).trim()}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={tCommon('copy')}
+                    aria-label={tCommon('copy')}
+                  >
+                    {copiedField === 'input' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => openExpandModal('input')}
                     className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800"
                     title={t('expandEdit')}
@@ -255,6 +289,7 @@ export function TestCaseEditor({
                   onChange={(value) => handleUpdate({ inputText: value })}
                   placeholder={t('enterTestContent')}
                   rows={8}
+                  inputRef={inputTextRef as unknown as RefObject<HTMLInputElement | HTMLTextAreaElement>}
                   className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
                 />
               )}
@@ -270,6 +305,16 @@ export function TestCaseEditor({
                   {t('expectedOutputOptional')}
                 </label>
                 <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleCopy('expected')}
+                    disabled={!(previewExpected ? (testCase.expectedOutput || '') : (expectedOutputRef.current?.value ?? (testCase.expectedOutput || ''))).trim()}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={tCommon('copy')}
+                    aria-label={tCommon('copy')}
+                  >
+                    {copiedField === 'expected' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setExpectedCollapsed(true)}
@@ -317,6 +362,7 @@ export function TestCaseEditor({
                   onChange={(value) => handleUpdate({ expectedOutput: value || null })}
                   placeholder={t('expectedOutputPlaceholder')}
                   rows={8}
+                  inputRef={expectedOutputRef as unknown as RefObject<HTMLInputElement | HTMLTextAreaElement>}
                   className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
                 />
               )}

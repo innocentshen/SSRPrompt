@@ -1,4 +1,5 @@
 {
+  "openExternal": "在新标签打开",
   "readOnly": "只读",
   "loading": "加载中...",
   "save": "保存",
@@ -84,5 +85,12 @@
   "ocrResultsMissing": "未找到OCR结果",
   "ocrResultsEmpty": "OCR结果为空",
   "ocrResultsFailed": "OCR失败",
-  "ocrResultsError": "OCR结果加载失败"
+  "ocrResultsError": "OCR结果加载失败",
+  "markdown": "Markdown",
+  "plainText": "纯文本",
+  "html": "HTML",
+  "preview": "预览",
+  "source": "源码",
+  "split": "分栏",
+  "allowScripts": "运行脚本"
 }

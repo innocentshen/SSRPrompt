@@ -27,9 +27,15 @@ export interface ReasoningOptions {
   effort?: 'default' | 'none' | 'low' | 'medium' | 'high';
 }
 
+export interface TraceMessageMeta {
+  modelId?: string;
+  thinking?: string;
+}
+
 export interface ChatCompletionOptions {
   modelId: string;
   messages: ChatMessage[];
+  traceMessageMeta?: TraceMessageMeta[];
   promptId?: string;
   chatRunId?: string;
   temperature?: number;

@@ -18,11 +18,12 @@ import {
   ChevronRight,
   Square,
 } from 'lucide-react';
-import { Button, MarkdownRenderer, ModelSelector, Select } from '../ui';
+import { Button, ModelSelector, OutputRenderer, OutputRendererControls, Select } from '../ui';
 import { ThinkingBlock } from './ThinkingBlock';
 import { AttachmentModal } from './AttachmentModal';
 import { chatApi, type StreamCallbacks, type ContentPart } from '../../api/chat';
 import { uploadFileAttachment, extractThinking, type FileAttachment } from '../../lib/ai-service';
+import { useOutputRenderPreferences } from '../../lib/output-renderer-prefs';
 import { toResponseFormat } from '../../lib/schema-utils';
 import { getFileInputAccept, isSupportedFileType } from '../../lib/file-utils';
 import { diffText, hasDiff, type DiffOp } from '../../lib/text-diff';
@@ -41,6 +42,7 @@ type ChatMessageState = {
   apiContent?: string | ContentPart[];
   attachments?: FileAttachment[];
   thinking?: string;
+  modelId?: string;
 };
 
 type ChatRun = {
@@ -61,7 +63,6 @@ type PromptTestPanelCacheState = {
   diffOnlyChanges: boolean;
   diffShowDeletions: boolean;
   activeDiffIndex: number;
-  renderMarkdown: boolean;
   fileProcessing: 'auto' | 'vision' | 'ocr' | 'none';
   ocrProviderOverride: OcrProvider | '';
 };
@@ -176,7 +177,7 @@ export function PromptTestPanel({
   const [internalThinking, setInternalThinking] = useState('');
   const [running, setRunning] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [renderMarkdown, setRenderMarkdown] = useState(cachedPanelState?.renderMarkdown ?? true);
+  const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [processingStage, setProcessingStage] = useState<'idle' | 'ocr' | 'llm'>('idle');
   const [isUploading, setIsUploading] = useState(false);
@@ -241,7 +242,6 @@ export function PromptTestPanel({
     const cached = promptTestPanelCacheByPromptId.get(promptId);
 
     if (!cached) {
-      setRenderMarkdown(true);
       setTestMode('single');
       setChatRuns([]);
       setChatInput('');
@@ -256,7 +256,6 @@ export function PromptTestPanel({
       return;
     }
 
-    setRenderMarkdown(cached.renderMarkdown);
     setTestMode(cached.testMode);
     setChatRuns(cached.chatRuns);
     setChatInput(cached.chatInput);
@@ -289,7 +288,6 @@ export function PromptTestPanel({
       diffOnlyChanges,
       diffShowDeletions,
       activeDiffIndex,
-      renderMarkdown,
       fileProcessing,
       ocrProviderOverride,
     });
@@ -305,7 +303,6 @@ export function PromptTestPanel({
     fileProcessing,
     ocrProviderOverride,
     promptId,
-    renderMarkdown,
     testMode,
   ]);
   const hasBinaryAttachments = useMemo(() => (
@@ -712,6 +709,8 @@ export function PromptTestPanel({
       throw new Error(t('configureModelProviderFirst'));
     }
 
+    upsertChatRun(runId, (run) => (run.modelId === model.id ? run : { ...run, modelId: model.id }));
+
     const preset = opts.presetMessages ?? buildPresetMessages();
 
     const resolveFileMode = (supportsVision: boolean): 'vision' | 'ocr' | 'none' => {
@@ -811,10 +810,17 @@ export function PromptTestPanel({
       { role: 'user' as const, content: userApiContent },
     ];
 
+    const traceMessageMeta = [
+      ...preset.map(() => ({})),
+      ...history.map((m) => (m.role === 'assistant' ? { modelId: m.modelId, thinking: m.thinking } : {})),
+      {},
+    ];
+
     await chatApi.streamWithCallbacks(
       {
         modelId: model.id,
         messages: apiMessages,
+        traceMessageMeta,
         promptId,
         chatRunId: runId,
         temperature: config?.temperature,
@@ -847,6 +853,11 @@ export function PromptTestPanel({
     const tokensInput = lastUsage?.prompt_tokens || 0;
     const tokensOutput = lastUsage?.completion_tokens || 0;
 
+    const resolveAssistantLabel = (modelId?: string) => {
+      if (!modelId) return undefined;
+      return models.find((m) => m.id === modelId)?.name || modelId;
+    };
+
     const transcript: ChatTranscriptMessage[] = [
       ...preset.map((m, index) => ({
         id: `preset_${index}`,
@@ -859,6 +870,8 @@ export function PromptTestPanel({
         content: m.content,
         attachments: m.attachments,
         thinking: m.thinking,
+        modelId: m.modelId,
+        assistantLabel: m.role === 'assistant' ? resolveAssistantLabel(m.modelId) : undefined,
       })),
       {
         id: userMessageId,
@@ -871,6 +884,8 @@ export function PromptTestPanel({
         role: 'assistant',
         content: latestAssistantContent,
         thinking: latestThinking || undefined,
+        modelId: model.id,
+        assistantLabel: resolveAssistantLabel(model.id),
       },
     ];
 
@@ -973,6 +988,7 @@ export function PromptTestPanel({
           id: assistantMessageId,
           role: 'assistant',
           content: '',
+          modelId: selectedModelId,
         },
       ],
     };
@@ -1036,7 +1052,7 @@ export function PromptTestPanel({
       messages: [
         ...run.messages,
         { id: userMessageId, role: 'user', content: text },
-        { id: assistantMessageId, role: 'assistant', content: '' },
+        { id: assistantMessageId, role: 'assistant', content: '', modelId: selectedModelId },
       ],
     }));
 
@@ -1145,7 +1161,7 @@ export function PromptTestPanel({
               apiContent: userApiContent,
               attachments: withAttachments && attachedFiles.length > 0 ? [...attachedFiles] : undefined,
             },
-            { id: assistantMessageId, role: 'assistant', content: '' },
+            { id: assistantMessageId, role: 'assistant', content: '', modelId: selectedModelId },
           ],
         }));
 
@@ -1175,6 +1191,7 @@ export function PromptTestPanel({
             role: 'assistant',
             content: completion.content,
             thinking: completion.thinking || undefined,
+            modelId: selectedModelId,
           },
         ];
       }
@@ -1485,27 +1502,16 @@ export function PromptTestPanel({
                     <Copy className="w-3.5 h-3.5" />
                     <span>{tCommon('copy')}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setRenderMarkdown(!renderMarkdown)}
-                    className={`text-xs px-2 py-1 rounded transition-colors ${
-                      renderMarkdown
-                        ? 'bg-cyan-500/20 text-cyan-400'
-                        : 'bg-slate-700 light:bg-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
-                    }`}
-                  >
-                    {renderMarkdown ? t('markdown') : t('plainText')}
-                  </button>
+                  <OutputRendererControls
+                    preferences={outputRenderPrefs}
+                    onChange={setOutputRenderPrefs}
+                  />
                 </div>
               </div>
 
               <div className="flex-1 min-h-0 p-3 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-300 light:text-slate-700 overflow-y-auto">
                 {output ? (
-                  renderMarkdown ? (
-                    <MarkdownRenderer content={output} />
-                  ) : (
-                    <pre className="whitespace-pre-wrap font-mono">{output}</pre>
-                  )
+                  <OutputRenderer content={output} preferences={outputRenderPrefs} isStreaming={running} />
                 ) : running ? (
                   <div className="flex items-center gap-2 text-slate-500 light:text-slate-600">
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1568,6 +1574,13 @@ export function PromptTestPanel({
                     placeholder={t('inputPlaceholder')}
                     disabled={running}
                     style={{ height: chatComposerHeight }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (running) return;
+                        void handleRunSingle();
+                      }
+                    }}
                     className="w-full p-3 pb-16 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 resize-none focus:outline-none focus:border-cyan-500 disabled:opacity-60"
                   />
 
@@ -1630,12 +1643,18 @@ export function PromptTestPanel({
                       size="sm"
                       onClick={running ? handleStopRun : handleRunSingle}
                       title={running ? tCommon('stop') : t('run')}
-                      className="rounded-full !p-2 flex-shrink-0"
+                      className="rounded-full flex-shrink-0 whitespace-nowrap"
                     >
                       {running ? (
-                        <Square className="w-4 h-4" />
+                        <>
+                          <Square className="w-4 h-4" />
+                          <span>{tCommon('stop')}</span>
+                        </>
                       ) : (
-                        <Play className="w-4 h-4" />
+                        <>
+                          <Play className="w-4 h-4" />
+                          <span>{t('run')}</span>
+                        </>
                       )}
                     </Button>
                   </div>
@@ -1663,6 +1682,10 @@ export function PromptTestPanel({
                 </div>
 
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <OutputRendererControls
+                    preferences={outputRenderPrefs}
+                    onChange={setOutputRenderPrefs}
+                  />
                   <button
                     type="button"
                     disabled={!baselineChatRun || !currentChatRun || baselineChatRun?.id === currentChatRun?.id}
@@ -1751,10 +1774,20 @@ export function PromptTestPanel({
                       const diffInfo = !isUser ? diffByAssistantMessageId.get(message.id) : undefined;
                       const showDiffForMessage = Boolean(showChatDiff && diffInfo);
                       const unchanged = Boolean(showDiffForMessage && diffInfo && !diffInfo.changed);
+                      const assistantModelId = !isUser ? (message.modelId || currentChatRun.modelId) : null;
+                      const assistantLabel = !isUser && assistantModelId
+                        ? (models.find((m) => m.id === assistantModelId)?.name || assistantModelId)
+                        : '';
 
                       const bubbleBase = isUser
                         ? 'bg-cyan-500/15 border-cyan-500/25 text-slate-100 light:bg-cyan-100 light:border-cyan-200 light:text-slate-900'
                         : 'bg-slate-800/70 light:bg-slate-50 border-slate-700 light:border-slate-200 text-slate-200 light:text-slate-800';
+
+                      const isStreamingMessage =
+                        !isUser &&
+                        running &&
+                        !isReplaying &&
+                        message.id === currentChatRun.messages[currentChatRun.messages.length - 1]?.id;
 
                       return (
                         <div
@@ -1766,9 +1799,9 @@ export function PromptTestPanel({
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span
                                 className="text-[12px] font-medium text-slate-300 light:text-slate-700 truncate max-w-[70%]"
-                                title={isUser ? t('userLabel') : (models.find((m) => m.id === currentChatRun.modelId)?.name || currentChatRun.modelId)}
+                                title={isUser ? t('userLabel') : assistantLabel}
                               >
-                                {isUser ? t('userLabel') : (models.find((m) => m.id === currentChatRun.modelId)?.name || currentChatRun.modelId)}
+                                {isUser ? t('userLabel') : assistantLabel}
                               </span>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 {!isUser && showDiffForMessage && diffInfo?.changed && (
@@ -1796,8 +1829,12 @@ export function PromptTestPanel({
                                   {renderDiffOps(diffInfo?.ops ?? [])}
                                 </div>
                               )
-                            ) : renderMarkdown && !isUser ? (
-                              <MarkdownRenderer content={message.content || ''} />
+                            ) : !isUser ? (
+                              <OutputRenderer
+                                content={message.content || ''}
+                                preferences={outputRenderPrefs}
+                                isStreaming={isStreamingMessage}
+                              />
                             ) : (
                               <pre className="whitespace-pre-wrap">{message.content || ''}</pre>
                             )}
@@ -1948,14 +1985,22 @@ export function PromptTestPanel({
                       onClick={running ? handleStopRun : currentChatRun ? handleChatSend : handleChatRunFirstTurn}
                       disabled={running ? false : currentChatRun ? (isReplaying || !chatInput.trim()) : isReplaying}
                       title={running ? tCommon('stop') : currentChatRun ? t('send') : t('runFirstTurn')}
-                      className="rounded-full !p-2 flex-shrink-0"
+                      className="rounded-full flex-shrink-0 whitespace-nowrap"
                     >
                       {running ? (
-                        <Square className="w-4 h-4" />
-                      ) : currentChatRun ? (
-                        <ArrowUp className="w-4 h-4" />
+                        <>
+                          <Square className="w-4 h-4" />
+                          <span>{tCommon('stop')}</span>
+                        </>
                       ) : (
-                        <Play className="w-4 h-4" />
+                        <>
+                          {currentChatRun ? (
+                            <ArrowUp className="w-4 h-4" />
+                          ) : (
+                            <Play className="w-4 h-4" />
+                          )}
+                          <span>{t('send')}</span>
+                        </>
                       )}
                     </Button>
                   </div>

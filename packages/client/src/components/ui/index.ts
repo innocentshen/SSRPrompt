@@ -8,6 +8,7 @@ export { ToastProvider } from './Toast';
 export { useToast } from '../../store/useUIStore';
 export type { ToastType } from '../../store/useUIStore';
 export { MarkdownRenderer } from './MarkdownRenderer';
+export { OutputRenderer, OutputRendererControls } from './OutputRenderer';
 export { Slider } from './Slider';
 export { Tabs } from './Tabs';
 export { Collapsible } from './Collapsible';

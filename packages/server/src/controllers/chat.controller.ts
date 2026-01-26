@@ -47,10 +47,16 @@ const ChatMessageSchema = z.object({
   content: z.union([z.string(), z.array(ContentPartSchema)]),
 });
 
+const TraceMessageMetaSchema = z.object({
+  modelId: z.string().uuid().optional(),
+  thinking: z.string().optional(),
+});
+
 // Chat completion request schema
 const ChatCompletionSchema = z.object({
   modelId: z.string().uuid(),
   messages: z.array(ChatMessageSchema).min(1),
+  traceMessageMeta: z.array(TraceMessageMetaSchema).optional(),
   promptId: z.string().uuid().optional(),
   chatRunId: z.string().optional(),
   temperature: z.number().min(0).max(2).optional(),
@@ -477,6 +483,18 @@ export const chatController = {
       }).filter(([, value]) => value !== undefined)
     ) as Prisma.InputJsonObject;
     const paramsMeta = Object.keys(modelParameters).length > 0 ? { modelParameters } : {};
+    const traceMessages = expanded.messages.map((m, idx) => {
+      const meta = data.traceMessageMeta?.[idx];
+      const modelId = meta && typeof meta.modelId === 'string' ? meta.modelId : undefined;
+      const thinkingRaw = meta && typeof meta.thinking === 'string' ? meta.thinking.trim() : '';
+      const thinking = m.role === 'assistant' && thinkingRaw ? thinkingRaw : undefined;
+      return {
+        role: m.role,
+        content: extractMessageText(m),
+        ...(modelId ? { modelId } : {}),
+        ...(thinking ? { thinking } : {}),
+      };
+    });
 
     if (data.stream) {
       // Set SSE headers
@@ -486,6 +504,10 @@ export const chatController = {
       res.setHeader('X-Accel-Buffering', 'no');
 
       let fullContent = '';
+      let fullThinking = '';
+      let thinkingStartedAt: number | null = null;
+      let thinkingEndedAt: number | null = null;
+      let reasoningDetails: Array<{ type: string; text?: string }> = [];
       let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
       try {
@@ -505,6 +527,31 @@ export const chatController = {
           const deltaContent = chunk.choices?.[0]?.delta?.content;
           if (deltaContent) {
             fullContent += deltaContent;
+          }
+
+          // Accumulate thinking (OpenRouter / Gemini / other OpenAI-compatible providers)
+          const deltaReasoning = (chunk as unknown as {
+            choices?: Array<{
+              delta?: { reasoning?: string; reasoning_content?: string };
+              message?: { reasoning_details?: Array<{ type: string; text?: string }> };
+            }>;
+          }).choices?.[0]?.delta?.reasoning
+            ?? (chunk as unknown as {
+              choices?: Array<{ delta?: { reasoning_content?: string } }>;
+            }).choices?.[0]?.delta?.reasoning_content;
+
+          if (deltaReasoning) {
+            fullThinking += deltaReasoning;
+            const now = Date.now();
+            if (thinkingStartedAt === null) thinkingStartedAt = now;
+            thinkingEndedAt = now;
+          }
+
+          const maybeDetails = (chunk as unknown as {
+            choices?: Array<{ message?: { reasoning_details?: Array<{ type: string; text?: string }> } }>;
+          }).choices?.[0]?.message?.reasoning_details;
+          if (Array.isArray(maybeDetails) && maybeDetails.length > 0) {
+            reasoningDetails = maybeDetails;
           }
 
           // Capture usage if present
@@ -536,6 +583,17 @@ export const chatController = {
         }
       } finally {
         const latencyMs = Date.now() - startTime;
+        const extractedThinking =
+          fullThinking.trim() ||
+          (reasoningDetails.length > 0
+            ? reasoningDetails
+                .filter((item) => item.type === 'reasoning.text' && item.text)
+                .map((item) => item.text)
+                .join('\n\n')
+                .trim()
+            : '');
+        const thinkingTimeMs =
+          thinkingStartedAt !== null && thinkingEndedAt !== null ? Math.max(0, thinkingEndedAt - thinkingStartedAt) : null;
 
         // Save trace if requested and not aborted
         if (data.saveTrace && !abortController.signal.aborted) {
@@ -543,6 +601,8 @@ export const chatController = {
             await tracesRepository.create(userId, {
               input: expanded.inputContent,
               output: fullContent || null,
+              thinkingContent: extractedThinking || undefined,
+              thinkingTimeMs: thinkingTimeMs ?? undefined,
               tokensInput: usage.prompt_tokens,
               tokensOutput: usage.completion_tokens,
               latencyMs,
@@ -551,7 +611,7 @@ export const chatController = {
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
               metadata: ({
-                ...(expanded.attachments.length > 0
+                  ...(expanded.attachments.length > 0
                   ? {
                       files: expanded.attachments.map((a) => ({
                         fileId: a.fileId,
@@ -562,7 +622,7 @@ export const chatController = {
                     }
                    : {}),
                   ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
-                  messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                  messages: traceMessages,
                   ...timingsMeta,
                   ...ocrMeta,
                   ...paramsMeta,
@@ -610,14 +670,14 @@ export const chatController = {
                       size: a.size,
                     })),
                     ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
-                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    messages: traceMessages,
                     ...timingsMeta,
                     ...ocrMeta,
                     ...paramsMeta,
                   }
                 : {
                     ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
-                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    messages: traceMessages,
                     ...timingsMeta,
                     ...ocrMeta,
                     ...paramsMeta,
@@ -662,14 +722,14 @@ export const chatController = {
                       size: a.size,
                     })),
                     ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
-                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    messages: traceMessages,
                     ...timingsMeta,
                     ...ocrMeta,
                     ...paramsMeta,
                   }
                 : {
                     ...(data.chatRunId ? { chatRunId: data.chatRunId } : {}),
-                    messages: expanded.messages.map((m) => ({ role: m.role, content: extractMessageText(m) })),
+                    messages: traceMessages,
                     ...timingsMeta,
                     ...ocrMeta,
                     ...paramsMeta,

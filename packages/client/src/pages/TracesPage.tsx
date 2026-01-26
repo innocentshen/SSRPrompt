@@ -21,6 +21,7 @@ import { Button, Badge, Select, Modal, Input, useToast } from '../components/ui'
 import { tracesApi, promptsApi, modelsApi } from '../api';
 import type { Trace, TraceListItem, PromptListItem, Model, OcrProvider } from '../types';
 import type { FileAttachment } from '../lib/ai-service';
+import { extractThinking } from '../lib/ai-service';
 import { AttachmentList } from '../components/Prompt/AttachmentPreview';
 import { AttachmentModal } from '../components/Prompt/AttachmentModal';
 import { ChatTranscript, type ChatTranscriptMessage } from '../components/Prompt/ChatTranscript';
@@ -227,6 +228,21 @@ export function TracesPage() {
     return stripOcrFileBlocks(selectedTrace.input, fileNames);
   }, [selectedTrace, selectedTraceOcr]);
 
+  const assistantResponse = useMemo(() => {
+    if (!selectedTrace) {
+      return { content: '', thinking: undefined as string | undefined };
+    }
+
+    const rawOutput = selectedTrace.output || '';
+    const extracted = extractThinking(rawOutput);
+    const storedThinking = (selectedTrace.thinkingContent ?? '').trim();
+    const mergedThinking = [storedThinking, extracted.thinking].filter(Boolean).join('\n\n').trim();
+    return {
+      content: extracted.content,
+      thinking: mergedThinking ? mergedThinking : undefined,
+    };
+  }, [selectedTrace]);
+
   const transcriptMessages = useMemo(() => {
     if (!selectedTrace) return null;
 
@@ -248,7 +264,10 @@ export function TracesPage() {
         if (roleValue !== 'system' && roleValue !== 'user' && roleValue !== 'assistant') return null;
         const role = roleValue as ChatTranscriptMessage['role'];
         const content = typeof record.content === 'string' ? normalizeContent(record.content) : '';
-        return { id: `${selectedTrace.id}_ctx_${idx}`, role, content };
+        const modelId = typeof record.modelId === 'string' ? record.modelId : undefined;
+        const thinking = typeof record.thinking === 'string' ? record.thinking : undefined;
+        const resolvedAssistantLabel = role === 'assistant' && modelId ? getModelName(modelId) : undefined;
+        return { id: `${selectedTrace.id}_ctx_${idx}`, role, content, thinking, modelId, assistantLabel: resolvedAssistantLabel };
       })
       .filter((message): message is ChatTranscriptMessage => message !== null);
 
@@ -268,12 +287,14 @@ export function TracesPage() {
     messages.push({
       id: `${selectedTrace.id}_assistant`,
       role: 'assistant',
-      content: selectedTrace.output || '',
-      thinking: selectedTrace.thinkingContent || undefined,
+      content: assistantResponse.content,
+      thinking: assistantResponse.thinking,
+      modelId: selectedTrace.modelId || undefined,
+      assistantLabel: getModelName(selectedTrace.modelId),
     });
 
     return messages;
-  }, [selectedTrace, selectedTraceOcr]);
+  }, [assistantResponse.content, assistantResponse.thinking, selectedTrace, selectedTraceOcr]);
 
   // Group traces by prompt and calculate stats
   const promptStatsList = useMemo(() => {
@@ -710,8 +731,10 @@ export function TracesPage() {
                     {
                       id: `${selectedTrace.id}_assistant`,
                       role: 'assistant',
-                      content: selectedTrace.output || '',
-                      thinking: selectedTrace.thinkingContent || undefined,
+                      content: assistantResponse.content,
+                      thinking: assistantResponse.thinking,
+                      modelId: selectedTrace.modelId || undefined,
+                      assistantLabel: getModelName(selectedTrace.modelId),
                     },
                   ]
                 }

@@ -1016,14 +1016,20 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                     disabled={isLoading ? false : ((!inputMessage.trim() && attachedFiles.length === 0) || !selectedModelId)}
                     size="sm"
                     variant={isLoading ? 'danger' : 'primary'}
-                    className="rounded-lg"
+                    className="rounded-lg whitespace-nowrap"
                     title={isLoading ? tCommon('stop') : undefined}
                     aria-label={isLoading ? tCommon('stop') : undefined}
                   >
                     {isLoading ? (
-                      <X className="w-4 h-4" />
+                      <>
+                        <X className="w-4 h-4" />
+                        <span>{tCommon('stop')}</span>
+                      </>
                     ) : (
-                      <Send className="w-4 h-4" />
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>{t('send')}</span>
+                      </>
                     )}
                   </Button>
                 </div>

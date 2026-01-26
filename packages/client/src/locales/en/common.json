@@ -83,5 +83,13 @@
   "ocrResultsMissing": "No OCR results",
   "ocrResultsEmpty": "OCR output is empty",
   "ocrResultsFailed": "OCR failed",
-  "ocrResultsError": "Failed to load OCR results"
+  "ocrResultsError": "Failed to load OCR results",
+  "markdown": "Markdown",
+  "plainText": "Plain Text",
+  "html": "HTML",
+  "preview": "Preview",
+  "openExternal": "Open External",
+  "source": "Source",
+  "split": "Split",
+  "allowScripts": "Run scripts"
 }

@@ -19,11 +19,12 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import { Badge, Button, Collapsible, MarkdownRenderer } from '../ui';
+import { Badge, Button, Collapsible, MarkdownRenderer, OutputRenderer, OutputRendererControls } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
 import type { EvaluationCriterion, FileAttachment, OcrProvider, TestCase, TestCaseResult } from '../../types';
 import { getFileIconType } from '../../lib/file-utils';
+import { useOutputRenderPreferences } from '../../lib/output-renderer-prefs';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
@@ -59,6 +60,7 @@ export function EvaluationResultsView({
 }: EvaluationResultsViewProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
+  const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ResultFilter>('all');
@@ -423,7 +425,7 @@ export function EvaluationResultsView({
                       </div>
                       <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-80 overflow-y-auto">
                         {activeTestCase?.expectedOutput ? (
-                          <MarkdownRenderer content={activeTestCase.expectedOutput} />
+                          <OutputRenderer content={activeTestCase.expectedOutput} preferences={outputRenderPrefs} />
                         ) : (
                           <span className="text-slate-500 light:text-slate-400 text-xs">{t('noExpectedOutput')}</span>
                         )}
@@ -433,19 +435,25 @@ export function EvaluationResultsView({
                     <div>
                       <div className="px-3 py-1.5 bg-slate-800 light:bg-sky-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-sky-400 light:text-sky-600">{t('modelOutput')}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(activeResult.modelOutput || '', 'model')}
-                          disabled={!activeResult.modelOutput}
-                          className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-sky-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-sky-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={tCommon('copy')}
-                        >
-                          {copiedField === 'model' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <OutputRendererControls
+                            preferences={outputRenderPrefs}
+                            onChange={setOutputRenderPrefs}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(activeResult.modelOutput || '', 'model')}
+                            disabled={!activeResult.modelOutput}
+                            className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-sky-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-sky-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={tCommon('copy')}
+                          >
+                            {copiedField === 'model' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
                       </div>
                       <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-80 overflow-y-auto">
                         {activeResult.modelOutput ? (
-                          <MarkdownRenderer content={activeResult.modelOutput} />
+                          <OutputRenderer content={activeResult.modelOutput} preferences={outputRenderPrefs} />
                         ) : (
                           <span className="text-slate-500 light:text-slate-400 text-xs">{t('noOutput')}</span>
                         )}

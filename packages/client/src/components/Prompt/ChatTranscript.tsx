@@ -13,6 +13,8 @@ export type ChatTranscriptMessage = {
   content: string;
   attachments?: FileAttachment[];
   thinking?: string;
+  modelId?: string;
+  assistantLabel?: string;
 };
 
 export interface ChatTranscriptProps {
@@ -75,7 +77,11 @@ export function ChatTranscript({
             ? `${bubbleBase} bg-cyan-500/15 light:bg-cyan-50 border-cyan-500/30 light:border-cyan-200 text-slate-100 light:text-slate-900 rounded-br-md`
             : `${bubbleBase} bg-slate-800/50 light:bg-white border-slate-700 light:border-slate-200 text-slate-100 light:text-slate-900 rounded-bl-md`;
 
-        const label = isSystem ? systemLabel : isUser ? effectiveUserLabel : assistantLabel;
+        const label = isSystem
+          ? systemLabel
+          : isUser
+            ? effectiveUserLabel
+            : (message.assistantLabel || assistantLabel);
         const labelColor = isSystem
           ? 'text-slate-400 light:text-slate-500'
           : isUser
@@ -87,7 +93,7 @@ export function ChatTranscript({
             <div className={bubbleClass}>
               <div className="flex items-center justify-between gap-2 mb-2">
                 <span className={`text-xs font-medium ${labelColor}`}>{label}</span>
-                {!isSystem && (
+              {!isSystem && (
                   <button
                     type="button"
                     onClick={() => void handleCopy(id, message.content)}
@@ -103,6 +109,12 @@ export function ChatTranscript({
                 )}
               </div>
 
+              {isAssistant && message.thinking && message.thinking.trim() && (
+                <div className="mb-2">
+                  <ThinkingBlock thinking={message.thinking} defaultExpanded={false} className="mb-0" />
+                </div>
+              )}
+
               {message.content ? (
                 <MarkdownRenderer content={message.content} />
               ) : (
@@ -117,12 +129,6 @@ export function ChatTranscript({
                     maxVisible={8}
                     onPreview={onPreviewAttachment}
                   />
-                </div>
-              )}
-
-              {isAssistant && message.thinking && message.thinking.trim() && (
-                <div className="mt-2">
-                  <ThinkingBlock thinking={message.thinking} defaultExpanded={false} className="mb-0" />
                 </div>
               )}
             </div>
