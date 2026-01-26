@@ -16,13 +16,13 @@ export interface ThinkingContent {
 
 // 思考内容检测正则模式
 const THINKING_PATTERNS = [
-  /<thinking>([\s\S]*?)<\/thinking>/gi,
-  /<think>([\s\S]*?)<\/think>/gi,
-  /<thought>([\s\S]*?)<\/thought>/gi,
-  /<reasoning>([\s\S]*?)<\/reasoning>/gi,
-  /\[THINKING\]([\s\S]*?)\[\/THINKING\]/gi,
-  /◁think▷([\s\S]*?)◁\/think▷/gi,
-  /<seed:think>([\s\S]*?)<\/seed:think>/gi,
+  /<thinking>(?:\s*[:\uFF1A]\s*)?([\s\S]*?)<\/thinking>(?:\s*[:\uFF1A]\s*)?/gi,
+  /<think>(?:\s*[:\uFF1A]\s*)?([\s\S]*?)<\/think>(?:\s*[:\uFF1A]\s*)?/gi,
+  /<thought>(?:\s*[:\uFF1A]\s*)?([\s\S]*?)<\/thought>(?:\s*[:\uFF1A]\s*)?/gi,
+  /<reasoning>(?:\s*[:\uFF1A]\s*)?([\s\S]*?)<\/reasoning>(?:\s*[:\uFF1A]\s*)?/gi,
+  /\[THINKING\](?:\s*[:\uFF1A]\s*)?([\s\S]*?)\[\/THINKING\](?:\s*[:\uFF1A]\s*)?/gi,
+  /◁think▷(?:\s*[:\uFF1A]\s*)?([\s\S]*?)◁\/think▷(?:\s*[:\uFF1A]\s*)?/gi,
+  /<seed:think>(?:\s*[:\uFF1A]\s*)?([\s\S]*?)<\/seed:think>(?:\s*[:\uFF1A]\s*)?/gi,
   /###\s*Thinking\s*\n([\s\S]*?)(?=###\s*Response|$)/gi,
 ];
 
@@ -40,7 +40,9 @@ export function extractThinking(response: string): ThinkingContent {
     const matches = response.matchAll(new RegExp(pattern.source, pattern.flags));
     for (const match of matches) {
       if (match[1]) {
-        thinking += (thinking ? '\n\n' : '') + match[1].trim();
+        const cleaned = match[1].replace(/^\s*[:\uFF1A]\s*/, '').trim();
+        if (!cleaned) continue;
+        thinking += (thinking ? '\n\n' : '') + cleaned;
       }
     }
 
@@ -50,6 +52,12 @@ export function extractThinking(response: string): ThinkingContent {
 
   // Clean up ###Response header if it exists (from ###Thinking format)
   content = content.replace(/^###\s*Response\s*\n?/gim, '');
+
+  // Some models place a ":" separator between thinking and the final answer.
+  // If we've extracted thinking, strip a leading separator from the remaining content.
+  if (thinking.trim()) {
+    content = content.replace(/^\s*[:\uFF1A]\s*/, '');
+  }
 
   return {
     thinking: thinking.trim(),

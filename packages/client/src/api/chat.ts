@@ -64,6 +64,7 @@ export interface StreamChunk {
       content?: string;
       reasoning?: string;
       reasoning_content?: string;
+      reasoning_details?: Array<{ type: string; text?: string }>;
     };
     message?: {
       reasoning_details?: Array<{ type: string; text?: string }>;
@@ -75,6 +76,167 @@ export interface StreamChunk {
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+function createThinkingTagStripper() {
+  const tokens = [
+    '<think>',
+    '</think>',
+    '<thinking>',
+    '</thinking>',
+    '<thought>',
+    '</thought>',
+    '<reasoning>',
+    '</reasoning>',
+    '<seed:think>',
+    '</seed:think>',
+  ];
+  const tokensLower = tokens.map((t) => t.toLowerCase());
+
+  let carry = '';
+
+  const feed = (chunk: string): string => {
+    if (!chunk) return '';
+    const input = carry + chunk;
+    let out = '';
+
+    let i = 0;
+    while (i < input.length) {
+      // Full-token match
+      let matched = false;
+      for (let t = 0; t < tokens.length; t++) {
+        const token = tokens[t];
+        const tokenLen = token.length;
+        if (
+          i + tokenLen <= input.length &&
+          input.slice(i, i + tokenLen).toLowerCase() === tokensLower[t]
+        ) {
+          matched = true;
+          i += tokenLen;
+          break;
+        }
+      }
+      if (matched) continue;
+
+      // If the remaining suffix could be the start of a token, buffer it for the next chunk.
+      const suffix = input.slice(i);
+      const maybeTokenPrefix = tokensLower.some((token) => token.startsWith(suffix.toLowerCase()));
+      if (maybeTokenPrefix) break;
+
+      out += input[i];
+      i += 1;
+    }
+
+    carry = input.slice(i);
+    return out;
+  };
+
+  const flush = (): string => {
+    const out = carry;
+    carry = '';
+    return out;
+  };
+
+  return { feed, flush };
+}
+
+type JsonSchemaResponseFormat = {
+  type: 'json_schema';
+  json_schema?: {
+    schema?: {
+      type?: string;
+    };
+  };
+};
+
+function isJsonSchemaResponseFormat(value: unknown): value is JsonSchemaResponseFormat {
+  if (!value || typeof value !== 'object') return false;
+  return (value as { type?: unknown }).type === 'json_schema';
+}
+
+function extractBalancedJson(source: string, startIndex: number): string | null {
+  const open = source[startIndex];
+  if (open !== '{' && open !== '[') return null;
+
+  const stack: Array<'{' | '['> = [open];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIndex + 1; i < source.length; i++) {
+    const ch = source[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{' || ch === '[') {
+      stack.push(ch);
+      continue;
+    }
+
+    if (ch === '}' || ch === ']') {
+      const last = stack.pop();
+      if (!last) return null;
+      if ((last === '{' && ch !== '}') || (last === '[' && ch !== ']')) return null;
+
+      if (stack.length === 0) {
+        return source.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeStructuredJsonOutput(content: string, responseFormat: JsonSchemaResponseFormat): string {
+  const trimmed = content.trim();
+  if (!trimmed) return content;
+
+  // Already valid JSON; keep as-is (but trim).
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // continue
+  }
+
+  const rootType = responseFormat.json_schema?.schema?.type;
+  const preferredStart = rootType === 'array' ? '[' : '{';
+
+  let startIndex = content.indexOf(preferredStart);
+  if (startIndex === -1) {
+    const objIndex = content.indexOf('{');
+    const arrIndex = content.indexOf('[');
+    if (objIndex === -1 && arrIndex === -1) return content;
+    startIndex =
+      objIndex === -1 ? arrIndex : arrIndex === -1 ? objIndex : Math.min(objIndex, arrIndex);
+  }
+
+  const candidate = extractBalancedJson(content, startIndex);
+  if (!candidate) return content;
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return JSON.stringify(parsed);
+  } catch {
+    return candidate.trim();
+  }
 }
 
 export interface ChatCompletionResult {
@@ -156,6 +318,7 @@ export async function streamChatCompletionEnhanced(
     let buffer = '';
     let fullContent = '';
     let fullThinking = '';
+    const thinkingStripper = createThinkingTagStripper();
     let lastUsage: StreamChunk['usage'] | undefined;
     let reasoningDetails: Array<{ type: string; text?: string }> = [];
 
@@ -184,7 +347,16 @@ export async function streamChatCompletionEnhanced(
                   .map((item) => item.text)
                   .join('\n\n');
               }
-              callbacks.onComplete?.({ content: fullContent, thinking: fullThinking || undefined, usage: lastUsage });
+              fullThinking += thinkingStripper.flush();
+              const normalizedThinking = fullThinking.trim();
+              const normalizedContent = isJsonSchemaResponseFormat(options.responseFormat)
+                ? normalizeStructuredJsonOutput(fullContent, options.responseFormat)
+                : fullContent;
+              callbacks.onComplete?.({
+                content: normalizedContent,
+                thinking: normalizedThinking ? normalizedThinking : undefined,
+                usage: lastUsage,
+              });
               return;
             }
 
@@ -217,14 +389,21 @@ export async function streamChatCompletionEnhanced(
             // Handle reasoning delta (OpenRouter format)
             // Handle reasoning delta (provider-dependent).
             // Some providers may emit both `reasoning` and `reasoning_content` with the same value.
-            const reasoningParts = [delta?.reasoning_content, delta?.reasoning].filter(
-              (value): value is string => typeof value === 'string' && value.length > 0
-            );
+            const deltaReasoningDetails = delta?.reasoning_details ?? [];
+            const reasoningParts = [
+              delta?.reasoning_content,
+              delta?.reasoning,
+              ...deltaReasoningDetails
+                .filter((item) => item?.type === 'reasoning.text' && typeof item.text === 'string' && item.text.length > 0)
+                .map((item) => item.text as string),
+            ].filter((value): value is string => typeof value === 'string' && value.length > 0);
             if (reasoningParts.length > 0) {
               const uniqueReasoningParts = [...new Set(reasoningParts)];
               for (const part of uniqueReasoningParts) {
-                fullThinking += part;
-                callbacks.onThinkingToken?.(part);
+                const cleaned = thinkingStripper.feed(part);
+                if (!cleaned) continue;
+                fullThinking += cleaned;
+                callbacks.onThinkingToken?.(cleaned);
                 await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
               }
             }
@@ -252,7 +431,16 @@ export async function streamChatCompletionEnhanced(
         .map((item) => item.text)
         .join('\n\n');
     }
-    callbacks.onComplete?.({ content: fullContent, thinking: fullThinking || undefined, usage: lastUsage });
+    fullThinking += thinkingStripper.flush();
+    const normalizedThinking = fullThinking.trim();
+    const normalizedContent = isJsonSchemaResponseFormat(options.responseFormat)
+      ? normalizeStructuredJsonOutput(fullContent, options.responseFormat)
+      : fullContent;
+    callbacks.onComplete?.({
+      content: normalizedContent,
+      thinking: normalizedThinking ? normalizedThinking : undefined,
+      usage: lastUsage,
+    });
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
       callbacks.onAbort?.();

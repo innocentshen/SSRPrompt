@@ -14,6 +14,109 @@ import { filesService } from '../services/files.service.js';
 import { ocrService } from '../services/ocr.service.js';
 import { providersService } from '../services/providers.service.js';
 
+function normalizeThinkingText(value: string): string {
+  return value
+    .replace(/<\/?(?:think|thinking|thought|reasoning|seed:think)>/gi, '')
+    .replace(/\[\/?THINKING\]/gi, '')
+    .replace(/^\s*[:\uFF1A]\s*/, '')
+    .trim();
+}
+
+type JsonSchemaResponseFormat = {
+  type: 'json_schema';
+  json_schema?: { schema?: { type?: string } };
+};
+
+function isJsonSchemaResponseFormat(value: unknown): value is JsonSchemaResponseFormat {
+  if (!value || typeof value !== 'object') return false;
+  return (value as { type?: unknown }).type === 'json_schema';
+}
+
+function extractBalancedJson(source: string, startIndex: number): string | null {
+  const open = source[startIndex];
+  if (open !== '{' && open !== '[') return null;
+
+  const stack: Array<'{' | '['> = [open];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIndex + 1; i < source.length; i++) {
+    const ch = source[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{' || ch === '[') {
+      stack.push(ch);
+      continue;
+    }
+
+    if (ch === '}' || ch === ']') {
+      const last = stack.pop();
+      if (!last) return null;
+      if ((last === '{' && ch !== '}') || (last === '[' && ch !== ']')) return null;
+
+      if (stack.length === 0) {
+        return source.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeStructuredJsonOutput(content: string, responseFormat: JsonSchemaResponseFormat): string {
+  const trimmed = content.trim();
+  if (!trimmed) return content;
+
+  // Already valid JSON; keep as-is (but trim).
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // continue
+  }
+
+  const rootType = responseFormat.json_schema?.schema?.type;
+  const preferredStart = rootType === 'array' ? '[' : '{';
+
+  let startIndex = content.indexOf(preferredStart);
+  if (startIndex === -1) {
+    const objIndex = content.indexOf('{');
+    const arrIndex = content.indexOf('[');
+    if (objIndex === -1 && arrIndex === -1) return content;
+    startIndex =
+      objIndex === -1 ? arrIndex : arrIndex === -1 ? objIndex : Math.min(objIndex, arrIndex);
+  }
+
+  const candidate = extractBalancedJson(content, startIndex);
+  if (!candidate) return content;
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return JSON.stringify(parsed);
+  } catch {
+    return candidate.trim();
+  }
+}
+
 // Content part schema for vision and files
 const ContentPartSchema = z.discriminatedUnion('type', [
   z.object({
@@ -583,7 +686,10 @@ export const chatController = {
         }
       } finally {
         const latencyMs = Date.now() - startTime;
-        const extractedThinking =
+        const normalizedOutput = isJsonSchemaResponseFormat(data.responseFormat)
+          ? normalizeStructuredJsonOutput(fullContent, data.responseFormat)
+          : fullContent;
+        const rawThinking =
           fullThinking.trim() ||
           (reasoningDetails.length > 0
             ? reasoningDetails
@@ -592,6 +698,7 @@ export const chatController = {
                 .join('\n\n')
                 .trim()
             : '');
+        const extractedThinking = normalizeThinkingText(rawThinking);
         const thinkingTimeMs =
           thinkingStartedAt !== null && thinkingEndedAt !== null ? Math.max(0, thinkingEndedAt - thinkingStartedAt) : null;
 
@@ -600,13 +707,13 @@ export const chatController = {
           try {
             await tracesRepository.create(userId, {
               input: expanded.inputContent,
-              output: fullContent || null,
+              output: normalizedOutput || null,
               thinkingContent: extractedThinking || undefined,
               thinkingTimeMs: thinkingTimeMs ?? undefined,
               tokensInput: usage.prompt_tokens,
               tokensOutput: usage.completion_tokens,
               latencyMs,
-              status: fullContent ? 'success' : 'error',
+              status: normalizedOutput ? 'success' : 'error',
               prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
               model: { connect: { id: model.id } },
               attachments: expanded.attachments.length > 0 ? expanded.attachments : undefined,
@@ -647,13 +754,16 @@ export const chatController = {
         );
 
         const latencyMs = Date.now() - startTime;
+        const normalizedOutput = isJsonSchemaResponseFormat(data.responseFormat)
+          ? normalizeStructuredJsonOutput(result.content, data.responseFormat)
+          : result.content;
 
         // Save trace if requested
         if (data.saveTrace) {
           try {
             await tracesRepository.create(userId, {
               input: expanded.inputContent,
-              output: result.content,
+              output: normalizedOutput,
               tokensInput: result.usage.prompt_tokens,
               tokensOutput: result.usage.completion_tokens,
               latencyMs,
@@ -690,7 +800,7 @@ export const chatController = {
 
         res.json({
           data: {
-            content: result.content,
+            content: normalizedOutput,
             usage: result.usage,
             latencyMs,
             ocrLatencyMs,
