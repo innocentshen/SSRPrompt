@@ -21,6 +21,22 @@ SSRPrompt v2.0 采用全新的前后端分离架构，带来更好的安全性�
 - **多租户隔离** - 强制用户数据隔离，保障数据安全
 - **PostgreSQL** - 统一使用 PostgreSQL 数据库
 
+## 与 main 分支差异
+
+> 当前分支为 v2.0 重构版本；与 `main` 分支（当前稳定版）的架构/部署方式不兼容。
+
+| 维度 | `main`（稳定版） | 当前分支（v2.0） |
+|------|------------------|------------------|
+| 包管理 | npm | pnpm workspace |
+| 代码结构 | 单仓前端 + 可选 `server/`（MySQL 代理） | Monorepo：`packages/client` + `packages/server` + `packages/shared` |
+| 数据库 | Supabase（PostgreSQL）/ MySQL；支持 Demo 空间免配置体验 | 仅 PostgreSQL；Prisma 管理 Schema；提供旧版数据迁移脚本 |
+| AI 调用与 Key | 主要由前端发起调用 | 统一由后端代理；API Key AES-256-GCM 加密存储；前端不接触 Key |
+| 认证与会话 | 前端访问密码（`VITE_APP_PASSWORD`） | JWT 登录 + Refresh Token；Access Token 24h；Demo 有效期 7 天 |
+| 配置方式 | 以设置页为主（数据库/服务商都可在前端配置） | 以服务端 `.env` 为主（`DATABASE_URL/JWT_SECRET/ENCRYPTION_KEY` 等） |
+| 启动方式 | 可仅启动前端（Supabase/Demo），MySQL 才需要启动后端 | 需要启动后端（建议 `pnpm dev:all` 同时启动 client/server/worker） |
+
+如果你在找 `main` 分支的 Supabase/MySQL/Docker/Vercel 等部署/配置说明，请切换到 `main` 分支查看对应文档。
+
 ## 功能特性
 
 ### 核心功能
@@ -138,12 +154,12 @@ pnpm --filter @ssrprompt/server prisma:seed
 
 ```bash
 # 同时启动前端和后端（推荐）
-pnpm dev:all          # ??????/??/worker
+pnpm dev:all          # 同时启动 client/server/worker
 
 # 或分别启动
 pnpm dev          # 前端 http://localhost:5173
 pnpm dev:server   # 后端 http://localhost:3001
-pnpm dev:worker       # ?? worker
+pnpm dev:worker       # 启动 worker
 ```
 
 ## 项目结构
@@ -302,8 +318,8 @@ GET    /api/v1/stats/usage            # 获取使用统计
 # 开发
 pnpm dev              # 启动前端
 pnpm dev:server       # 启动后端
-pnpm dev:worker       # ?? worker
-pnpm dev:all          # ??????/??/worker
+pnpm dev:worker       # 启动 worker
+pnpm dev:all          # 同时启动 client/server/worker
 
 # 构建
 pnpm build            # 构建前端
@@ -356,9 +372,9 @@ const decrypted = decrypt(encrypted);
 
 ### JWT 认证
 
-- Token 有效期：7 天
-- 支持 Demo 和 Personal 两种租户类型
-- Token 过期自动刷新（Demo 模式）
+- Access Token 有效期：24h（通过 Refresh Token 自动续签）
+- Refresh Token 有效期：7 天
+- Demo 空间有效期：7 天（Demo Token 自动续期，超期需重置）
 
 ### 多租户隔离
 
