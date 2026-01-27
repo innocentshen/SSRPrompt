@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+.tmp
+tmp-*
+*.log
+
+.git
+.gitignore
+
+.env
+.env.*
+packages/*/.env
+packages/*/.env.*
+

@@ -1,0 +1,39 @@
+FROM node:20-bookworm-slim AS build
+
+WORKDIR /repo
+
+# Native deps for packages like bcrypt
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/client/package.json packages/client/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/server/package.json packages/server/package.json
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared packages/shared
+COPY packages/server packages/server
+
+# Prisma requires DATABASE_URL to exist for `prisma generate` (no real DB is needed at build time).
+ARG DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ssrprompt"
+ENV DATABASE_URL=$DATABASE_URL
+
+RUN pnpm --filter @ssrprompt/shared build \
+  && pnpm --filter @ssrprompt/server exec prisma generate \
+  && pnpm --filter @ssrprompt/server build \
+  && pnpm --filter @ssrprompt/server deploy --prod /out/server
+
+FROM node:20-bookworm-slim AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=build /out/server ./packages/server
+
+EXPOSE 3001
+CMD ["node", "packages/server/dist/index.js"]
