@@ -1,6 +1,5 @@
 {
   "$schema": "https://zeabur.com/schemas/zeabur.json",
   "build_command": "pnpm install && pnpm --filter @ssrprompt/shared build && pnpm --filter @ssrprompt/server exec prisma generate && pnpm --filter @ssrprompt/server build",
-  "start_command": "node packages/server/dist/index.js",
-  "output_directory": "packages/server/dist"
+  "start_command": "node packages/server/dist/index.js"
 }
