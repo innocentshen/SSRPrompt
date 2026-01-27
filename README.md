@@ -405,7 +405,7 @@ const envSchema = z.object({
 
 ### 部署架构
 
-- **前端（Web）**：静态资源（`pnpm build` 输出到 `dist/client`），可部署到 Nginx / Vercel / OSS 等
+- **前端（Web）**：静态资源（`pnpm build` 输出到 `packages/client/dist`），可部署到 Nginx / Vercel / OSS 等
 - **后端（API）**：Node.js + Express（默认 `:3001`）
 - **数据库**：PostgreSQL（必需）
 - **对象存储**：S3 兼容（可选，但启用附件/文件上传功能需要；可用 MinIO / AWS S3 / Cloudflare R2 等）
