@@ -1,0 +1,6 @@
+{
+  "buildCommand": "pnpm --filter @ssrprompt/client build",
+  "outputDirectory": "dist/client",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+
