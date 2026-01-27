@@ -10,6 +10,7 @@ RUN apt-get update \
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tsconfig.base.json tsconfig.base.json
 COPY packages/client/package.json packages/client/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/server/package.json packages/server/package.json
