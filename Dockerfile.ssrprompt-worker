@@ -27,7 +27,8 @@ ENV DATABASE_URL=$DATABASE_URL
 RUN pnpm --filter @ssrprompt/shared build \
   && pnpm --filter @ssrprompt/server exec prisma generate \
   && pnpm --filter @ssrprompt/server build \
-  && pnpm --filter @ssrprompt/server deploy --prod /out/server
+  && pnpm --filter @ssrprompt/server deploy --prod /out/server \
+  && cd /out/server && node /repo/packages/server/node_modules/prisma/build/index.js generate --schema ./prisma/schema.prisma
 
 FROM node:20-bookworm-slim AS runtime
 
