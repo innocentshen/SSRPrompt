@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @ssrprompt/client dev",
-    "dev:server": "pnpm --filter @ssrprompt/server dev",
-    "dev:worker": "pnpm --filter @ssrprompt/server worker",
-    "dev:all": "concurrently \"pnpm run dev\" \"pnpm run dev:server\" \"pnpm run dev:worker\"",
+    "dev:server": "pnpm db:generate && pnpm --filter @ssrprompt/server dev",
+    "dev:worker": "pnpm db:generate && pnpm --filter @ssrprompt/server worker",
+    "dev:all": "pnpm db:generate && concurrently \"pnpm run dev\" \"pnpm --filter @ssrprompt/server dev\" \"pnpm --filter @ssrprompt/server worker\"",
     "build": "pnpm --filter @ssrprompt/client build",
     "build:shared": "pnpm --filter @ssrprompt/shared build",
     "build:server": "pnpm --filter @ssrprompt/server build",
