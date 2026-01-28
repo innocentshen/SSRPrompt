@@ -25,6 +25,7 @@ import { ApiError } from '../api';
 import { chatApi, type StreamCallbacks, type ContentPart } from '../api/chat';
 import { uploadFileAttachment, extractThinking, type FileAttachment } from '../lib/ai-service';
 import { invalidatePromptsCache } from '../lib/cache-events';
+import { getErrorMessage } from '../lib/error-messages';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import type { Model, Provider, PromptConfig, OcrProvider } from '../types';
 import { DEFAULT_PROMPT_CONFIG } from '../types/database';
@@ -451,7 +452,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
       );
     } catch (e) {
       abortControllerRef.current = null;
-      showToast('error', `${t('wizardSendFailed')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('wizardSendFailed')}: ${getErrorMessage(e)}`);
       setIsLoading(false);
       setStreamingContent('');
       setStreamingThinking('');
@@ -581,7 +582,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
       showToast('success', t('wizardPromptSaved'));
       onNavigate('prompts');
     } catch (e) {
-      showToast('error', `${t('wizardSaveFailed')}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      showToast('error', `${t('wizardSaveFailed')}: ${getErrorMessage(e)}`);
     } finally {
       setIsSaving(false);
     }

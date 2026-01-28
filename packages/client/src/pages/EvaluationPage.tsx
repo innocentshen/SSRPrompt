@@ -29,6 +29,7 @@ import type { FileAttachment } from '../lib/ai-service';
 import { getFileUploadCapabilities } from '../lib/model-capabilities';
 import { cacheEvents } from '../lib/cache-events';
 import { formatDateTime } from '../lib/date-utils';
+import { getErrorMessage } from '../lib/error-messages';
 import { DEFAULT_PROMPT_CONFIG } from '../types';
 import { useAuthStore } from '../store/useAuthStore';
 import type {
@@ -1060,7 +1061,7 @@ export function EvaluationPage() {
       setShowNewEval(false);
       showToast('success', t('evaluationCreated'));
     } catch (e) {
-      showToast('error', t('createFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('createFailed') + ': ' + getErrorMessage(e));
     }
   };
 
@@ -1985,7 +1986,7 @@ export function EvaluationPage() {
       selectEvaluation(remaining[0] || null);
       showToast('success', t('evaluationDeleted'));
     } catch (e) {
-      showToast('error', t('deleteFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('deleteFailed') + ': ' + getErrorMessage(e));
     }
   };
 

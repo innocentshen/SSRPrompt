@@ -92,5 +92,31 @@
   "preview": "預覽",
   "source": "原始碼",
   "split": "分欄",
-  "allowScripts": "執行腳本"
+  "allowScripts": "執行腳本",
+  "errors": {
+    "UNKNOWN_ERROR": "未知錯誤",
+    "NETWORK_ERROR": "網路錯誤，請檢查網路後重試。",
+    "REQUEST_ABORTED": "請求已取消。",
+    "INVALID_RESPONSE": "伺服器回應異常。",
+    "INIT_FAILED": "初始化失敗。",
+    "UNAUTHORIZED": "未登入或登入已失效，請重新登入。",
+    "TOKEN_EXPIRED": "登入已過期，請重新登入。",
+    "TOKEN_INVALID": "登入資訊無效，請重新登入。",
+    "FORBIDDEN": "沒有權限執行此操作。",
+    "NOT_FOUND": "資源不存在。",
+    "CONFLICT": "資料衝突，請重新整理後重試。",
+    "RATE_LIMIT_EXCEEDED": "請求過於頻繁，請稍後再試。",
+    "REGISTRATION_DISABLED": "註冊已關閉。",
+    "VALIDATION_ERROR": "參數錯誤，請檢查後重試。",
+    "INVALID_REQUEST": "無效的請求。",
+    "PROVIDER_ERROR": "服務供應商錯誤，請檢查設定後重試。",
+    "QUOTA_EXCEEDED": "額度已用盡。",
+    "MODEL_NOT_AVAILABLE": "模型不可用。",
+    "STREAM_ABORTED": "串流輸出已中斷。",
+    "CONTEXT_LIMIT_EXCEEDED": "上下文長度超限。",
+    "FILE_UPLOAD_NOT_ALLOWED": "不允許上傳檔案。",
+    "DATABASE_ERROR": "資料庫錯誤。",
+    "ENCRYPTION_ERROR": "加密錯誤。",
+    "INTERNAL_ERROR": "伺服器錯誤，請稍後重試。"
+  }
 }

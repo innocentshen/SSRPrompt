@@ -6,6 +6,7 @@ import { Button, Badge } from '../components/ui';
 import { ParameterPanel, PromptTestPanel, StructuredOutputEditor, VariableEditor } from '../components/Prompt';
 import { promptsApi } from '../api';
 import { formatDate } from '../lib/date-utils';
+import { getErrorMessage } from '../lib/error-messages';
 import { toFrontendOutputSchema } from '../lib/output-schema';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
@@ -145,7 +146,7 @@ export function PromptPlazaPage() {
       const data = await promptsApi.listPublic();
       setItems(data);
     } catch (e) {
-      showToast('error', t('loadFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('loadFailed') + ': ' + getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -161,7 +162,7 @@ export function PromptPlazaPage() {
       const vs = await promptsApi.getPublicVersions(promptId);
       setVersions(vs);
     } catch (e) {
-      showToast('error', t('loadFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('loadFailed') + ': ' + getErrorMessage(e));
       setDetail(null);
       setVersions([]);
     }
@@ -184,7 +185,7 @@ export function PromptPlazaPage() {
       showToast('success', t('copiedToMy'));
       navigate('/prompts');
     } catch (e) {
-      showToast('error', t('copyFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('copyFailed') + ': ' + getErrorMessage(e));
     }
   };
 

@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { createPortal } from 'react-dom';
 import { Search, ChevronDown, Check, Cpu } from 'lucide-react';
 import type { Model, Provider } from '../../types';
 
@@ -12,7 +13,7 @@ interface ModelSelectorProps {
   placeholder?: string;
 }
 
-// 供应商图标颜色
+// 渚涘簲鍟嗗浘鏍囬鑹?
 const PROVIDER_COLORS: Record<string, string> = {
   openai: 'bg-emerald-500',
   anthropic: 'bg-orange-500',
@@ -21,7 +22,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   custom: 'bg-slate-500',
 };
 
-// 供应商显示名称
+// 渚涘簪鍟嗘樉绀哄悕绉?
 const PROVIDER_NAMES: Record<string, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -42,58 +43,117 @@ export function ModelSelector({
   const actualPlaceholder = placeholder || t('selectModel');
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [openDirection, setOpenDirection] = useState<'up' | 'down'>('down');
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 点击外部关闭
+  const [dropdownPosition, setDropdownPosition] = useState<{
+    direction: 'up' | 'down';
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  // 鐐瑰嚮澶栭儴鍏抽棴
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+
+      setIsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // 打开时聚焦搜索框
+  // 鎵撳紑鏃惰仛鐒︽悳绱㈡
   useEffect(() => {
     if (isOpen && searchInputRef.current) {
       searchInputRef.current.focus();
     }
   }, [isOpen]);
 
-  // 计算下拉框方向
-  const calculateDirection = () => {
+  // 璁＄畻涓嬫媺妗嗘柟鍚?
+  const calculateDirection = useCallback((): 'up' | 'down' => {
     if (!containerRef.current) return 'down';
 
     const rect = containerRef.current.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    const dropdownHeight = 350; // 估算下拉框高度
+    const dropdownHeight = 350; // 浼扮畻涓嬫媺妗嗛珮搴?
 
-    // 如果下方空间不够且上方空间更多，则向上展开
+    // 濡傛灉涓嬫柟绌洪棿涓嶅涓斾笂鏂圭┖闂存洿澶氾紝鍒欏悜涓婂睍寮€
     if (spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
       return 'up';
     }
     return 'down';
-  };
+  }, []);
+
+  const updateDropdownPosition = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const direction = calculateDirection();
+
+    const horizontalPadding = 8;
+    const minWidth = 280;
+    const width = Math.max(rect.width, minWidth);
+
+    let left = rect.left;
+    if (left + width > window.innerWidth - horizontalPadding) {
+      left = Math.max(horizontalPadding, window.innerWidth - horizontalPadding - width);
+    }
+    if (left < horizontalPadding) left = horizontalPadding;
+
+    const offset = 4;
+
+    setDropdownPosition(
+      direction === 'down'
+        ? { direction, left, width, top: rect.bottom + offset }
+        : { direction, left, width, bottom: window.innerHeight - rect.top + offset }
+    );
+  }, [calculateDirection]);
 
   const handleToggle = () => {
     if (disabled) return;
 
     if (!isOpen) {
-      setOpenDirection(calculateDirection());
+      updateDropdownPosition();
     }
     setIsOpen(!isOpen);
   };
 
-  // 获取启用的供应商
+  useEffect(() => {
+    if (!isOpen) {
+      setDropdownPosition(null);
+      return;
+    }
+
+    updateDropdownPosition();
+
+    const handleViewportChange = () => {
+      updateDropdownPosition();
+    };
+
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+    };
+  }, [isOpen, updateDropdownPosition]);
+
+  // 鑾峰彇鍚敤鐨勪緵搴斿晢
   const enabledProviders = providers.filter((p) => p.enabled);
   const enabledProviderIds = enabledProviders.map((p) => p.id);
 
-  // 过滤并分组模型
+  // 杩囨护骞跺垎缁勬ā鍨?
   const filteredModels = models.filter((m) => {
     const matchesSearch = !searchQuery ||
       m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -102,7 +162,7 @@ export function ModelSelector({
     return matchesSearch && hasEnabledProvider;
   });
 
-  // 按供应商分组
+  // 鎸変緵搴斿晢鍒嗙粍
   const groupedModels = enabledProviders.reduce((acc, provider) => {
     const providerModels = filteredModels.filter((m) => m.providerId === provider.id);
     if (providerModels.length > 0) {
@@ -114,7 +174,7 @@ export function ModelSelector({
     return acc;
   }, [] as { provider: Provider; models: Model[] }[]);
 
-  // 获取当前选中的模型
+  // 鑾峰彇褰撳墠閫変腑鐨勬ā鍨?
   const selectedModel = models.find((m) => m.id === selectedModelId);
   const selectedProvider = selectedModel
     ? providers.find((p) => p.id === selectedModel.providerId)
@@ -128,7 +188,7 @@ export function ModelSelector({
 
   return (
     <div ref={containerRef} className="relative">
-      {/* 触发按钮 */}
+      {/* 瑙﹀彂鎸夐挳 */}
       <button
         type="button"
         onClick={handleToggle}
@@ -157,14 +217,20 @@ export function ModelSelector({
         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
-      {/* 下拉面板 */}
-      {isOpen && (
+      {/* 涓嬫媺闈㈡澘 */}
+      {isOpen && dropdownPosition && typeof document !== 'undefined' && createPortal(
         <div
-          className={`absolute z-50 w-full min-w-[280px] bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg shadow-xl overflow-hidden ${
-            openDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            left: dropdownPosition.left,
+            width: dropdownPosition.width,
+            top: dropdownPosition.direction === 'down' ? dropdownPosition.top : undefined,
+            bottom: dropdownPosition.direction === 'up' ? dropdownPosition.bottom : undefined,
+          }}
+          className="z-[1000] min-w-[280px] bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg shadow-xl overflow-hidden"
         >
-          {/* 搜索框 */}
+          {/* 鎼滅储妗?*/}
           <div className="p-2 border-b border-slate-700 light:border-slate-200">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -179,7 +245,7 @@ export function ModelSelector({
             </div>
           </div>
 
-          {/* 模型列表 */}
+          {/* 妯″瀷鍒楄〃 */}
           <div className="max-h-[300px] overflow-y-auto">
             {groupedModels.length === 0 ? (
               <div className="p-4 text-center text-slate-500 text-sm">
@@ -188,7 +254,7 @@ export function ModelSelector({
             ) : (
               groupedModels.map(({ provider, models: providerModels }) => (
                 <div key={provider.id}>
-                  {/* 供应商标题 */}
+                  {/* 渚涘簪鍟嗘爣棰?*/}
                   <div className="px-3 py-2 bg-slate-750 light:bg-slate-50 sticky top-0">
                     <div className="flex items-center gap-2">
                       <div className={`w-2 h-2 rounded-full ${PROVIDER_COLORS[provider.type] || 'bg-slate-500'}`} />
@@ -197,7 +263,7 @@ export function ModelSelector({
                       </span>
                     </div>
                   </div>
-                  {/* 模型列表 */}
+                  {/* 妯″瀷鍒楄〃 */}
                   {providerModels.map((model) => (
                     <button
                       key={model.id}
@@ -220,7 +286,8 @@ export function ModelSelector({
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

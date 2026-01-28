@@ -19,6 +19,7 @@ model Provider {
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
   models    Model[]
+  userProviderSettings UserProviderSetting[]
   user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -240,6 +241,7 @@ model User {
   prompts       Prompt[]
   promptGroups  PromptGroup[]
   providers     Provider[]
+  providerSettings UserProviderSetting[]
   files         StoredFile[]
   ocrSetting    OcrProviderSetting?
   ocrResults    OcrResult[]
@@ -251,6 +253,21 @@ model User {
   @@index([email])
   @@index([status])
   @@map("users")
+}
+
+model UserProviderSetting {
+  userId     String   @map("user_id")
+  providerId String   @map("provider_id")
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@id([userId, providerId])
+  @@index([providerId])
+  @@map("user_provider_settings")
 }
 
 model EmailVerification {

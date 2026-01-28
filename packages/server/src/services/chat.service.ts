@@ -88,7 +88,23 @@ export async function getModelWithProvider(
     throw new AppError(403, 'FORBIDDEN', 'Access denied to this model');
   }
 
-  if (!model.provider.enabled) {
+  // Enabled state:
+  // - For user-owned providers: `provider.enabled` is per-user.
+  // - For system providers: `provider.enabled` is the global master switch; users can opt out via UserProviderSetting.
+  if (model.provider.isSystem) {
+    if (!model.provider.enabled) {
+      throw new AppError(400, 'PROVIDER_ERROR', 'Provider is not enabled');
+    }
+
+    const setting = await prisma.userProviderSetting.findUnique({
+      where: { userId_providerId: { userId, providerId: model.provider.id } },
+      select: { enabled: true },
+    });
+
+    if (setting && !setting.enabled) {
+      throw new AppError(400, 'PROVIDER_ERROR', 'Provider is not enabled');
+    }
+  } else if (!model.provider.enabled) {
     throw new AppError(400, 'PROVIDER_ERROR', 'Provider is not enabled');
   }
 

@@ -66,9 +66,10 @@ export class ProvidersController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.userId;
+      const isAdmin = req.user?.roles?.includes('admin') ?? false;
       const data = CreateProviderSchema.parse(req.body);
 
-      const provider = await providersService.create(userId, data);
+      const provider = await providersService.create(userId, data, isAdmin);
 
       res.status(201).json({
         data: {
@@ -88,10 +89,11 @@ export class ProvidersController {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.userId;
+      const isAdmin = req.user?.roles?.includes('admin') ?? false;
       const { id } = req.params;
       const data = UpdateProviderSchema.parse(req.body);
 
-      const provider = await providersService.update(userId, id, data);
+      const provider = await providersService.update(userId, id, data, isAdmin);
 
       res.json({
         data: {
@@ -111,9 +113,10 @@ export class ProvidersController {
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.userId;
+      const isAdmin = req.user?.roles?.includes('admin') ?? false;
       const { id } = req.params;
 
-      await providersService.delete(userId, id);
+      await providersService.delete(userId, id, isAdmin);
 
       res.status(204).send();
     } catch (error) {

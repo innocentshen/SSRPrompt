@@ -17,6 +17,7 @@ import {
 import { Button, Input, Select, Toggle, Modal, useToast } from '../ui';
 import type { Provider, Model, ProviderType } from '../../types';
 import { inferVisionSupport, inferReasoningSupport, inferFunctionCallingSupport } from '../../lib/model-capabilities';
+import { getErrorMessage } from '../../lib/error-messages';
 import { providersApi } from '../../api';
 
 interface FetchedModel {
@@ -31,6 +32,7 @@ interface ProviderFormProps {
   models: Model[];
   onSave: (data: Partial<Provider>) => Promise<void>;
   onDelete: () => Promise<void>;
+  isAdmin?: boolean;
   onAddModel: (
     modelId: string,
     name: string,
@@ -63,6 +65,7 @@ export function ProviderForm({
   models,
   onSave,
   onDelete,
+  isAdmin = false,
   onAddModel,
   onRemoveModel,
   onToggleVision,
@@ -74,6 +77,7 @@ export function ProviderForm({
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [isSystem, setIsSystem] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
@@ -91,6 +95,8 @@ export function ProviderForm({
   const { showToast } = useToast();
   const { t } = useTranslation('settings');
   const { t: tCommon } = useTranslation('common');
+  const isSystemProvider = provider?.isSystem ?? false;
+  const isReadonlySystemProvider = isSystemProvider && !isAdmin;
   const filteredModels = useMemo(() => {
     const query = newModelId.trim().toLowerCase();
     if (!query) return models;
@@ -115,12 +121,14 @@ export function ProviderForm({
       setApiKey('');
       setBaseUrl(provider.baseUrl || '');
       setEnabled(provider.enabled);
+      setIsSystem(provider.isSystem);
     } else {
       setName('');
       setType('openai');
       setApiKey('');
       setBaseUrl('');
       setEnabled(false);
+      setIsSystem(false);
     }
     setShowApiKey(false);
     setTestResult(null);
@@ -150,6 +158,12 @@ export function ProviderForm({
   const handleSave = async () => {
     setSaving(true);
     try {
+      // System providers are maintained by admins; normal users can only enable/disable them.
+      if (isReadonlySystemProvider) {
+        await onSave({ enabled });
+        return;
+      }
+
       const trimmedApiKey = apiKey.trim();
       await onSave({
         name,
@@ -157,6 +171,7 @@ export function ProviderForm({
         ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
         baseUrl: baseUrl || null,
         enabled,
+        ...(isAdmin ? { isSystem } : {}),
       });
     } finally {
       setSaving(false);
@@ -209,8 +224,7 @@ export function ProviderForm({
       setShowModelPicker(true);
       showToast('success', t('foundModelsCount', { count: newModels.length }));
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Network error';
-      showToast('error', t('fetchModelsFailed') + ': ' + message);
+      showToast('error', t('fetchModelsFailed') + ': ' + getErrorMessage(err));
     } finally {
       setFetchingModels(false);
     }
@@ -260,8 +274,21 @@ export function ProviderForm({
       <div className="max-w-2xl mx-auto p-6 space-y-8">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold text-white light:text-slate-900">{t('providerConfig')}</h2>
-          <Toggle enabled={enabled} onChange={setEnabled} label={t('enable')} />
+          <div className="flex items-center gap-4">
+            {isAdmin && (
+              <Toggle enabled={isSystem} onChange={setIsSystem} label={t('systemProvider')} size="sm" />
+            )}
+            <Toggle enabled={enabled} onChange={setEnabled} label={t('enable')} />
+          </div>
         </div>
+
+        {isReadonlySystemProvider && (
+          <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-4 py-3">
+            <p className="text-sm text-slate-300 light:text-slate-700">
+              {t('systemProviderDesc')}
+            </p>
+          </div>
+        )}
 
         <div className="space-y-5">
           <Input
@@ -269,6 +296,8 @@ export function ProviderForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t('providerNamePlaceholder')}
+            disabled={isReadonlySystemProvider}
+            className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
           />
 
           <Select
@@ -276,6 +305,8 @@ export function ProviderForm({
             value={type}
             onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
             options={providerTypes}
+            disabled={isReadonlySystemProvider}
+            className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
           />
 
           <div className="space-y-1.5">
@@ -289,11 +320,13 @@ export function ProviderForm({
                    value={apiKey}
                    onChange={(e) => setApiKey(e.target.value)}
                    placeholder={provider?.apiKey ? provider.apiKey : 'sk-...'}
-                   className="w-full px-3 py-2 pr-10 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+                   disabled={isReadonlySystemProvider}
+                   className={`w-full px-3 py-2 pr-10 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all ${isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}`}
                  />
                 <button
                   type="button"
                   onClick={() => setShowApiKey(!showApiKey)}
+                  disabled={isReadonlySystemProvider}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400 hover:text-slate-300 light:hover:text-slate-600"
                 >
                   {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -302,7 +335,7 @@ export function ProviderForm({
               <Button
                 variant="secondary"
                 onClick={handleTest}
-                disabled={!apiKey || testing}
+                disabled={isReadonlySystemProvider || !apiKey || testing}
               >
                 {testing ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -332,6 +365,8 @@ export function ProviderForm({
                   ? t('customBaseUrlHint')
                   : t('defaultBaseUrlHint')
               }
+              disabled={isReadonlySystemProvider}
+              className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
             />
           </div>
         </div>
@@ -344,7 +379,7 @@ export function ProviderForm({
               size="sm"
               onClick={handleFetchModels}
               loading={fetchingModels}
-              disabled={fetchingModels}
+              disabled={isReadonlySystemProvider || fetchingModels}
             >
               <RefreshCw className={`w-4 h-4 ${fetchingModels ? 'animate-spin' : ''}`} />
               <span>{t('autoFetch')}</span>
@@ -358,12 +393,14 @@ export function ProviderForm({
                   value={newModelId}
                   onChange={(e) => setNewModelId(e.target.value)}
                   className="flex-1"
+                  disabled={isReadonlySystemProvider}
                 />
                 <Input
                   placeholder={t('displayNamePlaceholder')}
                   value={newModelName}
                   onChange={(e) => setNewModelName(e.target.value)}
                   className="flex-1"
+                  disabled={isReadonlySystemProvider}
                 />
                 <Input
                   placeholder={t('maxContextLengthPlaceholder')}
@@ -373,6 +410,7 @@ export function ProviderForm({
                   type="number"
                   min={256}
                   title={t('maxContextLength')}
+                  disabled={isReadonlySystemProvider}
                 />
                 <label
                   className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800"
@@ -382,6 +420,7 @@ export function ProviderForm({
                     type="checkbox"
                     checked={newModelSupportsVision}
                     onChange={(e) => setNewModelSupportsVision(e.target.checked)}
+                    disabled={isReadonlySystemProvider}
                     className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-cyan-500 focus:ring-cyan-500/50"
                   />
                   <span className="text-xs whitespace-nowrap">{t('supportsVision')}</span>
@@ -394,16 +433,17 @@ export function ProviderForm({
                     type="checkbox"
                     checked={newModelSupportsReasoning}
                     onChange={(e) => setNewModelSupportsReasoning(e.target.checked)}
+                    disabled={isReadonlySystemProvider}
                     className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-purple-500 focus:ring-purple-500/50"
                   />
                   <span className="text-xs whitespace-nowrap">{t('supportsReasoning')}</span>
                 </label>
-                <Button variant="secondary" onClick={handleAddModel} disabled={!newModelId.trim()}>
+                <Button variant="secondary" onClick={handleAddModel} disabled={isReadonlySystemProvider || !newModelId.trim()}>
                   <Plus className="w-4 h-4" />
                 </Button>
               </div>
 
-            <div className="bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 divide-y divide-slate-700 light:divide-slate-200">
+            <div className="max-h-[50vh] overflow-y-auto bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 divide-y divide-slate-700 light:divide-slate-200">
               {models.length === 0 ? (
                 <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
                   {t('noModelsAddOrFetch')}
@@ -429,6 +469,7 @@ export function ProviderForm({
                           type="button"
                           onClick={() => onToggleVision?.(model.id, !(model.supportsVision ?? inferVisionSupport(model.modelId)))}
                           title={t('vision')}
+                          disabled={isReadonlySystemProvider}
                           className={`p-1 rounded transition-colors ${
                             (model.supportsVision ?? inferVisionSupport(model.modelId))
                               ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
@@ -445,6 +486,7 @@ export function ProviderForm({
                           type="button"
                           onClick={() => onToggleReasoning?.(model.id, !(model.supportsReasoning ?? inferReasoningSupport(model.modelId)))}
                           title={t('supportsReasoning')}
+                          disabled={isReadonlySystemProvider}
                           className={`p-1 rounded transition-colors ${
                             (model.supportsReasoning ?? inferReasoningSupport(model.modelId))
                               ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
@@ -461,7 +503,8 @@ export function ProviderForm({
                       </div>
                       <button
                         onClick={() => onRemoveModel(model.id)}
-                        className="p-1.5 text-slate-500 light:text-slate-400 hover:text-rose-500 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
+                        disabled={isReadonlySystemProvider}
+                        className="p-1.5 text-slate-500 light:text-slate-400 hover:text-rose-500 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -474,7 +517,7 @@ export function ProviderForm({
         </div>
 
         <div className="flex items-center justify-between pt-4 border-t border-slate-700 light:border-slate-200">
-          <Button variant="danger" onClick={onDelete}>
+          <Button variant="danger" onClick={onDelete} disabled={isReadonlySystemProvider}>
             <Trash2 className="w-4 h-4" />
             <span>{t('deleteProvider')}</span>
           </Button>

@@ -1,4 +1,11 @@
 import type { OcrProvider } from '../types';
+import { ApiError } from './client';
+import {
+  getFetchExceptionCode,
+  getFetchExceptionMessage,
+  getLocalizedErrorMessage,
+  normalizeErrorCode,
+} from '../lib/error-messages';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
 
@@ -261,18 +268,27 @@ export interface StreamCallbacks {
   onAbort?: () => void;
 }
 
-function extractErrorMessage(value: unknown): string | undefined {
+type ExtractedApiError = { code?: string; message?: string; details?: unknown; requestId?: string };
+
+function extractApiError(value: unknown): ExtractedApiError | undefined {
   if (!value || typeof value !== 'object') return undefined;
 
   const record = value as Record<string, unknown>;
   if (!('error' in record)) return undefined;
 
-  const unwrap = (maybeError: unknown): string | undefined => {
-    if (typeof maybeError === 'string') return maybeError;
+  const unwrap = (maybeError: unknown): ExtractedApiError | undefined => {
+    if (typeof maybeError === 'string') return { message: maybeError };
     if (!maybeError || typeof maybeError !== 'object') return undefined;
 
     const obj = maybeError as Record<string, unknown>;
-    if (typeof obj.message === 'string') return obj.message;
+    const code = typeof obj.code === 'string' ? obj.code : undefined;
+    const message = typeof obj.message === 'string' ? obj.message : undefined;
+    const details = obj.details;
+    const requestId = typeof obj.requestId === 'string' ? obj.requestId : undefined;
+
+    if (code || message || details || requestId) {
+      return { code, message, details, requestId };
+    }
 
     // Some endpoints double-wrap errors (e.g. { error: { error: { message } } })
     if ('error' in obj) return unwrap(obj.error);
@@ -294,24 +310,53 @@ export async function streamChatCompletionEnhanced(
   const token = localStorage.getItem('auth_token');
 
   try {
-    const response = await fetch(`${API_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: token ? `Bearer ${token}` : '',
-      },
-      body: JSON.stringify({ ...options, stream: true }),
-      signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ ...options, stream: true }),
+        signal,
+      });
+    } catch (error) {
+      if (getFetchExceptionCode(error) === 'REQUEST_ABORTED') throw error;
+      throw new ApiError(0, 'NETWORK_ERROR', getFetchExceptionMessage(error));
+    }
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+      const requestIdFromHeader = response.headers.get('X-Request-Id') || undefined;
+      const rawText = await response.text().catch(() => '');
+
+      let data: unknown;
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        const code = 'INVALID_RESPONSE';
+        const message = getLocalizedErrorMessage({ code, status: response.status });
+        throw new ApiError(response.status, code, message, { body: rawText }, requestIdFromHeader);
+      }
+
+      const payload = data as { error?: { code?: unknown; message?: unknown; details?: unknown; requestId?: unknown } };
+      const errorPayload = payload?.error ?? {};
+      const requestId = requestIdFromHeader || (typeof errorPayload.requestId === 'string' ? errorPayload.requestId : undefined);
+      const code = normalizeErrorCode(errorPayload.code, response.status);
+      const message = getLocalizedErrorMessage({
+        code,
+        status: response.status,
+        fallbackMessage: typeof errorPayload.message === 'string' ? errorPayload.message : undefined,
+      });
+
+      throw new ApiError(response.status, code, message, errorPayload.details, requestId);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error('No response body');
+      const code = 'INVALID_RESPONSE';
+      const message = getLocalizedErrorMessage({ code, status: response.status });
+      throw new ApiError(response.status, code, message);
     }
 
     const decoder = new TextDecoder();
@@ -368,9 +413,11 @@ export async function streamChatCompletionEnhanced(
               continue;
             }
 
-            const errorMessage = extractErrorMessage(parsed);
-            if (errorMessage) {
-              throw new Error(errorMessage);
+            const streamError = extractApiError(parsed);
+            if (streamError && (streamError.code || streamError.message)) {
+              const code = normalizeErrorCode(streamError.code, undefined);
+              const message = getLocalizedErrorMessage({ code, fallbackMessage: streamError.message });
+              throw new ApiError(0, code, message, streamError.details, streamError.requestId);
             }
 
             const chunk = parsed as StreamChunk;
@@ -480,23 +527,59 @@ export async function streamChatCompletion(
 export async function chatCompletion(options: ChatCompletionOptions, signal?: AbortSignal): Promise<ChatCompletionResult> {
   const token = localStorage.getItem('auth_token');
 
-  const response = await fetch(`${API_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: token ? `Bearer ${token}` : '',
-    },
-    body: JSON.stringify({ ...options, stream: false }),
-    signal,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: token ? `Bearer ${token}` : '',
+      },
+      body: JSON.stringify({ ...options, stream: false }),
+      signal,
+    });
+  } catch (error) {
+    if (getFetchExceptionCode(error) === 'REQUEST_ABORTED') throw error;
+    throw new ApiError(0, 'NETWORK_ERROR', getFetchExceptionMessage(error));
   }
 
-  const result = await response.json();
-  return result.data;
+  if (!response.ok) {
+    const requestIdFromHeader = response.headers.get('X-Request-Id') || undefined;
+    const rawText = await response.text().catch(() => '');
+
+    let data: unknown;
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      const code = 'INVALID_RESPONSE';
+      const message = getLocalizedErrorMessage({ code, status: response.status });
+      throw new ApiError(response.status, code, message, { body: rawText }, requestIdFromHeader);
+    }
+
+    const payload = data as { error?: { code?: unknown; message?: unknown; details?: unknown; requestId?: unknown } };
+    const errorPayload = payload?.error ?? {};
+    const requestId = requestIdFromHeader || (typeof errorPayload.requestId === 'string' ? errorPayload.requestId : undefined);
+    const code = normalizeErrorCode(errorPayload.code, response.status);
+    const message = getLocalizedErrorMessage({
+      code,
+      status: response.status,
+      fallbackMessage: typeof errorPayload.message === 'string' ? errorPayload.message : undefined,
+    });
+    throw new ApiError(response.status, code, message, errorPayload.details, requestId);
+  }
+
+  const rawText = await response.text().catch(() => '');
+  let data: unknown;
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    const code = 'INVALID_RESPONSE';
+    const message = getLocalizedErrorMessage({ code, status: response.status });
+    throw new ApiError(response.status, code, message, { body: rawText });
+  }
+
+  const okPayload = data as { data?: unknown };
+  return okPayload.data as ChatCompletionResult;
 }
 
 /**

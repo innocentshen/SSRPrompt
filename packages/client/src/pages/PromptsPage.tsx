@@ -43,6 +43,7 @@ import { analyzePrompt, type PromptAnalysisResult } from '../lib/prompt-analyzer
 import { inferReasoningSupport } from '../lib/model-capabilities';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import { formatDateTime } from '../lib/date-utils';
+import { getErrorMessage } from '../lib/error-messages';
 import { smartReplace } from '../lib/text-utils';
 import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
 import type { Prompt, PromptVersion, PromptGroup, OcrProvider } from '../types';
@@ -387,7 +388,7 @@ export function PromptsPage() {
       setSelectedPrompt(fullPrompt);
     } catch (e) {
       if (selectPromptRequestIdRef.current !== requestId) return;
-      showToast('error', t('loadFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('loadFailed') + ': ' + getErrorMessage(e));
     } finally {
       if (selectPromptRequestIdRef.current === requestId) {
         setLoadingPromptId(null);
@@ -416,7 +417,7 @@ export function PromptsPage() {
       setShowNewPrompt(false);
       showToast('success', t('promptCreated'));
     } catch (e) {
-      showToast('error', t('createFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('createFailed') + ': ' + getErrorMessage(e));
     }
   };
 
@@ -445,7 +446,7 @@ export function PromptsPage() {
       cancelEditGroupName();
       return true;
     } catch (e) {
-      showToast('error', t('updateFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('updateFailed') + ': ' + getErrorMessage(e));
       return false;
     }
   };
@@ -469,7 +470,7 @@ export function PromptsPage() {
 
       startEditGroupName(group as PromptGroup);
     } catch (e) {
-      showToast('error', t('createGroupFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('createGroupFailed') + ': ' + getErrorMessage(e));
     } finally {
       setCreatingGroup(false);
     }
@@ -507,7 +508,7 @@ export function PromptsPage() {
       showToast('success', t('groupDeleted'));
       return true;
     } catch (e) {
-      showToast('error', t('deleteGroupFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('deleteGroupFailed') + ': ' + getErrorMessage(e));
       return false;
     } finally {
       setDeletingGroupId(null);
@@ -563,7 +564,7 @@ export function PromptsPage() {
       invalidatePromptsCache(updatedPrompt);
       return true;
     } catch (e) {
-      showToast('error', t('saveFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('saveFailed') + ': ' + getErrorMessage(e));
       return false;
     } finally {
       setSaving(false);
@@ -706,7 +707,7 @@ export function PromptsPage() {
       invalidatePromptsCache(copied);
       showToast('success', tCommon('copied'));
     } catch (e) {
-      showToast('error', t('copyFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('copyFailed') + ': ' + getErrorMessage(e));
     } finally {
       setCopyingPromptId(null);
     }
@@ -733,7 +734,7 @@ export function PromptsPage() {
 
       return true;
     } catch (e) {
-      showToast('error', t('deleteFailed') + ': ' + (e instanceof Error ? e.message : 'Unknown error'));
+      showToast('error', t('deleteFailed') + ': ' + getErrorMessage(e));
       return false;
     } finally {
       setDeletingPromptId(null);

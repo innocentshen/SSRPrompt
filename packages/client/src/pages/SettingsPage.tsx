@@ -90,6 +90,7 @@ export function SettingsPage() {
         apiKey: data.apiKey,
         baseUrl: data.baseUrl,
         enabled: data.enabled,
+        ...(isAdmin && typeof data.isSystem === 'boolean' && { isSystem: data.isSystem }),
       });
 
       setProviders((prev) =>
@@ -284,6 +285,7 @@ export function SettingsPage() {
           <ProviderForm
             provider={selectedProvider}
             models={selectedModels}
+            isAdmin={isAdmin}
             onSave={handleSaveProvider}
             onDelete={handleDeleteProvider}
             onAddModel={handleAddModel}

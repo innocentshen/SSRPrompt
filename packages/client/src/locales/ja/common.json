@@ -92,5 +92,31 @@
   "preview": "プレビュー",
   "source": "ソース",
   "split": "分割",
-  "allowScripts": "スクリプトを実行"
+  "allowScripts": "スクリプトを実行",
+  "errors": {
+    "UNKNOWN_ERROR": "不明なエラー",
+    "NETWORK_ERROR": "ネットワークエラーです。接続を確認して再試行してください。",
+    "REQUEST_ABORTED": "リクエストはキャンセルされました。",
+    "INVALID_RESPONSE": "サーバーの応答が不正です。",
+    "INIT_FAILED": "初期化に失敗しました。",
+    "UNAUTHORIZED": "認証が必要です。再ログインしてください。",
+    "TOKEN_EXPIRED": "セッションの有効期限が切れました。再ログインしてください。",
+    "TOKEN_INVALID": "セッションが無効です。再ログインしてください。",
+    "FORBIDDEN": "この操作を行う権限がありません。",
+    "NOT_FOUND": "リソースが見つかりません。",
+    "CONFLICT": "競合が発生しました。更新して再試行してください。",
+    "RATE_LIMIT_EXCEEDED": "リクエストが多すぎます。しばらくしてから再試行してください。",
+    "REGISTRATION_DISABLED": "登録は無効になっています。",
+    "VALIDATION_ERROR": "入力内容が正しくありません。確認して再試行してください。",
+    "INVALID_REQUEST": "無効なリクエストです。",
+    "PROVIDER_ERROR": "プロバイダーエラーです。設定を確認して再試行してください。",
+    "QUOTA_EXCEEDED": "利用上限に達しました。",
+    "MODEL_NOT_AVAILABLE": "モデルは利用できません。",
+    "STREAM_ABORTED": "ストリーミングが中断されました。",
+    "CONTEXT_LIMIT_EXCEEDED": "コンテキスト長の上限を超えました。",
+    "FILE_UPLOAD_NOT_ALLOWED": "ファイルのアップロードは許可されていません。",
+    "DATABASE_ERROR": "データベースエラーです。",
+    "ENCRYPTION_ERROR": "暗号化エラーです。",
+    "INTERNAL_ERROR": "サーバーエラーです。しばらくしてから再試行してください。"
+  }
 }

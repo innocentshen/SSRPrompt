@@ -1,6 +1,7 @@
 import { Provider } from '@prisma/client';
+import { prisma } from '../config/database.js';
 import { providersRepository } from '../repositories/index.js';
-import { CreateProviderInput, UpdateProviderInput, TestConnectionInput, DiscoverProviderModelsInput, AppError } from '@ssrprompt/shared';
+import { CreateProviderInput, UpdateProviderInput, TestConnectionInput, DiscoverProviderModelsInput, AppError, ForbiddenError } from '@ssrprompt/shared';
 
 interface DiscoveredModel {
   id: string;
@@ -8,6 +9,9 @@ interface DiscoveredModel {
   owned_by?: string;
   maxContextLength?: number;
 }
+
+const SYSTEM_USER_ID = 'default';
+const SYSTEM_USER_EMAIL = 'default@system.local';
 
 function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/#$/, '').replace(/\/$/, '');
@@ -54,53 +58,175 @@ export interface TestConnectionResult {
 }
 
 export class ProvidersService {
+  private async ensureSystemUserExists() {
+    await prisma.user.upsert({
+      where: { id: SYSTEM_USER_ID },
+      update: {
+        email: SYSTEM_USER_EMAIL,
+        name: 'System',
+        status: 'active',
+        emailVerified: true,
+      },
+      create: {
+        id: SYSTEM_USER_ID,
+        email: SYSTEM_USER_EMAIL,
+        name: 'System',
+        status: 'active',
+        emailVerified: true,
+      },
+    });
+  }
+
   /**
    * Get all providers for a user
    */
   async findAll(userId: string): Promise<Provider[]> {
-    return providersRepository.findAll(userId);
+    const providers = await providersRepository.findAll(userId);
+
+    const systemProviderIds = providers.filter((p) => p.isSystem).map((p) => p.id);
+    if (systemProviderIds.length === 0) return providers;
+
+    const settings = await prisma.userProviderSetting.findMany({
+      where: { userId, providerId: { in: systemProviderIds } },
+      select: { providerId: true, enabled: true },
+    });
+
+    const enabledByProviderId = new Map(settings.map((s) => [s.providerId, s.enabled]));
+
+    // For system providers, `provider.enabled` is the global master switch; user settings can only disable/enable per user.
+    return providers.map((p) => {
+      if (!p.isSystem) return p;
+      const userEnabled = enabledByProviderId.get(p.id);
+      const effectiveEnabled = p.enabled && (userEnabled ?? true);
+      return { ...p, enabled: effectiveEnabled };
+    });
   }
 
   /**
    * Get provider by ID
    */
   async findById(userId: string, id: string): Promise<Provider | null> {
-    return providersRepository.findById(userId, id);
+    const provider = await providersRepository.findById(userId, id);
+    if (!provider) return null;
+    if (!provider.isSystem) return provider;
+    if (!provider.enabled) return provider;
+
+    const setting = await prisma.userProviderSetting.findUnique({
+      where: { userId_providerId: { userId, providerId: provider.id } },
+      select: { enabled: true },
+    });
+
+    return { ...provider, enabled: provider.enabled && (setting?.enabled ?? true) };
   }
 
   /**
    * Get provider with models
    */
   async findWithModels(userId: string, id: string) {
-    return providersRepository.findWithModels(userId, id);
+    const provider = await providersRepository.findWithModels(userId, id);
+    if (!provider) return null;
+
+    if (!provider.isSystem) return provider;
+    if (!provider.enabled) return provider;
+
+    const setting = await prisma.userProviderSetting.findUnique({
+      where: { userId_providerId: { userId, providerId: provider.id } },
+      select: { enabled: true },
+    });
+
+    return { ...provider, enabled: provider.enabled && (setting?.enabled ?? true) };
   }
 
   /**
    * Create a new provider
    */
-  async create(userId: string, data: CreateProviderInput): Promise<Provider> {
-    return providersRepository.create(userId, {
-      name: data.name,
-      type: data.type,
-      apiKey: data.apiKey,
-      baseUrl: data.baseUrl,
-      enabled: data.enabled ?? false,
-    });
+  async create(userId: string, data: CreateProviderInput, isAdmin: boolean = false): Promise<Provider> {
+    if ((data.isSystem ?? false) && isAdmin) {
+      await this.ensureSystemUserExists();
+    }
+
+    return providersRepository.create(
+      userId,
+      {
+        name: data.name,
+        type: data.type,
+        apiKey: data.apiKey,
+        baseUrl: data.baseUrl,
+        enabled: data.enabled ?? false,
+        isSystem: data.isSystem ?? false,
+      },
+      isAdmin
+    );
   }
 
   /**
    * Update a provider
    */
-  async update(userId: string, id: string, data: UpdateProviderInput): Promise<Provider> {
-    return providersRepository.update(userId, id, data);
+  async update(userId: string, id: string, data: UpdateProviderInput, isAdmin: boolean = false): Promise<Provider> {
+    const provider = await providersRepository.findById(userId, id);
+    if (!provider) {
+      throw new AppError(404, 'NOT_FOUND', 'Provider not found');
+    }
+
+    // For system providers, non-admin users can only toggle enabled/disabled for themselves.
+    if (provider.isSystem && !isAdmin) {
+      const nameChanged = typeof data.name !== 'undefined' && data.name !== provider.name;
+      const typeChanged = typeof data.type !== 'undefined' && data.type !== provider.type;
+      const baseUrlChanged =
+        typeof data.baseUrl !== 'undefined' && (data.baseUrl ?? null) !== (provider.baseUrl ?? null);
+      const apiKeyChanging = typeof data.apiKey !== 'undefined';
+      const systemFlagChanging = typeof data.isSystem !== 'undefined';
+
+      const hasOtherChanges = nameChanged || typeChanged || baseUrlChanged || apiKeyChanging || systemFlagChanging;
+
+      if (hasOtherChanges) {
+        throw new ForbiddenError('Only administrators can modify system provider configuration');
+      }
+
+      // If enabled isn't provided, treat as no-op (keep existing effective state).
+      if (typeof data.enabled !== 'boolean') {
+        const setting = await prisma.userProviderSetting.findUnique({
+          where: { userId_providerId: { userId, providerId: provider.id } },
+          select: { enabled: true },
+        });
+        const effectiveEnabled = provider.enabled && (setting?.enabled ?? true);
+        return { ...provider, enabled: effectiveEnabled };
+      }
+
+      await prisma.userProviderSetting.upsert({
+        where: { userId_providerId: { userId, providerId: provider.id } },
+        update: { enabled: data.enabled },
+        create: { userId, providerId: provider.id, enabled: data.enabled },
+      });
+
+      return { ...provider, enabled: provider.enabled && data.enabled };
+    }
+
+    if (isAdmin && typeof data.isSystem === 'boolean' && data.isSystem !== provider.isSystem) {
+      if (data.isSystem) {
+        await this.ensureSystemUserExists();
+      }
+
+      return providersRepository.update(
+        userId,
+        id,
+        {
+          ...data,
+          user: { connect: { id: data.isSystem ? SYSTEM_USER_ID : userId } },
+        },
+        isAdmin
+      );
+    }
+
+    return providersRepository.update(userId, id, data, isAdmin);
   }
 
   /**
    * Delete a provider and all its models
    */
-  async delete(userId: string, id: string): Promise<Provider> {
+  async delete(userId: string, id: string, isAdmin: boolean = false): Promise<Provider> {
     // Models are deleted automatically via Prisma cascade
-    return providersRepository.delete(userId, id);
+    return providersRepository.delete(userId, id, isAdmin);
   }
 
   /**

@@ -92,5 +92,31 @@
   "preview": "预览",
   "source": "源码",
   "split": "分栏",
-  "allowScripts": "运行脚本"
+  "allowScripts": "运行脚本",
+  "errors": {
+    "UNKNOWN_ERROR": "未知错误",
+    "NETWORK_ERROR": "网络错误，请检查网络后重试。",
+    "REQUEST_ABORTED": "请求已取消。",
+    "INVALID_RESPONSE": "服务器响应异常。",
+    "INIT_FAILED": "初始化失败。",
+    "UNAUTHORIZED": "未登录或登录已失效，请重新登录。",
+    "TOKEN_EXPIRED": "登录已过期，请重新登录。",
+    "TOKEN_INVALID": "登录信息无效，请重新登录。",
+    "FORBIDDEN": "没有权限执行此操作。",
+    "NOT_FOUND": "资源不存在。",
+    "CONFLICT": "数据冲突，请刷新后重试。",
+    "RATE_LIMIT_EXCEEDED": "请求过于频繁，请稍后再试。",
+    "REGISTRATION_DISABLED": "注册已关闭。",
+    "VALIDATION_ERROR": "参数错误，请检查后重试。",
+    "INVALID_REQUEST": "请求无效。",
+    "PROVIDER_ERROR": "服务提供商错误，请检查配置后重试。",
+    "QUOTA_EXCEEDED": "额度已用尽。",
+    "MODEL_NOT_AVAILABLE": "模型不可用。",
+    "STREAM_ABORTED": "流式输出已中断。",
+    "CONTEXT_LIMIT_EXCEEDED": "上下文长度超限。",
+    "FILE_UPLOAD_NOT_ALLOWED": "不允许上传文件。",
+    "DATABASE_ERROR": "数据库错误。",
+    "ENCRYPTION_ERROR": "加密错误。",
+    "INTERNAL_ERROR": "服务器错误，请稍后重试。"
+  }
 }

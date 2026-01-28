@@ -1,4 +1,10 @@
-import { apiClient } from './client';
+import { apiClient, ApiError } from './client';
+import {
+  getFetchExceptionCode,
+  getFetchExceptionMessage,
+  getLocalizedErrorMessage,
+  normalizeErrorCode,
+} from '../lib/error-messages';
 import type {
   OcrProviderSettings,
   OcrTestResult,
@@ -48,20 +54,46 @@ export const ocrApi = {
     if (override?.baseUrl) form.append('baseUrl', override.baseUrl);
     if (override?.apiKey) form.append('apiKey', override.apiKey);
 
-    const response = await fetch(`${API_BASE_URL}/ocr/test`, {
-      method: 'POST',
-      headers: {
-        Authorization: getAuthHeader(),
-      },
-      body: form,
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = data?.error?.message || `HTTP ${response.status}`;
-      throw new Error(message);
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/ocr/test`, {
+        method: 'POST',
+        headers: {
+          Authorization: getAuthHeader(),
+        },
+        body: form,
+      });
+    } catch (error) {
+      if (getFetchExceptionCode(error) === 'REQUEST_ABORTED') throw error;
+      throw new ApiError(0, 'NETWORK_ERROR', getFetchExceptionMessage(error));
     }
 
-    return data.data as OcrTestResult;
+    const requestIdFromHeader = response.headers.get('X-Request-Id') || undefined;
+    const rawText = await response.text().catch(() => '');
+
+    let data: unknown;
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      const code = 'INVALID_RESPONSE';
+      const message = getLocalizedErrorMessage({ code, status: response.status });
+      throw new ApiError(response.status, code, message, { body: rawText }, requestIdFromHeader);
+    }
+
+    if (!response.ok) {
+      const payload = data as { error?: { code?: unknown; message?: unknown; details?: unknown; requestId?: unknown } };
+      const errorPayload = payload?.error ?? {};
+      const requestId = requestIdFromHeader || (typeof errorPayload.requestId === 'string' ? errorPayload.requestId : undefined);
+      const code = normalizeErrorCode(errorPayload.code, response.status);
+      const message = getLocalizedErrorMessage({
+        code,
+        status: response.status,
+        fallbackMessage: typeof errorPayload.message === 'string' ? errorPayload.message : undefined,
+      });
+      throw new ApiError(response.status, code, message, errorPayload.details, requestId);
+    }
+
+    const okPayload = data as { data?: unknown };
+    return okPayload.data as OcrTestResult;
   },
 };

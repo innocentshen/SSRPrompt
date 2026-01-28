@@ -9,6 +9,7 @@ export interface Provider {
   apiKey: string;
   baseUrl: string | null;
   enabled: boolean;
+  isSystem: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -19,6 +20,7 @@ export interface CreateProviderDto {
   apiKey: string;
   baseUrl?: string;
   enabled?: boolean;
+  isSystem?: boolean;
 }
 
 export interface UpdateProviderDto {
@@ -27,6 +29,7 @@ export interface UpdateProviderDto {
   apiKey?: string;
   baseUrl?: string | null;
   enabled?: boolean;
+  isSystem?: boolean;
 }
 
 // Model Types

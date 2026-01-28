@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Plus, Bot, Sparkles, Cpu, Server, Globe, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Badge } from '../ui';
 import type { Provider } from '../../types';
 
 interface ProviderListProps {
@@ -79,9 +80,20 @@ export function ProviderList({ providers, selectedId, onSelect, onAdd }: Provide
                 <Icon className="w-4 h-4 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
-                  {provider.name}
-                </p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
+                    {provider.name}
+                  </p>
+                  {provider.isSystem && (
+                    <Badge
+                      variant="info"
+                      className="px-1.5 py-0 text-[10px] flex-shrink-0"
+                      title={t('systemProviderDesc')}
+                    >
+                      {t('systemTag')}
+                    </Badge>
+                  )}
+                </div>
                 <p className="text-xs text-slate-500 light:text-slate-600 capitalize">{provider.type}</p>
               </div>
               <div

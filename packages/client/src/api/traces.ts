@@ -28,26 +28,17 @@ export const tracesApi = {
    * Get traces with pagination
    */
   list: async (params?: TraceQueryParams): Promise<PaginatedResponse<TraceListItem>> => {
-    const response = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1'}/traces?${new URLSearchParams(
-        Object.entries(params || {})
-          .filter(([, v]) => v !== undefined)
-          .map(([k, v]) => [k, String(v)])
-      )}`,
-      {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      }
-    );
+    const result = await apiClient.getRaw<{
+      data: TraceListItem[];
+      meta: { total: number; page: number; limit: number; totalPages: number };
+    }>('/traces', { params: params as Record<string, string | number | boolean | undefined> });
 
-    const data = await response.json();
     return {
-      data: data.data,
-      total: data.meta.total,
-      page: data.meta.page,
-      limit: data.meta.limit,
-      totalPages: data.meta.totalPages,
+      data: result.data,
+      total: result.meta.total,
+      page: result.meta.page,
+      limit: result.meta.limit,
+      totalPages: result.meta.totalPages,
     };
   },
 

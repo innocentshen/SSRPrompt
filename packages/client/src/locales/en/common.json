@@ -91,5 +91,31 @@
   "openExternal": "Open External",
   "source": "Source",
   "split": "Split",
-  "allowScripts": "Run scripts"
+  "allowScripts": "Run scripts",
+  "errors": {
+    "UNKNOWN_ERROR": "Unknown error",
+    "NETWORK_ERROR": "Network error. Please check your connection and retry.",
+    "REQUEST_ABORTED": "Request cancelled.",
+    "INVALID_RESPONSE": "Invalid server response.",
+    "INIT_FAILED": "Failed to initialize.",
+    "UNAUTHORIZED": "Authentication required. Please sign in again.",
+    "TOKEN_EXPIRED": "Your session has expired. Please sign in again.",
+    "TOKEN_INVALID": "Invalid session. Please sign in again.",
+    "FORBIDDEN": "You don't have permission to perform this action.",
+    "NOT_FOUND": "Resource not found.",
+    "CONFLICT": "Conflict. Please refresh and retry.",
+    "RATE_LIMIT_EXCEEDED": "Too many requests. Please retry later.",
+    "REGISTRATION_DISABLED": "Registration is disabled.",
+    "VALIDATION_ERROR": "Invalid input. Please check and retry.",
+    "INVALID_REQUEST": "Invalid request.",
+    "PROVIDER_ERROR": "Provider error. Please check provider settings and retry.",
+    "QUOTA_EXCEEDED": "Quota exceeded.",
+    "MODEL_NOT_AVAILABLE": "Model not available.",
+    "STREAM_ABORTED": "Streaming was interrupted.",
+    "CONTEXT_LIMIT_EXCEEDED": "Context length exceeded.",
+    "FILE_UPLOAD_NOT_ALLOWED": "File upload is not allowed.",
+    "DATABASE_ERROR": "Database error.",
+    "ENCRYPTION_ERROR": "Encryption error.",
+    "INTERNAL_ERROR": "Server error. Please retry later."
+  }
 }

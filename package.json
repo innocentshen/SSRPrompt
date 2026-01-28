@@ -17,6 +17,7 @@
     "db:generate": "pnpm --filter @ssrprompt/server prisma:generate",
     "db:push": "pnpm --filter @ssrprompt/server prisma:push",
     "db:migrate": "pnpm --filter @ssrprompt/server prisma:migrate",
+    "db:deploy": "pnpm --filter @ssrprompt/server prisma:migrate:deploy",
     "db:studio": "pnpm --filter @ssrprompt/server prisma:studio"
   },
   "devDependencies": {

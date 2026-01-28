@@ -10,6 +10,8 @@ export const CreateProviderSchema = z.object({
   apiKey: z.string().optional().default(''),
   baseUrl: z.string().url().optional(),
   enabled: z.boolean().optional().default(false),
+  // System providers are shared across all users; only admins can create them (enforced server-side).
+  isSystem: z.boolean().optional().default(false),
 });
 
 export const UpdateProviderSchema = z.object({
@@ -18,6 +20,8 @@ export const UpdateProviderSchema = z.object({
   apiKey: z.string().min(1).optional(),
   baseUrl: z.string().url().nullable().optional(),
   enabled: z.boolean().optional(),
+  // Only admins can change system provider status (enforced server-side).
+  isSystem: z.boolean().optional(),
 });
 
 // Model Schemas
