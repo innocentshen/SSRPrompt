@@ -88,6 +88,7 @@
   "ocrResultsError": "OCR結果載入失敗",
   "markdown": "Markdown",
   "plainText": "純文字",
+  "autoDetect": "智慧識別",
   "html": "HTML",
   "preview": "預覽",
   "source": "原始碼",

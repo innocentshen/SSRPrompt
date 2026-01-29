@@ -1,16 +1,16 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 
-export type OutputRenderFormat = 'markdown' | 'text';
+export type OutputRenderFormat = 'auto' | 'json' | 'html' | 'markdown' | 'text';
 
 export interface OutputRenderPreferences {
   format: OutputRenderFormat;
 }
 
 const DEFAULT_PREFERENCES: OutputRenderPreferences = {
-  format: 'markdown',
+  format: 'auto',
 };
 
-const VALID_FORMATS: OutputRenderFormat[] = ['markdown', 'text'];
+const VALID_FORMATS: OutputRenderFormat[] = ['auto', 'json', 'html', 'markdown', 'text'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -23,8 +23,10 @@ function normalizePreferences(
   if (!isRecord(value)) return defaults;
 
   const candidate = value.format as unknown;
-  const format = candidate === 'text' ? 'text' : 'markdown';
-  return VALID_FORMATS.includes(format) ? { format } : defaults;
+  if (typeof candidate === 'string' && VALID_FORMATS.includes(candidate as OutputRenderFormat)) {
+    return { format: candidate as OutputRenderFormat };
+  }
+  return defaults;
 }
 
 export function loadOutputRenderPreferences(

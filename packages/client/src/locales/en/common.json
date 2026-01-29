@@ -86,6 +86,7 @@
   "ocrResultsError": "Failed to load OCR results",
   "markdown": "Markdown",
   "plainText": "Plain Text",
+  "autoDetect": "Auto",
   "html": "HTML",
   "preview": "Preview",
   "openExternal": "Open External",

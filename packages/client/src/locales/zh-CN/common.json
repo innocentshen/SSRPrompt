@@ -88,6 +88,7 @@
   "ocrResultsError": "OCR结果加载失败",
   "markdown": "Markdown",
   "plainText": "纯文本",
+  "autoDetect": "智能识别",
   "html": "HTML",
   "preview": "预览",
   "source": "源码",

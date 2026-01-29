@@ -88,6 +88,7 @@
   "ocrResultsError": "OCR結果の読み込みに失敗しました",
   "markdown": "Markdown",
   "plainText": "プレーンテキスト",
+  "autoDetect": "自動検出",
   "html": "HTML",
   "preview": "プレビュー",
   "source": "ソース",
