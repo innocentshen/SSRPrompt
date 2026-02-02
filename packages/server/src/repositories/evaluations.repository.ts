@@ -27,17 +27,28 @@ class EvaluationsRepositoryClass extends TenantRepository<
 
   /**
    * Find all evaluations for a user (list view - minimal data)
-   * Includes user's own evaluations and public evaluations
+   * Includes user's own evaluations and public evaluations from others.
+   * Users should NOT see other users' private evaluations.
    */
   async findAll(userId: string, options?: FindOptions): Promise<EvaluationWithRelations[]> {
+    // Build the access control condition:
+    // - User's own evaluations (both public and private)
+    // - Other users' public evaluations only
+    const accessCondition = {
+      OR: [
+        { userId },           // User's own evaluations
+        { isPublic: true },   // Public evaluations from anyone
+      ],
+    };
+
+    // Combine access control with any additional filters using AND
+    // This ensures the access control cannot be bypassed by options.where
+    const whereClause = options?.where
+      ? { AND: [accessCondition, options.where] }
+      : accessCondition;
+
     return prisma.evaluation.findMany({
-      where: {
-        OR: [
-          { userId },
-          { isPublic: true },
-        ],
-        ...options?.where,
-      },
+      where: whereClause,
       select: {
         id: true,
         userId: true,
