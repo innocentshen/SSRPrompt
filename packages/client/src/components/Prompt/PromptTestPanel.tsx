@@ -1637,6 +1637,7 @@ export function PromptTestPanel({
                                 { value: '', label: tEval('ocrProviderFollow') },
                                 { value: 'paddle', label: 'PaddleOCR' },
                                 { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
+                                { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
                                 { value: 'datalab', label: tEval('ocrProviderDatalab') },
                                 { value: 'mineru', label: tEval('ocrProviderMineru') },
                               ]}
@@ -1999,6 +2000,7 @@ export function PromptTestPanel({
                                 { value: '', label: tEval('ocrProviderFollow') },
                                 { value: 'paddle', label: 'PaddleOCR' },
                                 { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
+                                { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
                                 { value: 'datalab', label: tEval('ocrProviderDatalab') },
                                 { value: 'mineru', label: tEval('ocrProviderMineru') },
                               ]}

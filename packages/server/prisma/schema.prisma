@@ -503,6 +503,7 @@ enum OAuthProvider {
 enum OcrProvider {
   paddle
   paddle_vl
+  paddle_vl_1_5
   datalab
   mineru
 }

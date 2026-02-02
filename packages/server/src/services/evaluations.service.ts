@@ -47,6 +47,64 @@ function isStoredAttachments(value: unknown): value is StoredAttachment[] {
   });
 }
 
+async function materializeAttachmentsForUser(
+  fromUserId: string,
+  toUserId: string,
+  rawAttachments: unknown
+): Promise<StoredAttachment[]> {
+  if (!rawAttachments || !Array.isArray(rawAttachments) || rawAttachments.length === 0) return [];
+
+  if (isStoredAttachments(rawAttachments)) {
+    if (fromUserId === toUserId) return rawAttachments;
+
+    const cloned = await Promise.all(
+      rawAttachments.map(async (attachment) => {
+        try {
+          const { meta, buffer } = await filesService.downloadBuffer(fromUserId, attachment.fileId);
+          const stored = await filesService.upload(toUserId, {
+            originalName: attachment.name || meta.originalName,
+            mimeType: attachment.type || meta.mimeType,
+            size: buffer.length,
+            buffer,
+          });
+          return {
+            fileId: stored.id,
+            name: stored.originalName,
+            type: stored.mimeType,
+            size: stored.size,
+          } satisfies StoredAttachment;
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return cloned.filter((item): item is StoredAttachment => item !== null);
+  }
+
+  if (isLegacyBase64Attachments(rawAttachments)) {
+    const migrated: StoredAttachment[] = [];
+    for (const attachment of rawAttachments) {
+      const buffer = Buffer.from(normalizeBase64(attachment.base64), 'base64');
+      const stored = await filesService.upload(toUserId, {
+        originalName: attachment.name,
+        mimeType: attachment.type,
+        size: buffer.length,
+        buffer,
+      });
+      migrated.push({
+        fileId: stored.id,
+        name: stored.originalName,
+        type: stored.mimeType,
+        size: stored.size,
+      });
+    }
+    return migrated;
+  }
+
+  return [];
+}
+
 /**
  * Evaluations Service
  */
@@ -112,6 +170,15 @@ export class EvaluationsService {
     const evaluation = await evaluationsRepository.findByIdWithRelations(userId, id);
     if (!evaluation) {
       throw new AppError(404, 'NOT_FOUND', 'Evaluation not found');
+    }
+
+    // For non-owner views (public evaluations), don't expose or attempt to resolve attachments.
+    // Attachments are tenant-scoped files and may contain sensitive data.
+    if (evaluation.userId !== userId && evaluation.testCases && evaluation.testCases.length > 0) {
+      for (const testCase of evaluation.testCases) {
+        (testCase as unknown as { attachments: unknown }).attachments = [];
+      }
+      return transformResponse(evaluation);
     }
 
     // Lazy-migrate legacy base64 attachments to stored files for owner views.
@@ -319,8 +386,92 @@ export class EvaluationsService {
    * Copy an evaluation
    */
   async copy(userId: string, id: string, newName?: string): Promise<EvaluationWithRelations> {
-    const original = await this.findById(userId, id);
-    const evaluation = await evaluationsRepository.copy(userId, id, newName || `${original.name} (Copy)`);
+    const original = await evaluationsRepository.findByIdWithRelations(userId, id);
+    if (!original) {
+      throw new AppError(404, 'NOT_FOUND', 'Evaluation not found');
+    }
+
+    const nextPromptId = original.promptId ?? null;
+    const nextModelId = original.modelId ?? null;
+    const nextJudgeModelId = original.judgeModelId ?? null;
+
+    // If any referenced entities are not accessible for the copier, drop the reference instead of failing the copy.
+    // This keeps copy usable when system models/providers change or legacy rows exist.
+    const resolvedPromptId = await (async () => {
+      if (!nextPromptId) return null;
+      try {
+        await this.assertPromptAccessible(userId, nextPromptId);
+        return nextPromptId;
+      } catch {
+        return null;
+      }
+    })();
+
+    const resolvedModelId = await (async () => {
+      if (!nextModelId) return null;
+      try {
+        await this.assertModelAccessible(userId, nextModelId);
+        return nextModelId;
+      } catch {
+        return null;
+      }
+    })();
+
+    const resolvedJudgeModelId = await (async () => {
+      if (!nextJudgeModelId) return null;
+      try {
+        await this.assertModelAccessible(userId, nextJudgeModelId);
+        return nextJudgeModelId;
+      } catch {
+        return null;
+      }
+    })();
+
+    const copiedTestCases = original.testCases
+      ? await Promise.all(
+          original.testCases.map(async (tc) => {
+            const rawAttachments = (tc.attachments ?? []) as unknown;
+            const attachments = await materializeAttachmentsForUser(original.userId, userId, rawAttachments);
+
+            return {
+              name: tc.name,
+              inputText: tc.inputText,
+              inputVariables: tc.inputVariables as Prisma.JsonObject,
+              attachments: attachments as unknown as Prisma.JsonArray,
+              expectedOutput: tc.expectedOutput,
+              notes: tc.notes,
+              orderIndex: tc.orderIndex,
+            } satisfies Omit<Prisma.TestCaseCreateInput, 'evaluation'>;
+          })
+        )
+      : undefined;
+
+    const copiedCriteria = original.criteria
+      ? original.criteria.map((c) => ({
+          name: c.name,
+          description: c.description ?? undefined,
+          prompt: c.prompt ?? undefined,
+          weight: c.weight,
+          enabled: c.enabled,
+        } satisfies Omit<Prisma.EvaluationCriterionCreateInput, 'evaluation'>))
+      : undefined;
+
+    const evaluation = await evaluationsRepository.createWithRelations(
+      userId,
+      {
+        name: newName || `${original.name} (Copy)`,
+        prompt: resolvedPromptId ? { connect: { id: resolvedPromptId } } : undefined,
+        model: resolvedModelId ? { connect: { id: resolvedModelId } } : undefined,
+        judgeModel: resolvedJudgeModelId ? { connect: { id: resolvedJudgeModelId } } : undefined,
+        config: (original.config as Prisma.JsonObject) || {},
+        results: {},
+        status: 'pending',
+        isPublic: false,
+      },
+      copiedTestCases,
+      copiedCriteria
+    );
+
     return transformResponse(evaluation);
   }
 

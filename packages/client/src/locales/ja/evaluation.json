@@ -168,6 +168,7 @@
   "fileProcessingNone": "無視",
   "ocrProviderFollow": "OCR：設定に従う",
   "ocrProviderPaddleVl": "PaddleOCR-VL",
+  "ocrProviderPaddleVl15": "PaddleOCR-VL-1.5",
   "ocrProviderDatalab": "Datalab（実験）",
   "ocrProviderMineru": "MinerU",
   "status": "ステータス",

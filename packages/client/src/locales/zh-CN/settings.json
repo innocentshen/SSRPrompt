@@ -318,7 +318,7 @@
   "apiKeyLast4": "已保存 Key：后 4 位={{last4}}",
   "apiKeyWillBeCleared": "保存后将清空 API Key",
   "systemOcrProviderConfigTitle": "系统 OCR Provider 配置",
-  "systemOcrProviderConfigDesc": "配置系统内置 PaddleOCR/PaddleOCR-VL/Datalab/MinerU 的 Base URL 与 API Key（仅管理员可见）。",
+  "systemOcrProviderConfigDesc": "配置系统内置 PaddleOCR/PaddleOCR-VL/PaddleOCR-VL-1.5/Datalab/MinerU 的 Base URL 与 API Key（仅管理员可见）。",
   "testProvider": "测试服务商",
   "chooseFileFirst": "请先选择文件",
   "runTest": "开始测试",

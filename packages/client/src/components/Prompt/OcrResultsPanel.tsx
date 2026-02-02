@@ -24,6 +24,8 @@ function providerLabel(provider?: string | null): string {
       return 'PaddleOCR';
     case 'paddle_vl':
       return 'PaddleOCR-VL';
+    case 'paddle_vl_1_5':
+      return 'PaddleOCR-VL-1.5';
     case 'datalab':
       return 'Datalab';
     case 'mineru':

@@ -171,6 +171,7 @@
   "fileProcessingNone": "不处理",
   "ocrProviderFollow": "OCR 服务商：跟随设置",
   "ocrProviderPaddleVl": "PaddleOCR-VL",
+  "ocrProviderPaddleVl15": "PaddleOCR-VL-1.5",
   "ocrProviderDatalab": "Datalab（实验）",
   "ocrProviderMineru": "MinerU",
   "status": "状态",

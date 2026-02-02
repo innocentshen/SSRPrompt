@@ -1165,6 +1165,7 @@ export class OcrService {
   private async getSystemDefaults(): Promise<{
     paddle: { baseUrl: string | null; apiKey: string | null };
     paddle_vl: { baseUrl: string | null; apiKey: string | null };
+    paddle_vl_1_5: { baseUrl: string | null; apiKey: string | null };
     datalab: { baseUrl: string | null; apiKey: string | null };
     mineru: { baseUrl: string | null; apiKey: string | null };
   }> {
@@ -1173,6 +1174,7 @@ export class OcrService {
 
     const paddleRow = byProvider.get('paddle') ?? null;
     const paddleVlRow = byProvider.get('paddle_vl') ?? null;
+    const paddleVl15Row = byProvider.get('paddle_vl_1_5') ?? null;
     const datalabRow = byProvider.get('datalab') ?? null;
     const mineruRow = byProvider.get('mineru') ?? null;
 
@@ -1184,6 +1186,10 @@ export class OcrService {
       paddle_vl: {
         baseUrl: normalizeBaseUrl(paddleVlRow?.baseUrl ?? null),
         apiKey: safeDecrypt(paddleVlRow?.apiKey ?? null),
+      },
+      paddle_vl_1_5: {
+        baseUrl: normalizeBaseUrl(paddleVl15Row?.baseUrl ?? null),
+        apiKey: safeDecrypt(paddleVl15Row?.apiKey ?? null),
       },
       datalab: {
         baseUrl: normalizeBaseUrl(datalabRow?.baseUrl ?? null),
@@ -1248,7 +1254,11 @@ export class OcrService {
     if (credentialSource === 'system') {
       const defaults = provider === 'datalab'
         ? system.datalab
-        : (provider === 'paddle_vl' ? system.paddle_vl : (provider === 'mineru' ? system.mineru : system.paddle));
+        : (provider === 'mineru'
+          ? system.mineru
+          : (provider === 'paddle_vl'
+            ? system.paddle_vl
+            : (provider === 'paddle_vl_1_5' ? system.paddle_vl_1_5 : system.paddle)));
       return {
         enabled,
         provider,
@@ -1309,6 +1319,7 @@ export class OcrService {
       systemDefaults: {
         paddle: { baseUrl: system.paddle.baseUrl },
         paddle_vl: { baseUrl: system.paddle_vl.baseUrl },
+        paddle_vl_1_5: { baseUrl: system.paddle_vl_1_5.baseUrl },
         datalab: { baseUrl: system.datalab.baseUrl },
         mineru: { baseUrl: system.mineru.baseUrl },
       },
@@ -1451,6 +1462,7 @@ export class OcrService {
     return {
       paddle: toConfig('paddle'),
       paddle_vl: toConfig('paddle_vl'),
+      paddle_vl_1_5: toConfig('paddle_vl_1_5'),
       datalab: toConfig('datalab'),
       mineru: toConfig('mineru'),
     };
@@ -1464,6 +1476,7 @@ export class OcrService {
 
     if (data.paddle) entries.push({ provider: 'paddle', config: data.paddle });
     if (data.paddle_vl) entries.push({ provider: 'paddle_vl', config: data.paddle_vl });
+    if (data.paddle_vl_1_5) entries.push({ provider: 'paddle_vl_1_5', config: data.paddle_vl_1_5 });
     if (data.datalab) entries.push({ provider: 'datalab', config: data.datalab });
     if (data.mineru) entries.push({ provider: 'mineru', config: data.mineru });
 
@@ -1542,7 +1555,7 @@ export class OcrService {
       };
     }
 
-    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl') && !effective.apiKey && effective.baseUrl && paddleRequiresToken(effective.baseUrl)) {
+    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl' || effective.provider === 'paddle_vl_1_5') && !effective.apiKey && effective.baseUrl && paddleRequiresToken(effective.baseUrl)) {
       return {
         success: false,
         provider: effective.provider,
@@ -1587,6 +1600,27 @@ export class OcrService {
         return {
           success: true,
           provider: 'paddle_vl',
+          latencyMs,
+          pageCount: pages.length || undefined,
+          charCount: fullText.length,
+          previewText,
+          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
+        };
+      }
+
+      if (effective.provider === 'paddle_vl_1_5') {
+        const { pages, fullText } = await paddleOcrVlExtract(
+          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
+          { buffer: file.buffer, mimeType: file.mimeType },
+          effective.paddle_vl
+        );
+
+        const latencyMs = Date.now() - started;
+        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
+
+        return {
+          success: true,
+          provider: 'paddle_vl_1_5',
           latencyMs,
           pageCount: pages.length || undefined,
           charCount: fullText.length,
@@ -1714,7 +1748,7 @@ export class OcrService {
       throw new AppError(400, 'INVALID_REQUEST', 'MinerU API key is not configured');
     }
 
-    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl') && !effective.apiKey && paddleRequiresToken(effective.baseUrl)) {
+    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl' || effective.provider === 'paddle_vl_1_5') && !effective.apiKey && paddleRequiresToken(effective.baseUrl)) {
       throw new AppError(400, 'INVALID_REQUEST', 'PaddleOCR token is not configured');
     }
 
@@ -1754,6 +1788,14 @@ export class OcrService {
         pages = result.pages;
         fullText = result.fullText;
       } else if (effective.provider === 'paddle_vl') {
+        const result = await paddleOcrVlExtract(
+          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
+          { buffer, mimeType },
+          effective.paddle_vl
+        );
+        pages = result.pages;
+        fullText = result.fullText;
+      } else if (effective.provider === 'paddle_vl_1_5') {
         const result = await paddleOcrVlExtract(
           { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
           { buffer, mimeType },

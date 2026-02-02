@@ -321,7 +321,7 @@
   "apiKeyLast4": "Saved key: last4={{last4}}",
   "apiKeyWillBeCleared": "API key will be cleared on save",
   "systemOcrProviderConfigTitle": "System OCR Provider Config",
-  "systemOcrProviderConfigDesc": "Configure built-in PaddleOCR/PaddleOCR-VL/Datalab/MinerU endpoints and keys (admins only).",
+  "systemOcrProviderConfigDesc": "Configure built-in PaddleOCR/PaddleOCR-VL/PaddleOCR-VL-1.5/Datalab/MinerU endpoints and keys (admins only).",
   "testProvider": "Test Provider",
   "chooseFileFirst": "Please choose a file first",
   "runTest": "Run Test",

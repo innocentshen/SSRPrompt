@@ -176,7 +176,7 @@ const ChatCompletionSchema = z.object({
   responseFormat: z.record(z.unknown()).optional(),
   isEvalCase: z.boolean().optional().default(false),
   fileProcessing: z.enum(['auto', 'vision', 'ocr', 'none']).optional(),
-  ocrProvider: z.enum(['paddle', 'paddle_vl', 'datalab', 'mineru']).optional(),
+  ocrProvider: z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru']).optional(),
 });
 
 type IncomingChatMessage = z.infer<typeof ChatMessageSchema>;

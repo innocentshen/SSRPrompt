@@ -1,4 +1,4 @@
-export type OcrProvider = 'paddle' | 'paddle_vl' | 'datalab' | 'mineru';
+export type OcrProvider = 'paddle' | 'paddle_vl' | 'paddle_vl_1_5' | 'datalab' | 'mineru';
 
 export type OcrCredentialSource = 'system' | 'custom';
 
@@ -86,6 +86,7 @@ export interface OcrProviderSettings {
   systemDefaults: {
     paddle: { baseUrl: string | null };
     paddle_vl: { baseUrl: string | null };
+    paddle_vl_1_5: { baseUrl: string | null };
     datalab: { baseUrl: string | null };
     mineru: { baseUrl: string | null };
   };
@@ -112,6 +113,7 @@ export interface OcrSystemProviderConfig {
 export interface OcrSystemProviderSettings {
   paddle: OcrSystemProviderConfig;
   paddle_vl: OcrSystemProviderConfig;
+  paddle_vl_1_5: OcrSystemProviderConfig;
   datalab: OcrSystemProviderConfig;
   mineru: OcrSystemProviderConfig;
 }
@@ -119,6 +121,7 @@ export interface OcrSystemProviderSettings {
 export interface UpdateOcrSystemProviderSettingsDto {
   paddle?: { baseUrl?: string | null; apiKey?: string | null };
   paddle_vl?: { baseUrl?: string | null; apiKey?: string | null };
+  paddle_vl_1_5?: { baseUrl?: string | null; apiKey?: string | null };
   datalab?: { baseUrl?: string | null; apiKey?: string | null };
   mineru?: { baseUrl?: string | null; apiKey?: string | null };
 }

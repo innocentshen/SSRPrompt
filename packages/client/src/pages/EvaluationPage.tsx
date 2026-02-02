@@ -181,6 +181,8 @@ function getOcrProviderLabel(t: (key: string) => string, ocrProvider?: string | 
       return 'PaddleOCR';
     case 'paddle_vl':
       return t('ocrProviderPaddleVl');
+    case 'paddle_vl_1_5':
+      return t('ocrProviderPaddleVl15');
     case 'datalab':
       return t('ocrProviderDatalab');
     case 'mineru':
@@ -718,6 +720,9 @@ export function EvaluationPage() {
       !!currentUserId && evaluation.userId === currentUserId && !hasEvaluationFilter,
     [currentUserId, hasEvaluationFilter]
   );
+
+  const isSelectedEvaluationOwner =
+    !!currentUserId && !!selectedEvaluation && selectedEvaluation.userId === currentUserId;
 
   const reorderEvaluations = useCallback(
     (list: EvaluationWithRelations[], fromId: string, toId: string) => {
@@ -2239,6 +2244,9 @@ export function EvaluationPage() {
                   </p>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant={status.variant}>{t(status.labelKey)}</Badge>
+                    <Badge variant={evaluation.isPublic ? 'success' : 'info'}>
+                      {evaluation.isPublic ? t('public') : t('private')}
+                    </Badge>
                   </div>
                 </div>
               </button>
@@ -2261,7 +2269,7 @@ export function EvaluationPage() {
             <div className="flex-shrink-0 p-6 pb-0 space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  {isEditingName ? (
+                  {isEditingName && isSelectedEvaluationOwner ? (
                     <div className="flex items-center gap-2">
                       <Input
                         value={editingName}
@@ -2285,40 +2293,48 @@ export function EvaluationPage() {
                       <h2 className="text-xl font-semibold text-white light:text-slate-900">
                         {selectedEvaluation.name}
                       </h2>
-                      <button
-                        onClick={startEditingName}
-                        className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
-                      >
-                        <Pencil className="w-4 h-4 text-slate-400 light:text-slate-500" />
-                      </button>
-                      <button
-                        onClick={async () => {
-                          // Check if prompt is public when trying to make evaluation public
-                          const linkedPrompt = prompts.find(p => p.id === selectedEvaluation.promptId);
-                          if (!selectedEvaluation.isPublic && linkedPrompt && !linkedPrompt.isPublic) {
-                            showToast('error', t('promptMustBePublicFirst'));
-                            return;
-                          }
-                          const newValue = !selectedEvaluation.isPublic;
-                          try {
-                            await evaluationsApi.update(selectedEvaluation.id, { isPublic: newValue });
-                            setSelectedEvaluation({ ...selectedEvaluation, isPublic: newValue });
-                            setEvaluations((prev) => prev.map((e) => e.id === selectedEvaluation.id ? { ...e, isPublic: newValue } : e));
-                            showToast('success', newValue ? t('evaluationPublic') : t('evaluationPrivate'));
-                          } catch {
-                            showToast('error', t('updateFailed'));
-                          }
-                        }}
-                        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-                          selectedEvaluation.isPublic
-                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600 light:bg-slate-200 light:text-slate-500 light:hover:bg-slate-300'
-                        }`}
-                        title={selectedEvaluation.isPublic ? t('clickToPrivate') : t('clickToPublic')}
-                      >
-                        <Globe className="w-3 h-3" />
-                        {selectedEvaluation.isPublic ? t('public') : t('private')}
-                      </button>
+                      {isSelectedEvaluationOwner ? (
+                        <>
+                          <button
+                            onClick={startEditingName}
+                            className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors"
+                          >
+                            <Pencil className="w-4 h-4 text-slate-400 light:text-slate-500" />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              // Check if prompt is public when trying to make evaluation public
+                              const linkedPrompt = prompts.find(p => p.id === selectedEvaluation.promptId);
+                              if (!selectedEvaluation.isPublic && linkedPrompt && !linkedPrompt.isPublic) {
+                                showToast('error', t('promptMustBePublicFirst'));
+                                return;
+                              }
+                              const newValue = !selectedEvaluation.isPublic;
+                              try {
+                                await evaluationsApi.update(selectedEvaluation.id, { isPublic: newValue });
+                                setSelectedEvaluation({ ...selectedEvaluation, isPublic: newValue });
+                                setEvaluations((prev) => prev.map((e) => e.id === selectedEvaluation.id ? { ...e, isPublic: newValue } : e));
+                                showToast('success', newValue ? t('evaluationPublic') : t('evaluationPrivate'));
+                              } catch {
+                                showToast('error', t('updateFailed'));
+                              }
+                            }}
+                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                              selectedEvaluation.isPublic
+                                ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                                : 'bg-slate-700 text-slate-400 hover:bg-slate-600 light:bg-slate-200 light:text-slate-500 light:hover:bg-slate-300'
+                            }`}
+                            title={selectedEvaluation.isPublic ? t('clickToPrivate') : t('clickToPublic')}
+                          >
+                            <Globe className="w-3 h-3" />
+                            {selectedEvaluation.isPublic ? t('public') : t('private')}
+                          </button>
+                        </>
+                      ) : (
+                        <Badge variant={selectedEvaluation.isPublic ? 'success' : 'info'}>
+                          {selectedEvaluation.isPublic ? t('public') : t('private')}
+                        </Badge>
+                      )}
                     </div>
                   )}
                   <p className="text-sm text-slate-500 light:text-slate-400 mt-1">
@@ -2326,7 +2342,7 @@ export function EvaluationPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button onClick={runEvaluation} disabled={submittingNewVersion}>
+                  <Button onClick={runEvaluation} disabled={submittingNewVersion || !isSelectedEvaluationOwner}>
                     {runningCount > 0 ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
@@ -2347,9 +2363,11 @@ export function EvaluationPage() {
                     <Copy className="w-4 h-4" />
                     <span>{tCommon('copy')}</span>
                   </Button>
-                  <Button variant="ghost" onClick={handleDeleteEvaluation} disabled={submittingNewVersion}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {isSelectedEvaluationOwner && (
+                    <Button variant="ghost" onClick={handleDeleteEvaluation} disabled={submittingNewVersion}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -2361,6 +2379,7 @@ export function EvaluationPage() {
                     onChange={(promptId) => void handlePromptChange(promptId)}
                     prompts={prompts}
                     groups={promptGroups}
+                    disabled={!isSelectedEvaluationOwner}
                     allowClear
                     clearLabel={t('noLinkedPrompt')}
                   />
@@ -2386,6 +2405,7 @@ export function EvaluationPage() {
                     providers={providers}
                     selectedModelId={selectedEvaluation.modelId || ''}
                     onSelect={(modelId) => handleUpdateEvaluation('modelId', modelId || null)}
+                    disabled={!isSelectedEvaluationOwner}
                     placeholder={t('selectModel')}
                   />
                   {selectedEvaluation.model && (
@@ -2414,6 +2434,7 @@ export function EvaluationPage() {
                     providers={providers}
                     selectedModelId={selectedEvaluation.judgeModelId || ''}
                     onSelect={(modelId) => handleUpdateEvaluation('judgeModelId', modelId || null)}
+                    disabled={!isSelectedEvaluationOwner}
                     placeholder={t('noJudgeModel')}
                   />
                   {selectedEvaluation.judgeModel && (
@@ -2462,6 +2483,7 @@ export function EvaluationPage() {
                           { value: '', label: t('ocrProviderFollow') },
                           { value: 'paddle', label: 'PaddleOCR' },
                           { value: 'paddle_vl', label: t('ocrProviderPaddleVl') },
+                          { value: 'paddle_vl_1_5', label: t('ocrProviderPaddleVl15') },
                           { value: 'datalab', label: t('ocrProviderDatalab') },
                           { value: 'mineru', label: t('ocrProviderMineru') },
                         ]}

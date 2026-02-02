@@ -175,6 +175,7 @@
   "fileProcessingNone": "Ignore",
   "ocrProviderFollow": "OCR provider: follow Settings",
   "ocrProviderPaddleVl": "PaddleOCR-VL",
+  "ocrProviderPaddleVl15": "PaddleOCR-VL-1.5",
   "ocrProviderDatalab": "Datalab (experimental)",
   "ocrProviderMineru": "MinerU",
   "status": "Status",

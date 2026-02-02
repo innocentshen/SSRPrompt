@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'datalab', 'mineru']);
+export const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru']);
 export const OcrCredentialSourceSchema = z.enum(['system', 'custom']);
 
 export const MineruModelVersionSchema = z.enum(['pipeline', 'vlm']);
@@ -91,6 +91,7 @@ const UpdateOcrSystemProviderConfigSchema = z.object({
 export const UpdateOcrSystemProviderSettingsSchema = z.object({
   paddle: UpdateOcrSystemProviderConfigSchema.optional(),
   paddle_vl: UpdateOcrSystemProviderConfigSchema.optional(),
+  paddle_vl_1_5: UpdateOcrSystemProviderConfigSchema.optional(),
   datalab: UpdateOcrSystemProviderConfigSchema.optional(),
   mineru: UpdateOcrSystemProviderConfigSchema.optional(),
 });

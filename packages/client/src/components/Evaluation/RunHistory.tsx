@@ -63,6 +63,8 @@ function getOcrProviderLabel(t: (key: string) => string, ocrProvider?: string | 
       return 'PaddleOCR';
     case 'paddle_vl':
       return t('ocrProviderPaddleVl');
+    case 'paddle_vl_1_5':
+      return t('ocrProviderPaddleVl15');
     case 'datalab':
       return t('ocrProviderDatalab');
     case 'mineru':
