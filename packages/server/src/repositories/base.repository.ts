@@ -48,8 +48,15 @@ export abstract class TenantRepository<
       select?: Record<string, boolean>;
     }
   ): Promise<TModel[]> {
+    // CRITICAL: Validate userId to prevent security bypass
+    // If userId is undefined/null/empty, Prisma would ignore the condition,
+    // causing the query to return ALL records (security vulnerability)
+    if (!userId || typeof userId !== 'string') {
+      throw new Error(`userId is required for ${this.entityName} query`);
+    }
+
     return this.delegate.findMany({
-      where: { userId, ...options?.where },
+      where: { userId: userId, ...options?.where },
       orderBy: options?.orderBy,
       skip: options?.skip,
       take: options?.take,
@@ -126,11 +133,16 @@ export abstract class TenantRepository<
    * Count records for a user
    */
   async count(userId: string, where?: Record<string, unknown>): Promise<number> {
+    // CRITICAL: Validate userId to prevent security bypass
+    if (!userId || typeof userId !== 'string') {
+      throw new Error(`userId is required for ${this.entityName} count`);
+    }
+
     if (!this.delegate.count) {
       throw new Error(`Count not supported for ${this.entityName}`);
     }
     return this.delegate.count({
-      where: { userId, ...where },
+      where: { userId: userId, ...where },
     });
   }
 }

@@ -19,9 +19,14 @@ export class PromptsRepository extends TenantRepository<
    * Find all prompts for a user (list view - exclude large fields)
    */
   async findAllList(userId: string): Promise<Partial<Prompt>[]> {
+    // CRITICAL: Validate userId to prevent security bypass
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('userId is required for prompts query');
+    }
+
     const prompts = await this.delegate.findMany({
       where: {
-        userId,
+        userId: userId,
       },
       select: {
         id: true,

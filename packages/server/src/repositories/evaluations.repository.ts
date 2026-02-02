@@ -31,12 +31,19 @@ class EvaluationsRepositoryClass extends TenantRepository<
    * Users should NOT see other users' private evaluations.
    */
   async findAll(userId: string, options?: FindOptions): Promise<EvaluationWithRelations[]> {
+    // CRITICAL: Validate userId to prevent security bypass
+    // If userId is undefined/null/empty, Prisma would ignore the condition,
+    // causing the OR to match ALL records (security vulnerability)
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('userId is required for evaluations query');
+    }
+
     // Build the access control condition:
     // - User's own evaluations (both public and private)
     // - Other users' public evaluations only
     const accessCondition = {
       OR: [
-        { userId },           // User's own evaluations
+        { userId: userId },   // User's own evaluations (explicit assignment)
         { isPublic: true },   // Public evaluations from anyone
       ],
     };
