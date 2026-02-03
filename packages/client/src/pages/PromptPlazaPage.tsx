@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, FileText, Clock, User, Copy, Loader2 } from 'lucide-react';
 import { Button, Badge } from '../components/ui';
 import { ParameterPanel, PromptTestPanel, StructuredOutputEditor, VariableEditor } from '../components/Prompt';
@@ -38,6 +38,7 @@ function normalizeRole(role: string): PromptRole | null {
 
 export function PromptPlazaPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const { t } = useTranslation('prompts');
   const { t: tCommon } = useTranslation('common');
@@ -52,6 +53,17 @@ export function PromptPlazaPage() {
   const [detail, setDetail] = useState<PublicPromptDetail | null>(null);
   const [versions, setVersions] = useState<PromptVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+
+  const promptIdFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const promptId = params.get('promptId');
+    return promptId && promptId.trim() ? promptId.trim() : null;
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!promptIdFromUrl) return;
+    setSelectedId(promptIdFromUrl);
+  }, [promptIdFromUrl]);
 
   const [selectedModelId, setSelectedModelId] = useState('');
   const [testInput, setTestInput] = useState('');

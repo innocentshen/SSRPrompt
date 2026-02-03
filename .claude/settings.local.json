@@ -104,7 +104,10 @@
       "Bash(pnpm db:push:*)",
       "Bash(pnpm --filter @ssrprompt/server exec tsc:*)",
       "Bash(pnpm build:server:*)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "WebFetch(domain:www.paddleocr.ai)",
+      "WebFetch(domain:ai.baidu.com)",
+      "WebFetch(domain:deepwiki.com)"
     ]
   }
 }

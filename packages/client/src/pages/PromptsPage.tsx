@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Link,
   Loader2,
   Paperclip,
   X,
@@ -27,6 +28,7 @@ import {
   Check,
   Copy,
   Square,
+  AlertCircle,
   Settings2,
   Globe,
   Play,
@@ -104,6 +106,10 @@ type PromptTestCache = {
 };
 
 const promptTestCacheByPromptId = new Map<string, PromptTestCache>();
+
+export function resetPromptsPageCaches(): void {
+  promptTestCacheByPromptId.clear();
+}
 
 export function PromptsPage() {
   const { showToast } = useToast();
@@ -196,6 +202,9 @@ export function PromptsPage() {
   const ignoreGroupNameBlurRef = useRef(false);
   const isFinalizingDragRef = useRef(false);
   const selectPromptRequestIdRef = useRef(0);
+  const initializedPromptIdRef = useRef<string | null>(null);
+  const [publishPromptModal, setPublishPromptModal] = useState<{ promptId: string; step: 'confirm' | 'done' } | null>(null);
+  const [publishingPrompt, setPublishingPrompt] = useState(false);
 
   useEffect(() => {
     if (!editingGroupId) return;
@@ -274,6 +283,19 @@ export function PromptsPage() {
     );
   }, [promptConfig, promptContent, promptMessages, promptName, promptVariables, selectedModel, selectedPrompt]);
 
+  const publishPromptModalPrompt = useMemo(() => {
+    if (!publishPromptModal) return null;
+    if (selectedPrompt?.id === publishPromptModal.promptId) return selectedPrompt;
+    return prompts.find((p) => p.id === publishPromptModal.promptId) ?? null;
+  }, [publishPromptModal, selectedPrompt, prompts]);
+
+  const publishPromptShareUrl = useMemo(() => {
+    if (!publishPromptModal) return '';
+    const url = new URL('/plaza', window.location.origin);
+    url.searchParams.set('promptId', publishPromptModal.promptId);
+    return url.toString();
+  }, [publishPromptModal]);
+
   const loadData = useCallback(async () => {
     try {
       // Load providers and models from global store (with caching)
@@ -337,7 +359,15 @@ export function PromptsPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedPrompt) return;
+    if (!selectedPrompt) {
+      initializedPromptIdRef.current = null;
+      return;
+    }
+
+    // Only initialize editor state when switching prompts.
+    if (initializedPromptIdRef.current === selectedPrompt.id) return;
+    initializedPromptIdRef.current = selectedPrompt.id;
+
     // Reset prompt content and configuration
     setPromptContent(selectedPrompt.content || '');
     setPromptName(selectedPrompt.name);
@@ -373,7 +403,7 @@ export function PromptsPage() {
       setTestOutput('');
       setTestThinking('');
     }
-  }, [loadVersions, selectedPrompt]);
+  }, [loadVersions, selectedPrompt?.id]);
 
   const handleSelectPrompt = async (promptId: string) => {
     if (loadingPromptId === promptId || selectedPrompt?.id === promptId) return;
@@ -744,6 +774,57 @@ export function PromptsPage() {
   const handleDeletePrompt = () => {
     if (!selectedPrompt) return;
     requestDeletePrompt(selectedPrompt.id);
+  };
+
+  const handleCopyPromptShareLink = async (promptId: string) => {
+    try {
+      const url = new URL('/plaza', window.location.origin);
+      url.searchParams.set('promptId', promptId);
+      await navigator.clipboard.writeText(url.toString());
+      showToast('success', tCommon('linkCopied'));
+    } catch {
+      showToast('error', t('copyFailed'));
+    }
+  };
+
+  const openPublishPromptModal = () => {
+    if (!selectedPrompt || selectedPrompt.isPublic) return;
+    setPublishPromptModal({ promptId: selectedPrompt.id, step: 'confirm' });
+  };
+
+  const closePublishPromptModal = () => {
+    if (publishingPrompt) return;
+    setPublishPromptModal(null);
+  };
+
+  const handleConfirmPublishPrompt = async () => {
+    if (!publishPromptModalPrompt || publishPromptModalPrompt.isPublic) return;
+    setPublishingPrompt(true);
+    try {
+      const updated = await promptsApi.update(publishPromptModalPrompt.id, { isPublic: true });
+      setSelectedPrompt((prev) => (prev && prev.id === updated.id ? (updated as Prompt) : prev));
+      setPrompts((prev) => prev.map((p) => (p.id === updated.id ? { ...p, isPublic: true } : p)));
+      invalidatePromptsCache(updated);
+      showToast('success', t('promptPublic'));
+      setPublishPromptModal((prev) => (prev ? { ...prev, step: 'done' } : prev));
+    } catch (e) {
+      showToast('error', t('updateFailed') + ': ' + getErrorMessage(e));
+    } finally {
+      setPublishingPrompt(false);
+    }
+  };
+
+  const handleSetPromptPrivate = async () => {
+    if (!selectedPrompt || !selectedPrompt.isPublic) return;
+    try {
+      const updated = await promptsApi.update(selectedPrompt.id, { isPublic: false });
+      setSelectedPrompt((prev) => (prev && prev.id === updated.id ? (updated as Prompt) : prev));
+      setPrompts((prev) => prev.map((p) => (p.id === updated.id ? { ...p, isPublic: false } : p)));
+      invalidatePromptsCache(updated);
+      showToast('success', t('promptPrivate'));
+    } catch (e) {
+      showToast('error', t('updateFailed') + ': ' + getErrorMessage(e));
+    }
   };
 
   const handleRestoreVersion = async (version: PromptVersion) => {
@@ -1811,29 +1892,32 @@ export function PromptsPage() {
                 <Badge variant="info">v{selectedPrompt.currentVersion}</Badge>
                 {hasUnsavedChanges && <Badge variant="warning">{t('unsaved')}</Badge>}
                 <button
-                  onClick={async () => {
-                    const newValue = !selectedPrompt.isPublic;
-                    try {
-                      await promptsApi.update(selectedPrompt.id, { isPublic: newValue });
-                      setSelectedPrompt({ ...selectedPrompt, isPublic: newValue });
-                      setPrompts((prev) => prev.map((p) => p.id === selectedPrompt.id ? { ...p, isPublic: newValue } : p));
-                      showToast('success', newValue ? t('promptPublic') : t('promptPrivate'));
-                    } catch {
-                      showToast('error', t('updateFailed'));
+                  onClick={() => {
+                    if (!selectedPrompt.isPublic) {
+                      openPublishPromptModal();
+                      return;
                     }
+                    void handleSetPromptPrivate();
                   }}
+                  disabled={saving || publishingPrompt}
                   className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
                     selectedPrompt.isPublic
                       ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                       : 'bg-slate-700 text-slate-400 hover:bg-slate-600 light:bg-slate-200 light:text-slate-500 light:hover:bg-slate-300'
-                  }`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                   title={selectedPrompt.isPublic ? t('clickToPrivate') : t('clickToPublic')}
                 >
                   <Globe className="w-3 h-3" />
                   {selectedPrompt.isPublic ? t('public') : t('private')}
-                </button>
+              </button>
               </div>
               <div className="flex items-center gap-2">
+                {selectedPrompt.isPublic && (
+                  <Button variant="ghost" size="sm" onClick={() => void handleCopyPromptShareLink(selectedPrompt.id)}>
+                    <Link className="w-4 h-4" />
+                    <span>{tCommon('shareLink')}</span>
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => setShowCompare(true)}>
                   <GitCompare className="w-4 h-4" />
                   <span>{t('compare')}</span>
@@ -2170,6 +2254,83 @@ export function PromptsPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        isOpen={publishPromptModal !== null}
+        onClose={closePublishPromptModal}
+        title={t('publishPrompt')}
+        size="md"
+      >
+        {publishPromptModal && publishPromptModal.step === 'confirm' && (
+          <div className="space-y-4">
+            {!publishPromptModalPrompt ? (
+              <div className="text-sm text-slate-500 light:text-slate-600">{tCommon('loading')}</div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm text-slate-200 light:text-slate-800">{t('publishPromptIntro')}</p>
+                  <p className="mt-2 text-xs text-slate-500 light:text-slate-600">{t('publishPromptVisibleTitle')}</p>
+                  <ul className="mt-2 space-y-1 text-sm text-slate-300 light:text-slate-700 list-disc pl-5">
+                    <li>{t('publishPromptVisibleItemMeta')}</li>
+                    <li>{t('publishPromptVisibleItemContent')}</li>
+                    <li>{t('publishPromptVisibleItemVariables')}</li>
+                    <li>{t('publishPromptVisibleItemConfig')}</li>
+                  </ul>
+                  <p className="mt-2 text-xs text-slate-500 light:text-slate-600">{t('publishPromptSafetyHint')}</p>
+                </div>
+
+                <div className="p-3 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50">
+                  <p className="text-xs text-slate-500 light:text-slate-600">{tCommon('name')}</p>
+                  <p className="text-sm text-slate-200 light:text-slate-900 mt-1">{publishPromptModalPrompt.name}</p>
+                </div>
+
+                {publishPromptModalPrompt.id === selectedPrompt?.id && hasUnsavedChanges && (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5" />
+                      <p className="text-xs text-slate-300 light:text-slate-700">{t('publishPromptUnsavedWarning')}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
+                  <Button variant="ghost" onClick={closePublishPromptModal}>
+                    {tCommon('cancel')}
+                  </Button>
+                  <Button onClick={() => void handleConfirmPublishPrompt()} loading={publishingPrompt}>
+                    {t('publishNow')}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {publishPromptModal && publishPromptModal.step === 'done' && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-slate-200 light:text-slate-800">{t('publishPromptDone')}</p>
+              <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('publishPromptDoneHint')}</p>
+            </div>
+            <Input
+              label={tCommon('shareLink')}
+              value={publishPromptShareUrl}
+              readOnly
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
+              <Button
+                variant="secondary"
+                onClick={() => void handleCopyPromptShareLink(publishPromptModal.promptId)}
+              >
+                <Link className="w-4 h-4" />
+                <span>{tCommon('copy')}</span>
+              </Button>
+              <Button onClick={closePublishPromptModal}>{tCommon('close')}</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Delete confirmation modal */}
       <Modal

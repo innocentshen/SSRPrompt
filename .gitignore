@@ -54,7 +54,7 @@ mysql_data/
 postgres_data/
 
 # Prisma
-packages/server/prisma/migrations/*_migration.sql
+!packages/server/prisma/migrations/**/migration.sql
 
 # Old files to remove
 package.json.old

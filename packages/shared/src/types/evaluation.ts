@@ -49,6 +49,7 @@ export interface Evaluation {
   results: Record<string, unknown>;
   orderIndex: number;
   isPublic: boolean;
+  shareAttachments: boolean;
   createdAt: string;
   completedAt: string | null;
 }
@@ -71,6 +72,7 @@ export interface UpdateEvaluationDto {
   config?: EvaluationConfig;
   results?: Record<string, unknown>;
   isPublic?: boolean;
+  shareAttachments?: boolean;
   completedAt?: string | null;
   orderIndex?: number;
 }

@@ -29,6 +29,8 @@ interface TestCaseListProps {
   onToggleSelect?: (id: string, selected: boolean) => void;
   onSetSelectedIds?: (ids: Set<string>) => void;
   fileUploadCapabilities?: FileUploadCapabilities;
+  readOnly?: boolean;
+  downloadAttachmentBlob?: (fileId: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
 }
 
 export function TestCaseList({
@@ -45,6 +47,8 @@ export function TestCaseList({
   onToggleSelect,
   onSetSelectedIds,
   fileUploadCapabilities,
+  readOnly = false,
+  downloadAttachmentBlob,
 }: TestCaseListProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
@@ -106,6 +110,7 @@ export function TestCaseList({
   }, [isEditingName]);
 
   const commitNameUpdate = () => {
+    if (readOnly) return;
     if (!activeTestCase) return;
     if (nameDraft === activeTestCase.name) return;
     void onUpdate({ ...activeTestCase, name: nameDraft });
@@ -128,6 +133,7 @@ export function TestCaseList({
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
     if (!activeTestCase) return;
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -166,6 +172,7 @@ export function TestCaseList({
   };
 
   const removeAttachment = async (attachmentIndex: number) => {
+    if (readOnly) return;
     if (!activeTestCase) return;
     await onUpdate({
       ...activeTestCase,
@@ -234,27 +241,31 @@ export function TestCaseList({
               className="w-full pl-7 pr-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
             />
           </div>
-          <Button variant="secondary" size="sm" onClick={handleAdd} className="shrink-0">
-            <Plus className="w-4 h-4" />
-            <span>{t('addTestCase')}</span>
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={filteredTestCases.length === 0}>
-            {tCommon('selectAll')}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={handleDeleteSelected} disabled={selectedCount === 0}>
-            <Trash2 className="w-4 h-4" />
-            <span>{tCommon('delete')}</span>
-          </Button>
-          {onRunSelected && (
-            <Button variant="secondary" size="sm" onClick={onRunSelected} disabled={testCases.length === 0}>
-              <Play className="w-4 h-4" />
-              <span>{t('runEvaluation')}</span>
+          {!readOnly && (
+            <Button variant="secondary" size="sm" onClick={handleAdd} className="shrink-0">
+              <Plus className="w-4 h-4" />
+              <span>{t('addTestCase')}</span>
             </Button>
           )}
         </div>
+
+        {!readOnly && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={filteredTestCases.length === 0}>
+              {tCommon('selectAll')}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleDeleteSelected} disabled={selectedCount === 0}>
+              <Trash2 className="w-4 h-4" />
+              <span>{tCommon('delete')}</span>
+            </Button>
+            {onRunSelected && (
+              <Button variant="secondary" size="sm" onClick={onRunSelected} disabled={testCases.length === 0}>
+                <Play className="w-4 h-4" />
+                <span>{t('runEvaluation')}</span>
+              </Button>
+            )}
+          </div>
+        )}
 
         {testCases.length === 0 ? (
           <div className="text-center py-8 text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
@@ -284,7 +295,7 @@ export function TestCaseList({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      {onToggleSelect && (
+                      {!readOnly && onToggleSelect && (
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -319,7 +330,7 @@ export function TestCaseList({
             <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-2 py-1">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs text-slate-500 light:text-slate-600 shrink-0">{t('testCaseName')}</span>
-                {isEditingName ? (
+                {isEditingName && !readOnly ? (
                   <input
                     ref={nameInputRef}
                     value={nameDraft}
@@ -351,6 +362,15 @@ export function TestCaseList({
                     placeholder={t('testCaseNum', { num: activeIndex + 1 })}
                     className="w-full lg:w-[420px] min-w-0 px-2 py-0.5 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-md text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 focus:border-cyan-500"
                   />
+                ) : readOnly ? (
+                  <div className="flex items-center gap-1 px-2 py-0.5 max-w-full lg:max-w-[420px] min-w-0">
+                    <span
+                      className="text-sm font-medium text-slate-200 light:text-slate-800 truncate"
+                      title={nameDraft || t('testCaseNum', { num: activeIndex + 1 })}
+                    >
+                      {nameDraft || t('testCaseNum', { num: activeIndex + 1 })}
+                    </span>
+                  </div>
                 ) : (
                   <button
                     type="button"
@@ -403,25 +423,29 @@ export function TestCaseList({
                     +{activeTestCase.attachments.length - 1}
                   </button>
                 )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="px-2 py-1"
-                  onClick={handleCopyActive}
-                  disabled={!onCopy}
-                >
-                  <Copy className="w-4 h-4" />
-                  <span>{tCommon('copy')}</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="px-2 py-1"
-                  onClick={() => onDelete(activeTestCase.id)}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>{tCommon('delete')}</span>
-                </Button>
+                {!readOnly && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="px-2 py-1"
+                    onClick={handleCopyActive}
+                    disabled={!onCopy}
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>{tCommon('copy')}</span>
+                  </Button>
+                )}
+                {!readOnly && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="px-2 py-1"
+                    onClick={() => onDelete(activeTestCase.id)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>{tCommon('delete')}</span>
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -433,6 +457,7 @@ export function TestCaseList({
                 onUpdate={onUpdate}
                 onDelete={() => onDelete(activeTestCase.id)}
                 variant="panel"
+                readOnly={readOnly}
               />
             </div>
           </>
@@ -479,14 +504,16 @@ export function TestCaseList({
                     </span>
                     <Eye className="w-3 h-3 text-cyan-400 light:text-cyan-600 flex-shrink-0" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeAttachment(i)}
-                    className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors flex-shrink-0"
-                    title={t('deleteAttachment')}
-                  >
-                    <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void removeAttachment(i)}
+                      className="p-1 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors flex-shrink-0"
+                      title={t('deleteAttachment')}
+                    >
+                      <X className="w-3 h-3 text-slate-500 light:text-slate-400 hover:text-rose-400" />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -497,25 +524,29 @@ export function TestCaseList({
           </div>
         )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          onChange={handleFileSelect}
-          accept={fileUploadCapabilities?.accept ?? getFileInputAccept()}
-          multiple
-          className="hidden"
-        />
-        <div className="flex justify-end">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={isUploading || !activeTestCase}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Paperclip className="w-4 h-4" />
-            <span>{t('addAttachment')}</span>
-          </Button>
-        </div>
+        {!readOnly && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileSelect}
+              accept={fileUploadCapabilities?.accept ?? getFileInputAccept()}
+              multiple
+              className="hidden"
+            />
+            <div className="flex justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isUploading || !activeTestCase}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip className="w-4 h-4" />
+                <span>{t('addAttachment')}</span>
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
 
@@ -523,6 +554,7 @@ export function TestCaseList({
       attachment={previewAttachment}
       isOpen={!!previewAttachment}
       onClose={() => setPreviewAttachment(null)}
+      downloadBlob={downloadAttachmentBlob}
     />
     </>
   );

@@ -68,6 +68,7 @@ class EvaluationsRepositoryClass extends TenantRepository<
         results: true,
         orderIndex: true,
         isPublic: true,
+        shareAttachments: true,
         createdAt: true,
         completedAt: true,
         prompt: {

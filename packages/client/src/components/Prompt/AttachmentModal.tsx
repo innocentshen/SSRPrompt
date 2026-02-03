@@ -10,9 +10,10 @@ interface AttachmentModalProps {
   attachment: FileAttachment | null;
   isOpen: boolean;
   onClose: () => void;
+  downloadBlob?: (fileId: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
 }
 
-export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModalProps) {
+export function AttachmentModal({ attachment, isOpen, onClose, downloadBlob }: AttachmentModalProps) {
   const { t } = useTranslation('common');
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -20,6 +21,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
   const [loadError, setLoadError] = useState<string | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
+  const fetchBlob = downloadBlob ?? filesApi.downloadBlob;
 
   const attachmentId = attachment?.fileId;
   const isImage = attachment ? isImageFile(attachment) : false;
@@ -45,7 +47,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
 
     (async () => {
       try {
-        const blob = await filesApi.downloadBlob(attachmentId, { signal: abortController.signal });
+        const blob = await fetchBlob(attachmentId, { signal: abortController.signal });
         if (abortController.signal.aborted) return;
 
         if (isText) {
@@ -72,7 +74,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
         URL.revokeObjectURL(urlToRevoke);
       }
     };
-  }, [attachmentId, isOpen, isText]);
+  }, [attachmentId, fetchBlob, isOpen, isText]);
 
   // Avoid keeping a revoked blob URL in state between open/close cycles.
   // Otherwise, the next open can briefly render the stale blob URL and trigger net::ERR_FILE_NOT_FOUND.
@@ -87,7 +89,7 @@ export function AttachmentModal({ attachment, isOpen, onClose }: AttachmentModal
   const handleDownload = async () => {
     if (!attachment) return;
     try {
-      const blob = await filesApi.downloadBlob(attachment.fileId);
+      const blob = await fetchBlob(attachment.fileId);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

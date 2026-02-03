@@ -66,6 +66,9 @@ interface TracesState {
   setExpandedContent: (content: string) => void;
   setPreviewAttachment: (attachment: FileAttachment | null) => void;
 
+  // Actions - Reset
+  resetStore: () => void;
+
   // Computed
   getPromptStats: () => PromptStats[];
   getFilteredTraces: () => Trace[];
@@ -100,6 +103,30 @@ export const useTracesStore = create<TracesState>()(
       previewAttachment: null,
 
       // Actions
+      resetStore: () =>
+        set({
+          traces: [],
+          prompts: [],
+          selectedTraceId: null,
+          selectedTrace: null,
+          selectedPromptId: null,
+          filterStatus: 'all',
+          searchQuery: '',
+          page: 1,
+          pageSize: 50,
+          totalCount: 0,
+          hasMore: true,
+          loading: false,
+          loadingMore: false,
+          attachmentsLoading: false,
+          showDeleteConfirm: false,
+          deleting: false,
+          copiedField: null,
+          expandedField: null,
+          expandedContent: '',
+          previewAttachment: null,
+        }),
+
       fetchTraces: async (reset = false) => {
         const state = get();
         if (state.loading || state.loadingMore) return;

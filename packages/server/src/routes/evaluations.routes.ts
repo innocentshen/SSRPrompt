@@ -85,6 +85,28 @@ router.put('/:id', asyncHandler(evaluationsController.update));
 router.delete('/:id', asyncHandler(evaluationsController.delete));
 
 /**
+ * GET /evaluations/{evaluationId}/files/{fileId}:
+ *   get:
+ *     tags: [Files]
+ *     summary: 下載/預覽評測附件（公開分享可選）
+ *     parameters:
+ *       - in: path
+ *         name: evaluationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: fileId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: 成功
+ */
+router.get('/:evaluationId/files/:fileId', asyncHandler(evaluationsController.downloadFile));
+
+/**
  * @swagger
  * /evaluations/{id}/copy:
  *   post:

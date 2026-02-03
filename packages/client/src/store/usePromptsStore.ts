@@ -192,9 +192,10 @@ interface PromptsState {
   // Actions - Reset
   resetEditingState: () => void;
   resetTestState: () => void;
+  resetStore: () => void;
 }
 
-const initialCompareState: CompareState = {
+const createInitialCompareState = (): CompareState => ({
   mode: 'models',
   version: '',
   models: ['', ''],
@@ -204,7 +205,7 @@ const initialCompareState: CompareState = {
   files: [],
   running: false,
   results: { left: null, right: null },
-};
+});
 
 export const usePromptsStore = create<PromptsState>()(
   devtools(
@@ -234,7 +235,7 @@ export const usePromptsStore = create<PromptsState>()(
       debugRuns: [],
       selectedDebugRunId: null,
 
-      compare: initialCompareState,
+      compare: createInitialCompareState(),
       showCompare: false,
 
       thinkingContent: '',
@@ -399,7 +400,7 @@ export const usePromptsStore = create<PromptsState>()(
       },
 
       resetCompare: () => {
-        set({ compare: initialCompareState });
+        set({ compare: createInitialCompareState() });
       },
 
       // Thinking actions
@@ -517,6 +518,39 @@ export const usePromptsStore = create<PromptsState>()(
           isThinking: false,
         });
       },
+
+      resetStore: () =>
+        set({
+          prompts: [],
+          selectedPromptId: null,
+          searchQuery: '',
+          editingContent: '',
+          editingName: '',
+          editingMessages: [],
+          editingConfig: DEFAULT_PROMPT_CONFIG,
+          editingVariables: [],
+          selectedModelId: '',
+          versions: [],
+          showVersions: false,
+          testInput: '',
+          testOutput: '',
+          variableValues: {},
+          attachedFiles: [],
+          isRunning: false,
+          debugRuns: [],
+          selectedDebugRunId: null,
+          compare: createInitialCompareState(),
+          showCompare: false,
+          thinkingContent: '',
+          isThinking: false,
+          activeTab: 'edit',
+          autoSaveStatus: 'saved',
+          renderMarkdown: true,
+          showNewPrompt: false,
+          newPromptName: '',
+          previewAttachment: null,
+          showDebugDetail: null,
+        }),
     }),
     { name: 'prompts-store' }
   )

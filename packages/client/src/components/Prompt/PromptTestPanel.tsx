@@ -69,6 +69,10 @@ type PromptTestPanelCacheState = {
 
 const promptTestPanelCacheByPromptId = new Map<string, PromptTestPanelCacheState>();
 
+export function resetPromptTestPanelCaches(): void {
+  promptTestPanelCacheByPromptId.clear();
+}
+
 export interface PromptTestPanelProps {
   // Model selection
   models: Model[];

@@ -94,6 +94,8 @@
   "source": "ソース",
   "split": "分割",
   "allowScripts": "スクリプトを実行",
+  "shareLink": "共有リンク",
+  "linkCopied": "リンクをコピーしました",
   "errors": {
     "UNKNOWN_ERROR": "不明なエラー",
     "NETWORK_ERROR": "ネットワークエラーです。接続を確認して再試行してください。",

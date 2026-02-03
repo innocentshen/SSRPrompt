@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Layout } from './components/Layout';
@@ -7,6 +7,7 @@ import { ThemeProvider } from './contexts';
 import { ProtectedRoute, PublicRoute } from './components/Auth/ProtectedRoute';
 import { DemoExpiredModal } from './components/Auth/DemoExpiredModal';
 import { useAuthStore } from './store/useAuthStore';
+import { resetUserSessionState } from './lib/session-reset';
 import {
   SettingsPage,
   PromptsPage,
@@ -27,13 +28,28 @@ function AppContent() {
   const { t } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const navigate = useNavigate();
-  const { isLoading, logout, initialize, isDemo, checkDemoExpiry } = useAuthStore();
+  const { isLoading, logout, initialize, isDemo, checkDemoExpiry, user } = useAuthStore();
   const [showDemoExpired, setShowDemoExpired] = useState(false);
+  const userId = user?.id ?? null;
+  const previousUserIdRef = useRef<string | null | undefined>(undefined);
 
   // Initialize auth on mount
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  useLayoutEffect(() => {
+    if (previousUserIdRef.current === undefined) {
+      previousUserIdRef.current = userId;
+      return;
+    }
+
+    if (previousUserIdRef.current !== userId) {
+      resetUserSessionState();
+    }
+
+    previousUserIdRef.current = userId;
+  }, [userId]);
 
   // Check demo expiry
   useEffect(() => {
@@ -52,6 +68,7 @@ function AppContent() {
   // Handle logout
   const handleLogout = async () => {
     await logout();
+    resetUserSessionState();
     navigate('/login');
   };
 

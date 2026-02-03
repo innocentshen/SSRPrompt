@@ -9,6 +9,7 @@ interface CriteriaEditorProps {
   onAdd: (criterion: Omit<EvaluationCriterion, 'id' | 'evaluationId' | 'createdAt'>) => void;
   onUpdate: (criterion: EvaluationCriterion) => void;
   onDelete: (id: string) => void;
+  readOnly?: boolean;
 }
 
 interface EditableCriterionProps {
@@ -17,6 +18,7 @@ interface EditableCriterionProps {
   onToggleExpand: () => void;
   onUpdate: (criterion: EvaluationCriterion) => void;
   onDelete: () => void;
+  readOnly: boolean;
 }
 
 function EditableCriterion({
@@ -25,6 +27,7 @@ function EditableCriterion({
   onToggleExpand,
   onUpdate,
   onDelete,
+  readOnly,
 }: EditableCriterionProps) {
   const { t } = useTranslation('evaluation');
   const [localName, setLocalName] = useState(criterion.name);
@@ -40,6 +43,7 @@ function EditableCriterion({
   }, [criterion.id, criterion.name, criterion.description, criterion.prompt, criterion.weight]);
 
   const handleBlur = (field: 'name' | 'description' | 'prompt' | 'weight') => {
+    if (readOnly) return;
     let hasChanged = false;
     const updated = { ...criterion };
 
@@ -108,6 +112,7 @@ function EditableCriterion({
               value={localWeight}
               onChange={(e) => setLocalWeight(e.target.value)}
               onBlur={() => handleBlur('weight')}
+              disabled={readOnly}
               className="w-16 px-2 py-1 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-xs text-slate-200 light:text-slate-800 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
             />
           </div>
@@ -115,10 +120,13 @@ function EditableCriterion({
             checked={criterion.enabled}
             onChange={(checked) => onUpdate({ ...criterion, enabled: checked })}
             size="sm"
+            disabled={readOnly}
           />
-          <Button variant="ghost" size="sm" onClick={onDelete}>
-            <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-          </Button>
+          {!readOnly && (
+            <Button variant="ghost" size="sm" onClick={onDelete}>
+              <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -131,6 +139,7 @@ function EditableCriterion({
               value={localName}
               onChange={(e) => setLocalName(e.target.value)}
               onBlur={() => handleBlur('name')}
+              disabled={readOnly}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500"
             />
           </div>
@@ -142,6 +151,7 @@ function EditableCriterion({
               onChange={(e) => setLocalDescription(e.target.value)}
               onBlur={() => handleBlur('description')}
               placeholder={t('criterionDescPlaceholder')}
+              disabled={readOnly}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500"
             />
           </div>
@@ -157,6 +167,7 @@ function EditableCriterion({
               onChange={(e) => setLocalPrompt(e.target.value)}
               onBlur={() => handleBlur('prompt')}
               rows={8}
+              disabled={readOnly}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
             />
           </div>
@@ -194,6 +205,7 @@ export function CriteriaEditor({
   onAdd,
   onUpdate,
   onDelete,
+  readOnly = false,
 }: CriteriaEditorProps) {
   const { t } = useTranslation('evaluation');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -227,15 +239,17 @@ export function CriteriaEditor({
           <Sparkles className="w-4 h-4 text-amber-400 light:text-amber-500" />
           {t('aiCriteria')}
         </h3>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setShowTemplates(!showTemplates)}>
-            <Plus className="w-4 h-4" />
-            <span>{t('addCriterion')}</span>
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowTemplates(!showTemplates)}>
+              <Plus className="w-4 h-4" />
+              <span>{t('addCriterion')}</span>
+            </Button>
+          </div>
+        )}
       </div>
 
-      {showTemplates && (
+      {showTemplates && !readOnly && (
         <div className="p-4 bg-slate-800/50 light:bg-slate-50 border border-slate-700 light:border-slate-200 rounded-lg space-y-2">
           <p className="text-xs text-slate-500 light:text-slate-600 mb-3">{t('selectTemplateOrCustom')}</p>
           <div className="grid grid-cols-2 gap-2">
@@ -274,6 +288,7 @@ export function CriteriaEditor({
               onToggleExpand={() => setExpandedId(expandedId === criterion.id ? null : criterion.id)}
               onUpdate={onUpdate}
               onDelete={() => onDelete(criterion.id)}
+              readOnly={readOnly}
             />
           ))}
         </div>

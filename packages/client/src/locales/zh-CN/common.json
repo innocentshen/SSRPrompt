@@ -94,6 +94,8 @@
   "source": "源码",
   "split": "分栏",
   "allowScripts": "运行脚本",
+  "shareLink": "分享链接",
+  "linkCopied": "链接已复制",
   "errors": {
     "UNKNOWN_ERROR": "未知错误",
     "NETWORK_ERROR": "网络错误，请检查网络后重试。",

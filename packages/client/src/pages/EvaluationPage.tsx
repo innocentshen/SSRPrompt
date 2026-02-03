@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import {
   Plus,
   Play,
@@ -17,13 +18,14 @@ import {
   Check,
   X,
   Globe,
+  Link,
   Search,
 } from 'lucide-react';
 import { Button, Input, Modal, Badge, Select, useToast, ModelSelector } from '../components/ui';
 import { PromptCascader } from '../components/Common/PromptCascader';
 import { TestCaseList, CriteriaEditor, EvaluationResultsView, RunHistory } from '../components/Evaluation';
 import { ParameterPanel } from '../components/Prompt/ParameterPanel';
-import { evaluationsApi, runsApi, testCasesApi, criteriaApi, promptsApi, promptGroupsApi, providersApi, modelsApi, type EvaluationWithRelations } from '../api';
+import { evaluationsApi, runsApi, testCasesApi, criteriaApi, promptsApi, promptGroupsApi, providersApi, modelsApi, filesApi, type EvaluationWithRelations } from '../api';
 import { chatApi, type ContentPart } from '../api/chat';
 import type { FileAttachment } from '../lib/ai-service';
 import { getFileUploadCapabilities } from '../lib/model-capabilities';
@@ -232,21 +234,36 @@ interface ListCache {
   providers: Provider[];
 }
 
+let evaluationCacheUserId: string | null = null;
 let listCache: ListCache | null = null;
 const loadingEvaluations = new Set<string>();  // 正在加载的评测ID集合
+
+export function resetEvaluationPageCaches(): void {
+  evaluationCache.clear();
+  listCache = null;
+  loadingEvaluations.clear();
+  evaluationCacheUserId = null;
+}
 
 export function EvaluationPage() {
   const { showToast } = useToast();
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
+  const location = useLocation();
   const { user } = useAuthStore();
   const currentUserId = user?.id;
+  const evaluationIdFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const evaluationId = params.get('evaluationId');
+    return evaluationId && evaluationId.trim() ? evaluationId.trim() : null;
+  }, [location.search]);
   const [evaluations, setEvaluations] = useState<EvaluationWithRelations[]>([]);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [promptGroups, setPromptGroups] = useState<PromptGroup[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationWithRelations | null>(null);
+  const [listMode, setListMode] = useState<'mine' | 'public'>('mine');
   const [showNewEval, setShowNewEval] = useState(false);
   const [newEvalName, setNewEvalName] = useState('');
   const [newEvalPrompt, setNewEvalPrompt] = useState('');
@@ -278,13 +295,43 @@ export function EvaluationPage() {
   // 评测模型参数配置
   const [evalModelConfig, setEvalModelConfig] = useState<PromptConfig>(DEFAULT_PROMPT_CONFIG);
   const [showParamsModal, setShowParamsModal] = useState(false);
+  const [publishModal, setPublishModal] = useState<{ evaluationId: string; step: 'confirm' | 'done' } | null>(null);
+  const [publishShareAttachments, setPublishShareAttachments] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const abortControllersRef = useRef<Map<string, RunAbortController>>(new Map());
   const retryOutputAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const retryAiEvaluationAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const isFinalizingEvaluationDragRef = useRef(false);
   const selectedEvaluationIdRef = useRef<string | null>(null);
+  const listModeRef = useRef<'mine' | 'public'>('mine');
   const runPollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runsRef = useRef<EvaluationRun[]>([]);
+
+  useEffect(() => {
+    const nextUserId = currentUserId ?? null;
+
+    if (evaluationCacheUserId && evaluationCacheUserId !== nextUserId) {
+      resetEvaluationPageCaches();
+      setEvaluations([]);
+      setPrompts([]);
+      setPromptGroups([]);
+      setModels([]);
+      setProviders([]);
+      setSelectedEvaluation(null);
+      selectedEvaluationIdRef.current = null;
+      setTestCases([]);
+      setSelectedTestCaseIds(new Set<string>());
+      setCriteria([]);
+      setResults([]);
+      setRuns([]);
+      setSelectedRun(null);
+      setRunningCount(0);
+      setListLoading(true);
+      setDetailsLoading(false);
+    }
+
+    evaluationCacheUserId = nextUserId;
+  }, [currentUserId]);
 
   // 同步 ref 以便在异步操作中访问最新的 selectedEvaluation
   useEffect(() => {
@@ -295,16 +342,25 @@ export function EvaluationPage() {
     runsRef.current = runs;
   }, [runs]);
 
+  useEffect(() => {
+    listModeRef.current = listMode;
+  }, [listMode]);
+
   const filteredEvaluations = useMemo(() => {
     const query = evaluationQuery.trim().toLowerCase();
-    return evaluations.filter((evaluation) => {
+    const base =
+      listMode === 'public'
+        ? evaluations.filter((evaluation) => evaluation.isPublic && evaluation.userId !== currentUserId)
+        : evaluations.filter((evaluation) => !currentUserId || evaluation.userId === currentUserId);
+
+    return base.filter((evaluation) => {
       if (evaluationStatusFilter !== 'all' && evaluation.status !== evaluationStatusFilter) {
         return false;
       }
       if (!query) return true;
       return evaluation.name.toLowerCase().includes(query);
     });
-  }, [evaluations, evaluationQuery, evaluationStatusFilter]);
+  }, [evaluations, evaluationQuery, evaluationStatusFilter, listMode, currentUserId]);
 
   const hasEvaluationFilter = evaluationQuery.trim() !== '' || evaluationStatusFilter !== 'all';
 
@@ -724,6 +780,21 @@ export function EvaluationPage() {
   const isSelectedEvaluationOwner =
     !!currentUserId && !!selectedEvaluation && selectedEvaluation.userId === currentUserId;
 
+  const downloadAttachmentBlob = useCallback(
+    (fileId: string, options?: { signal?: AbortSignal }) => {
+      if (!selectedEvaluationId) {
+        return Promise.reject(new Error('No evaluation selected'));
+      }
+
+      if (isSelectedEvaluationOwner) {
+        return filesApi.downloadBlob(fileId, options);
+      }
+
+      return filesApi.downloadEvaluationAttachmentBlob(selectedEvaluationId, fileId, options);
+    },
+    [isSelectedEvaluationOwner, selectedEvaluationId]
+  );
+
   const reorderEvaluations = useCallback(
     (list: EvaluationWithRelations[], fromId: string, toId: string) => {
       const fromIndex = list.findIndex((evaluation) => evaluation.id === fromId);
@@ -839,7 +910,26 @@ export function EvaluationPage() {
       setModels(listCache.models);
       setProviders(listCache.providers);
       if (listCache.evaluations.length > 0 && !selectedEvaluationIdRef.current) {
-        selectEvaluation(listCache.evaluations[0]);
+        const byId = evaluationIdFromUrl
+          ? listCache.evaluations.find((e) => e.id === evaluationIdFromUrl) ?? null
+          : null;
+        const firstMine = currentUserId
+          ? listCache.evaluations.find((e) => e.userId === currentUserId) ?? null
+          : listCache.evaluations[0] ?? null;
+        const firstPublic = currentUserId
+          ? listCache.evaluations.find((e) => e.isPublic && e.userId !== currentUserId) ?? null
+          : listCache.evaluations.find((e) => e.isPublic) ?? null;
+
+        const pickForMode =
+          listModeRef.current === 'public'
+            ? firstPublic ?? firstMine
+            : firstMine ?? firstPublic;
+
+        const initial = byId ?? pickForMode ?? null;
+        if (initial) {
+          setListMode(initial.userId === currentUserId ? 'mine' : 'public');
+          selectEvaluation(initial);
+        }
       }
       setListLoading(false);
 
@@ -894,14 +984,33 @@ export function EvaluationPage() {
       setProviders(loadedProviders);
 
       if (loadedEvaluations.length > 0 && !selectedEvaluationIdRef.current) {
-        selectEvaluation(loadedEvaluations[0]);
+        const byId = evaluationIdFromUrl
+          ? loadedEvaluations.find((e) => e.id === evaluationIdFromUrl) ?? null
+          : null;
+        const firstMine = currentUserId
+          ? loadedEvaluations.find((e) => e.userId === currentUserId) ?? null
+          : loadedEvaluations[0] ?? null;
+        const firstPublic = currentUserId
+          ? loadedEvaluations.find((e) => e.isPublic && e.userId !== currentUserId) ?? null
+          : loadedEvaluations.find((e) => e.isPublic) ?? null;
+
+        const pickForMode =
+          listModeRef.current === 'public'
+            ? firstPublic ?? firstMine
+            : firstMine ?? firstPublic;
+
+        const initial = byId ?? pickForMode ?? null;
+        if (initial) {
+          setListMode(initial.userId === currentUserId ? 'mine' : 'public');
+          selectEvaluation(initial);
+        }
       }
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
       setListLoading(false);
     }
-  }, [selectEvaluation]);
+  }, [selectEvaluation, currentUserId, evaluationIdFromUrl]);
 
   useEffect(() => {
     loadData();
@@ -989,7 +1098,7 @@ export function EvaluationPage() {
     });
   };
 
-  const ensurePromptDetail = async (promptId: string | null | undefined): Promise<Prompt | null> => {
+  const ensurePromptDetail = async (promptId: string | null | undefined): Promise<PromptSnapshot | null> => {
     if (!promptId) return null;
     const cached = prompts.find((p) => p.id === promptId);
     if (cached && hasPromptDetail(cached)) return cached;
@@ -999,8 +1108,20 @@ export function EvaluationPage() {
       upsertPrompt(fullPrompt as Prompt);
       return fullPrompt as Prompt;
     } catch (e) {
-      console.error('Failed to load prompt detail:', e);
-      return cached ?? null;
+      // Fallback for public prompts (e.g. public evaluations referencing a public prompt not owned by the user).
+      try {
+        const publicPrompt = await promptsApi.getPublicById(promptId);
+        return {
+          content: publicPrompt.content,
+          messages: (publicPrompt.messages && publicPrompt.messages.length > 0)
+            ? (publicPrompt.messages as Prompt['messages'])
+            : parseMessagesFromContent(publicPrompt.content),
+          config: publicPrompt.config as PromptConfigLike,
+        };
+      } catch (publicError) {
+        console.error('Failed to load prompt detail:', e, publicError);
+        return cached ?? null;
+      }
     }
   };
 
@@ -1999,33 +2120,12 @@ export function EvaluationPage() {
     if (!selectedEvaluation) return;
     setSubmittingNewVersion(true);
     try {
-      const newEval = await evaluationsApi.create({
-        name: `${selectedEvaluation.name} (${t('copy')})`,
-        promptId: selectedEvaluation.promptId || undefined,
-        modelId: selectedEvaluation.modelId || undefined,
-        judgeModelId: selectedEvaluation.judgeModelId || undefined,
-        config: selectedEvaluation.config,
-        testCases: testCases.map((tc, idx) => ({
-          name: tc.name || undefined,
-          inputText: tc.inputText || '',
-          inputVariables: tc.inputVariables || {},
-          attachments: tc.attachments || [],
-          expectedOutput: tc.expectedOutput ?? undefined,
-          notes: tc.notes ?? undefined,
-          orderIndex: idx,
-        })),
-        criteria: criteria.map((c) => ({
-          name: c.name,
-          description: c.description || undefined,
-          prompt: c.prompt || undefined,
-          weight: c.weight,
-          enabled: c.enabled,
-        })),
-      });
+      const newEval = await evaluationsApi.copy(selectedEvaluation.id, `${selectedEvaluation.name} (${t('copy')})`);
 
       const newEvaluations = [newEval as EvaluationWithRelations, ...evaluations];
       updateListCache({ evaluations: newEvaluations });
       setEvaluations(newEvaluations);
+      setListMode('mine');
       selectEvaluation(newEval as EvaluationWithRelations);
 
       showToast('success', t('evaluationCopied'));
@@ -2033,6 +2133,17 @@ export function EvaluationPage() {
       showToast('error', err instanceof Error ? err.message : t('copyEvaluationFailed'));
     } finally {
       setSubmittingNewVersion(false);
+    }
+  };
+
+  const handleCopyEvaluationShareLink = async (evaluationId: string) => {
+    try {
+      const url = new URL('/evaluation', window.location.origin);
+      url.searchParams.set('evaluationId', evaluationId);
+      await navigator.clipboard.writeText(url.toString());
+      showToast('success', tCommon('linkCopied'));
+    } catch {
+      showToast('error', tCommon('error'));
     }
   };
 
@@ -2135,6 +2246,29 @@ export function EvaluationPage() {
   };
 
   const selectedPrompt = prompts.find((p) => p.id === selectedEvaluation?.promptId);
+  const publishModalEvaluation = useMemo(() => {
+    if (!publishModal) return null;
+    if (selectedEvaluation?.id === publishModal.evaluationId) return selectedEvaluation;
+    return evaluations.find((e) => e.id === publishModal.evaluationId) ?? null;
+  }, [publishModal, selectedEvaluation, evaluations]);
+  const publishModalPromptId = publishModalEvaluation?.promptId ?? null;
+  const publishModalLinkedPrompt = useMemo(() => {
+    if (!publishModalPromptId) return null;
+    return prompts.find((p) => p.id === publishModalPromptId) ?? null;
+  }, [publishModalPromptId, prompts]);
+  const publishModalShareUrl = useMemo(() => {
+    if (!publishModal) return '';
+    const url = new URL('/evaluation', window.location.origin);
+    url.searchParams.set('evaluationId', publishModal.evaluationId);
+    return url.toString();
+  }, [publishModal]);
+  const publishModalHasAttachments = useMemo(() => {
+    if (!publishModalEvaluation) return false;
+    const cases =
+      publishModalEvaluation.testCases ??
+      (selectedEvaluation?.id === publishModalEvaluation.id ? testCases : null);
+    return !!cases?.some((tc) => (tc.attachments?.length ?? 0) > 0);
+  }, [publishModalEvaluation, selectedEvaluation?.id, testCases]);
   const promptVariables = (selectedPrompt?.variables as PromptVariable[] | undefined)?.map((v) => v.name) || [];
   const selectedRunConfig = selectedRun?.runConfig as RunConfig | null;
   const selectedRunOcrProvider =
@@ -2165,10 +2299,133 @@ export function EvaluationPage() {
     };
   }, [results]);
 
+  const openPublishModal = () => {
+    if (!selectedEvaluation || selectedEvaluation.isPublic) return;
+    setPublishShareAttachments(!!selectedEvaluation.shareAttachments);
+    setPublishModal({ evaluationId: selectedEvaluation.id, step: 'confirm' });
+  };
+
+  const closePublishModal = () => {
+    if (publishing) return;
+    setPublishModal(null);
+    setPublishShareAttachments(false);
+  };
+
+  const handleConfirmPublishEvaluation = async () => {
+    if (!publishModalEvaluation || publishModalEvaluation.isPublic) return;
+
+    const linkedPrompt = publishModalLinkedPrompt;
+    const needsPromptPublish = !!linkedPrompt && !linkedPrompt.isPublic;
+    const canPublishPrompt =
+      !needsPromptPublish || (linkedPrompt?.userId && linkedPrompt.userId === currentUserId);
+
+    if (needsPromptPublish && !canPublishPrompt) {
+      showToast('error', t('promptMustBePublicFirst'));
+      return;
+    }
+
+    setPublishing(true);
+    try {
+      const shouldShareAttachments = publishModalHasAttachments && publishShareAttachments;
+
+      if (needsPromptPublish && linkedPrompt) {
+        await promptsApi.update(linkedPrompt.id, { isPublic: true });
+        setPrompts((prev) => prev.map((p) => (p.id === linkedPrompt.id ? { ...p, isPublic: true } : p)));
+      }
+
+      await evaluationsApi.update(publishModalEvaluation.id, {
+        isPublic: true,
+        shareAttachments: shouldShareAttachments,
+      });
+
+      setSelectedEvaluation((prev) => (
+        prev && prev.id === publishModalEvaluation.id
+          ? { ...prev, isPublic: true, shareAttachments: shouldShareAttachments }
+          : prev
+      ));
+      setEvaluations((prev) => {
+        const next = prev.map((e) =>
+          e.id === publishModalEvaluation.id
+            ? { ...e, isPublic: true, shareAttachments: shouldShareAttachments }
+            : e
+        );
+        updateListCache({ evaluations: next });
+        return next;
+      });
+
+      showToast('success', t('evaluationPublic'));
+      setPublishModal((prev) => (
+        prev && prev.evaluationId === publishModalEvaluation.id ? { ...prev, step: 'done' } : prev
+      ));
+    } catch (error) {
+      console.error('Failed to publish evaluation:', error);
+      showToast('error', t('updateFailed'));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleSetEvaluationPrivate = async () => {
+    if (!selectedEvaluation || !selectedEvaluation.isPublic) return;
+    try {
+      await evaluationsApi.update(selectedEvaluation.id, { isPublic: false });
+      setSelectedEvaluation({ ...selectedEvaluation, isPublic: false, shareAttachments: false });
+      setEvaluations((prev) => {
+        const next = prev.map((e) =>
+          e.id === selectedEvaluation.id ? { ...e, isPublic: false, shareAttachments: false } : e
+        );
+        updateListCache({ evaluations: next });
+        return next;
+      });
+      showToast('success', t('evaluationPrivate'));
+    } catch (error) {
+      console.error('Failed to set evaluation private:', error);
+      showToast('error', t('updateFailed'));
+    }
+  };
+
   return (
     <div className="h-full flex overflow-hidden bg-slate-950 light:bg-slate-50">
       <div className="w-80 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col overflow-hidden">
         <div className="p-4 border-b border-slate-700 light:border-slate-200 flex-shrink-0">
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={() => {
+                setListMode('mine');
+                if (!currentUserId) return;
+                if (!selectedEvaluation || selectedEvaluation.userId !== currentUserId) {
+                  const firstMine = evaluations.find((e) => e.userId === currentUserId) || null;
+                  selectEvaluation(firstMine);
+                }
+              }}
+              className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                listMode === 'mine'
+                  ? 'bg-slate-800 text-slate-100 border-slate-600 light:bg-cyan-50 light:text-cyan-700 light:border-cyan-200'
+                  : 'bg-transparent text-slate-400 border-slate-700 hover:bg-slate-800/50 light:text-slate-600 light:border-slate-200 light:hover:bg-slate-100'
+              }`}
+            >
+              {t('myEvaluations')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setListMode('public');
+                if (!currentUserId) return;
+                if (!selectedEvaluation || selectedEvaluation.userId === currentUserId) {
+                  const firstPublic = evaluations.find((e) => e.isPublic && e.userId !== currentUserId) || null;
+                  selectEvaluation(firstPublic);
+                }
+              }}
+              className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                listMode === 'public'
+                  ? 'bg-slate-800 text-slate-100 border-slate-600 light:bg-cyan-50 light:text-cyan-700 light:border-cyan-200'
+                  : 'bg-transparent text-slate-400 border-slate-700 hover:bg-slate-800/50 light:text-slate-600 light:border-slate-200 light:hover:bg-slate-100'
+              }`}
+            >
+              {t('publicLibrary')}
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <div className="relative flex-1 min-w-0">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
@@ -2242,15 +2499,19 @@ export function EvaluationPage() {
                   <p className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
                     {evaluation.name}
                   </p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant={status.variant}>{t(status.labelKey)}</Badge>
-                    <Badge variant={evaluation.isPublic ? 'success' : 'info'}>
-                      {evaluation.isPublic ? t('public') : t('private')}
-                    </Badge>
-                  </div>
-                </div>
-              </button>
-            );
+                   <div className="flex items-center gap-2 mt-1">
+                     <Badge variant={status.variant}>{t(status.labelKey)}</Badge>
+                     {listMode === 'mine' ? (
+                       <Badge variant={evaluation.isPublic ? 'success' : 'info'}>
+                         {evaluation.isPublic ? t('public') : t('private')}
+                       </Badge>
+                     ) : (
+                       <Badge variant="info">{t('template')}</Badge>
+                     )}
+                   </div>
+                 </div>
+               </button>
+             );
           })}
           {filteredEvaluations.length === 0 && !listLoading && (
             <div className="text-center py-8 text-slate-500 light:text-slate-400 text-sm">
@@ -2302,28 +2563,19 @@ export function EvaluationPage() {
                             <Pencil className="w-4 h-4 text-slate-400 light:text-slate-500" />
                           </button>
                           <button
-                            onClick={async () => {
-                              // Check if prompt is public when trying to make evaluation public
-                              const linkedPrompt = prompts.find(p => p.id === selectedEvaluation.promptId);
-                              if (!selectedEvaluation.isPublic && linkedPrompt && !linkedPrompt.isPublic) {
-                                showToast('error', t('promptMustBePublicFirst'));
+                            onClick={() => {
+                              if (!selectedEvaluation.isPublic) {
+                                openPublishModal();
                                 return;
                               }
-                              const newValue = !selectedEvaluation.isPublic;
-                              try {
-                                await evaluationsApi.update(selectedEvaluation.id, { isPublic: newValue });
-                                setSelectedEvaluation({ ...selectedEvaluation, isPublic: newValue });
-                                setEvaluations((prev) => prev.map((e) => e.id === selectedEvaluation.id ? { ...e, isPublic: newValue } : e));
-                                showToast('success', newValue ? t('evaluationPublic') : t('evaluationPrivate'));
-                              } catch {
-                                showToast('error', t('updateFailed'));
-                              }
+                              void handleSetEvaluationPrivate();
                             }}
+                            disabled={submittingNewVersion || publishing}
                             className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
                               selectedEvaluation.isPublic
                                 ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                                 : 'bg-slate-700 text-slate-400 hover:bg-slate-600 light:bg-slate-200 light:text-slate-500 light:hover:bg-slate-300'
-                            }`}
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
                             title={selectedEvaluation.isPublic ? t('clickToPrivate') : t('clickToPublic')}
                           >
                             <Globe className="w-3 h-3" />
@@ -2342,27 +2594,51 @@ export function EvaluationPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button onClick={runEvaluation} disabled={submittingNewVersion || !isSelectedEvaluationOwner}>
-                    {runningCount > 0 ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Play className="w-4 h-4" />
-                    )}
-                    <span>{t('runEvaluation')}</span>
-                    {runningCount > 0 && (
-                      <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500/20 text-cyan-400 rounded">
-                        {runningCount}
-                      </span>
-                    )}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={handleCopyEvaluation}
-                    loading={submittingNewVersion}
-                  >
-                    <Copy className="w-4 h-4" />
-                    <span>{tCommon('copy')}</span>
-                  </Button>
+                  {isSelectedEvaluationOwner ? (
+                    <Button onClick={runEvaluation} disabled={submittingNewVersion}>
+                      {runningCount > 0 ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Play className="w-4 h-4" />
+                      )}
+                      <span>{t('runEvaluation')}</span>
+                      {runningCount > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 text-xs bg-cyan-500/20 text-cyan-400 rounded">
+                          {runningCount}
+                        </span>
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => void handleCopyEvaluation()}
+                      loading={submittingNewVersion}
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span>{t('useTemplate')}</span>
+                    </Button>
+                  )}
+
+                  {selectedEvaluation.isPublic && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => void handleCopyEvaluationShareLink(selectedEvaluation.id)}
+                      disabled={submittingNewVersion}
+                    >
+                      <Link className="w-4 h-4" />
+                      <span>{tCommon('shareLink')}</span>
+                    </Button>
+                  )}
+
+                  {isSelectedEvaluationOwner && (
+                    <Button
+                      variant="secondary"
+                      onClick={handleCopyEvaluation}
+                      loading={submittingNewVersion}
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span>{tCommon('copy')}</span>
+                    </Button>
+                  )}
                   {isSelectedEvaluationOwner && (
                     <Button variant="ghost" onClick={handleDeleteEvaluation} disabled={submittingNewVersion}>
                       <Trash2 className="w-4 h-4" />
@@ -2591,6 +2867,8 @@ export function EvaluationPage() {
                       onToggleSelect={toggleTestCaseSelected}
                       onSetSelectedIds={(ids) => setSelectedTestCaseIds(new Set(ids))}
                       fileUploadCapabilities={fileUploadCapabilities}
+                      readOnly={!isSelectedEvaluationOwner}
+                      downloadAttachmentBlob={downloadAttachmentBlob}
                     />
                   </div>
                 )}
@@ -2601,6 +2879,7 @@ export function EvaluationPage() {
                     onAdd={handleAddCriterion}
                     onUpdate={handleUpdateCriterion}
                     onDelete={handleDeleteCriterion}
+                    readOnly={!isSelectedEvaluationOwner}
                   />
                 )}
 
@@ -2609,9 +2888,9 @@ export function EvaluationPage() {
                     runs={runs}
                     selectedRunId={selectedRun?.id || null}
                     onSelectRun={handleSelectRun}
-                    onDeleteRun={handleDeleteRun}
-                    onAbortRun={handleAbortRun}
-                    onBatchExport={handleBatchExportExecutionRecords}
+                    onDeleteRun={isSelectedEvaluationOwner ? handleDeleteRun : undefined}
+                    onAbortRun={isSelectedEvaluationOwner ? handleAbortRun : undefined}
+                    onBatchExport={isSelectedEvaluationOwner ? handleBatchExportExecutionRecords : undefined}
                     batchExporting={batchExporting}
                   />
                 )}
@@ -2691,7 +2970,7 @@ export function EvaluationPage() {
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap">
-                          {selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) && (
+                          {isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) && (
                             <Button
                               variant="secondary"
                               size="sm"
@@ -2729,10 +3008,12 @@ export function EvaluationPage() {
                           results={results}
                           criteria={criteria}
                           ocrProvider={selectedRunOcrProvider}
-                          onRetryOutput={handleRetryOutput}
-                          onRunAiEvaluation={selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
-                          onAbortRetryOutput={handleAbortRetryOutput}
-                          onAbortAiEvaluation={handleAbortAiEvaluation}
+                          downloadAttachmentBlob={downloadAttachmentBlob}
+                          canViewOcrResults={isSelectedEvaluationOwner}
+                          onRetryOutput={isSelectedEvaluationOwner ? handleRetryOutput : undefined}
+                          onRunAiEvaluation={isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
+                          onAbortRetryOutput={isSelectedEvaluationOwner ? handleAbortRetryOutput : undefined}
+                          onAbortAiEvaluation={isSelectedEvaluationOwner ? handleAbortAiEvaluation : undefined}
                           retryingOutputTestCaseId={retryingOutputTestCaseId}
                           retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
                         />
@@ -2761,6 +3042,102 @@ export function EvaluationPage() {
           </div>
         )}
       </div>
+
+      <Modal isOpen={publishModal !== null} onClose={closePublishModal} title={t('publishEvaluation')} size="md">
+        {publishModal && publishModal.step === 'confirm' && (
+          <div className="space-y-4">
+            {!publishModalEvaluation ? (
+              <div className="text-sm text-slate-500 light:text-slate-600">{tCommon('loading')}</div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm text-slate-200 light:text-slate-800">{t('publishEvaluationIntro')}</p>
+                  <p className="mt-2 text-xs text-slate-500 light:text-slate-600">{t('publishEvaluationVisibleTitle')}</p>
+                  <ul className="mt-2 space-y-1 text-sm text-slate-300 light:text-slate-700 list-disc pl-5">
+                    <li>{t('publishEvaluationVisibleItemMeta')}</li>
+                    <li>{t('publishEvaluationVisibleItemCases')}</li>
+                    <li>{t('publishEvaluationVisibleItemCriteria')}</li>
+                    <li>{t('publishEvaluationVisibleItemConfig')}</li>
+                  </ul>
+                  <p className="mt-2 text-xs text-slate-500 light:text-slate-600">{t('publishEvaluationAttachmentsHint')}</p>
+                </div>
+
+                <div className="p-3 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50">
+                  <label
+                    className={`flex items-start gap-2 select-none ${
+                      publishModalHasAttachments ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={publishModalHasAttachments ? publishShareAttachments : false}
+                      disabled={!publishModalHasAttachments}
+                      onChange={(e) => setPublishShareAttachments(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                    />
+                    <div className="space-y-1">
+                      <p className="text-sm text-slate-200 light:text-slate-800">{t('publishEvaluationShareAttachments')}</p>
+                      <p className="text-xs text-slate-500 light:text-slate-600">{t('publishEvaluationShareAttachmentsHint')}</p>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="p-3 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50">
+                  <p className="text-xs text-slate-500 light:text-slate-600">{t('evaluationName')}</p>
+                  <p className="text-sm text-slate-200 light:text-slate-900 mt-1">{publishModalEvaluation.name}</p>
+                </div>
+
+                {publishModalLinkedPrompt && !publishModalLinkedPrompt.isPublic && (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-amber-300">{t('publishEvaluationPromptGateTitle')}</p>
+                        <p className="text-xs text-slate-300 light:text-slate-700">
+                          {t('publishEvaluationPromptGateDesc', { name: publishModalLinkedPrompt.name })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
+                  <Button variant="ghost" onClick={closePublishModal}>
+                    {tCommon('cancel')}
+                  </Button>
+                  <Button onClick={() => void handleConfirmPublishEvaluation()} loading={publishing}>
+                    {publishModalLinkedPrompt && !publishModalLinkedPrompt.isPublic
+                      ? t('publishEvaluationWithPrompt')
+                      : t('publishNow')}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {publishModal && publishModal.step === 'done' && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm text-slate-200 light:text-slate-800">{t('publishEvaluationDone')}</p>
+              <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('publishEvaluationDoneHint')}</p>
+            </div>
+            <Input
+              label={tCommon('shareLink')}
+              value={publishModalShareUrl}
+              readOnly
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
+              <Button variant="secondary" onClick={() => void handleCopyEvaluationShareLink(publishModal.evaluationId)}>
+                <Link className="w-4 h-4" />
+                <span>{tCommon('copy')}</span>
+              </Button>
+              <Button onClick={closePublishModal}>{tCommon('close')}</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal isOpen={showNewEval} onClose={() => setShowNewEval(false)} title={t('newEvaluation')}>
         <div className="space-y-4">
@@ -2824,6 +3201,7 @@ export function EvaluationPage() {
           <ParameterPanel
             config={evalModelConfig}
             onChange={handleModelParametersChange}
+            disabled={!isSelectedEvaluationOwner}
             modelId={models.find(m => m.id === selectedEvaluation?.modelId)?.modelId}
             supportsReasoning={models.find(m => m.id === selectedEvaluation?.modelId)?.supportsReasoning}
             defaultOpen={true}

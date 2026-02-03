@@ -22,6 +22,42 @@ type OAuthProfile = {
   avatar?: string;
 };
 
+function providerDisplayName(provider: ProviderId): string {
+  return provider === 'google' ? 'Google' : 'Linux.do';
+}
+
+function formatNetworkErrorCause(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const maybeCode = (cause as { code?: unknown }).code;
+    const code = typeof maybeCode === 'string' ? maybeCode : undefined;
+    return code ? `${cause.message} (${code})` : cause.message;
+  }
+
+  if (typeof cause === 'string' && cause.trim().length > 0) return cause.trim();
+
+  // Fall back to the error message when we don't have a richer underlying cause.
+  const message = error.message?.trim();
+  if (message && message !== 'fetch failed') return message;
+
+  return undefined;
+}
+
+async function fetchOrThrow(provider: ProviderId, stage: string, input: RequestInfo | URL, init?: RequestInit) {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const detail = formatNetworkErrorCause(error) || (error instanceof Error ? error.message : String(error));
+    throw new AppError(
+      502,
+      'PROVIDER_ERROR',
+      `${providerDisplayName(provider)} OAuth request failed (${stage}). ${detail}`
+    );
+  }
+}
+
 function providerToEnum(provider: ProviderId): OAuthProvider {
   return provider;
 }
@@ -74,7 +110,7 @@ export class OAuthService {
 
   private async exchangeCodeForTokens(provider: ProviderId, code: string): Promise<OAuthTokens> {
     if (provider === 'google') {
-      const response = await fetch('https://oauth2.googleapis.com/token', {
+      const response = await fetchOrThrow(provider, 'token exchange', 'https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -111,7 +147,7 @@ export class OAuthService {
       'base64'
     );
 
-    const response = await fetch('https://connect.linux.do/oauth2/token', {
+    const response = await fetchOrThrow(provider, 'token exchange', 'https://connect.linux.do/oauth2/token', {
       method: 'POST',
       headers: {
         Authorization: `Basic ${basic}`,
@@ -147,9 +183,14 @@ export class OAuthService {
 
   private async fetchUserProfile(provider: ProviderId, accessToken: string): Promise<OAuthProfile> {
     if (provider === 'google') {
-      const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      const response = await fetchOrThrow(
+        provider,
+        'fetch user profile',
+        'https://openidconnect.googleapis.com/v1/userinfo',
+        {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+        }
+      );
 
       if (!response.ok) {
         throw new AppError(502, 'PROVIDER_ERROR', 'Failed to fetch Google user profile');
@@ -174,7 +215,7 @@ export class OAuthService {
       };
     }
 
-    const response = await fetch('https://connect.linux.do/api/user', {
+    const response = await fetchOrThrow(provider, 'fetch user profile', 'https://connect.linux.do/api/user', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
@@ -266,4 +307,3 @@ export class OAuthService {
 }
 
 export const oauthService = new OAuthService();
-

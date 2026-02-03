@@ -14,6 +14,7 @@ interface GlobalState {
 
   // Actions
   fetchProvidersAndModels: (force?: boolean) => Promise<void>;
+  clear: () => void;
   updateProvider: (id: string, data: Partial<Provider>) => void;
   addProvider: (provider: Provider) => void;
   removeProvider: (id: string) => void;
@@ -38,6 +39,8 @@ export const useGlobalStore = create<GlobalState>()(
       models: [],
       isLoading: false,
       lastFetched: null,
+
+      clear: () => set({ providers: [], models: [], isLoading: false, lastFetched: null }),
 
       fetchProvidersAndModels: async (force = false) => {
         const { lastFetched, isLoading } = get();

@@ -9,8 +9,8 @@ import {
 import { prisma } from '../config/database.js';
 import { transformResponse, transformDecimal } from '../utils/transform.js';
 import { AppError } from '@ssrprompt/shared';
-import type { Prisma, TestCase, EvaluationCriterion, EvaluationRun, TestCaseResult } from '@prisma/client';
-import { filesService } from './files.service.js';
+import type { Prisma, StoredFile, TestCase, EvaluationCriterion, EvaluationRun, TestCaseResult } from '@prisma/client';
+import { filesService, type DownloadRange } from './files.service.js';
 import { abortEvaluationRun, enqueueEvaluationRun } from './evaluation-queue.service.js';
 
 type LegacyBase64Attachment = { name: string; type: string; base64: string };
@@ -172,11 +172,17 @@ export class EvaluationsService {
       throw new AppError(404, 'NOT_FOUND', 'Evaluation not found');
     }
 
-    // For non-owner views (public evaluations), don't expose or attempt to resolve attachments.
-    // Attachments are tenant-scoped files and may contain sensitive data.
-    if (evaluation.userId !== userId && evaluation.testCases && evaluation.testCases.length > 0) {
-      for (const testCase of evaluation.testCases) {
-        (testCase as unknown as { attachments: unknown }).attachments = [];
+    // For non-owner views (public evaluations), attachments are hidden by default because they are tenant-scoped
+    // files and may contain sensitive data. If the owner explicitly enables sharing, only expose stored file refs.
+    if (evaluation.userId !== userId) {
+      if (evaluation.testCases && evaluation.testCases.length > 0) {
+        for (const testCase of evaluation.testCases) {
+          const rawAttachments = (testCase.attachments ?? []) as unknown;
+          const shouldExposeAttachments = evaluation.shareAttachments && isStoredAttachments(rawAttachments);
+          if (!shouldExposeAttachments) {
+            (testCase as unknown as { attachments: unknown }).attachments = [];
+          }
+        }
       }
       return transformResponse(evaluation);
     }
@@ -216,6 +222,45 @@ export class EvaluationsService {
     }
 
     return transformResponse(evaluation);
+  }
+
+  async downloadAttachment(
+    requesterUserId: string,
+    evaluationId: string,
+    fileId: string,
+    range: DownloadRange
+  ): Promise<{
+    meta: StoredFile;
+    body: unknown;
+    contentLength?: number;
+    contentRange?: string;
+  }> {
+    const evaluation = await evaluationsRepository.findByIdWithRelations(requesterUserId, evaluationId);
+    if (!evaluation) {
+      throw new AppError(404, 'NOT_FOUND', 'Evaluation not found');
+    }
+
+    const isOwner = evaluation.userId === requesterUserId;
+    if (!isOwner && !evaluation.shareAttachments) {
+      throw new AppError(403, 'FORBIDDEN', 'Attachments are not shared for this evaluation');
+    }
+
+    const testCases = evaluation.testCases ?? [];
+    const allowedFileIds = new Set<string>();
+    for (const testCase of testCases) {
+      const rawAttachments = (testCase.attachments ?? []) as unknown;
+      if (!isStoredAttachments(rawAttachments)) continue;
+      for (const attachment of rawAttachments) {
+        allowedFileIds.add(attachment.fileId);
+      }
+    }
+
+    if (!allowedFileIds.has(fileId)) {
+      throw new AppError(404, 'NOT_FOUND', 'File not found');
+    }
+
+    // Serve the attachment using the owner's tenant scope.
+    return filesService.download(evaluation.userId, fileId, range);
   }
 
   /**
@@ -302,6 +347,7 @@ export class EvaluationsService {
       config?: Record<string, unknown>;
       results?: Record<string, unknown>;
       isPublic?: boolean;
+      shareAttachments?: boolean;
       orderIndex?: number;
       completedAt?: string | null;
     }
@@ -315,6 +361,7 @@ export class EvaluationsService {
     if (data.config !== undefined) updateData.config = data.config as Prisma.JsonObject;
     if (data.results !== undefined) updateData.results = data.results as Prisma.JsonObject;
     if (data.isPublic !== undefined) updateData.isPublic = data.isPublic;
+    if (data.shareAttachments !== undefined) updateData.shareAttachments = data.shareAttachments;
     if (data.orderIndex !== undefined) updateData.orderIndex = data.orderIndex;
 
     if (data.completedAt !== undefined) {
@@ -354,6 +401,14 @@ export class EvaluationsService {
 
     const nextIsPublic =
       data.isPublic !== undefined ? data.isPublic : existing.isPublic;
+
+    const nextShareAttachments =
+      data.shareAttachments !== undefined ? data.shareAttachments : existing.shareAttachments;
+
+    // Keep invariants: attachments can only be shared when the evaluation is public.
+    if (!nextIsPublic && nextShareAttachments) {
+      updateData.shareAttachments = false;
+    }
 
     if (nextIsPublic && nextPromptId) {
       const prompt = await prisma.prompt.findUnique({
@@ -427,11 +482,15 @@ export class EvaluationsService {
       }
     })();
 
+    const allowAttachmentCopy = original.userId === userId || original.shareAttachments;
+
     const copiedTestCases = original.testCases
       ? await Promise.all(
           original.testCases.map(async (tc) => {
             const rawAttachments = (tc.attachments ?? []) as unknown;
-            const attachments = await materializeAttachmentsForUser(original.userId, userId, rawAttachments);
+            const attachments = allowAttachmentCopy
+              ? await materializeAttachmentsForUser(original.userId, userId, rawAttachments)
+              : [];
 
             return {
               name: tc.name,

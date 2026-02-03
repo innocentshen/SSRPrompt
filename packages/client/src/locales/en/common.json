@@ -18,6 +18,8 @@
   "refresh": "Refresh",
   "copy": "Copy",
   "copied": "Copied",
+  "shareLink": "Share link",
+  "linkCopied": "Link copied",
   "export": "Export",
   "import": "Import",
   "download": "Download",

@@ -1,10 +1,12 @@
 import type { Request, Response } from 'express';
+import { AppError } from '@ssrprompt/shared';
 import {
   evaluationsService,
   testCasesService,
   criteriaService,
   runsService,
 } from '../services/evaluations.service.js';
+import { toNodeReadable } from '../utils/stream.js';
 import {
   CreateEvaluationSchema,
   UpdateEvaluationSchema,
@@ -14,6 +16,22 @@ import {
   UpdateCriterionSchema,
 } from '@ssrprompt/shared';
 import { z } from 'zod';
+
+function parseRangeHeader(rangeHeader: string | undefined): { start: number; end?: number } | null {
+  if (!rangeHeader) return null;
+
+  // Only support single range: bytes=start-end
+  const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/);
+  if (!match) return null;
+
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : undefined;
+
+  if (!Number.isFinite(start) || start < 0) return null;
+  if (end !== undefined && (!Number.isFinite(end) || end < start)) return null;
+
+  return { start, end };
+}
 
 /**
  * Evaluations Controller
@@ -82,6 +100,52 @@ export const evaluationsController = {
     const { name } = req.body;
     const evaluation = await evaluationsService.copy(req.user!.userId, req.params.id, name);
     res.status(201).json({ data: evaluation });
+  },
+
+  /**
+   * GET /evaluations/:evaluationId/files/:fileId - Download/preview an evaluation attachment
+   * - Owner can always access.
+   * - Non-owner can access only when evaluation is public and attachments are shared.
+   */
+  async downloadFile(req: Request, res: Response): Promise<void> {
+    const userId = req.user!.userId;
+    const { evaluationId, fileId } = req.params;
+    const range = parseRangeHeader(typeof req.headers.range === 'string' ? req.headers.range : undefined);
+
+    const { meta, body, contentLength, contentRange } = await evaluationsService.downloadAttachment(
+      userId,
+      evaluationId,
+      fileId,
+      range
+    );
+
+    res.setHeader('Content-Type', meta.mimeType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    // Use RFC 5987 encoding for non-ASCII filenames
+    const safeFilename = meta.originalName.replace(/[^\x20-\x7E]/g, '');
+    const encodedFilename = encodeURIComponent(meta.originalName);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+    );
+
+    if (range && contentRange) {
+      res.status(206);
+      res.setHeader('Content-Range', contentRange);
+    }
+
+    if (contentLength !== undefined) {
+      res.setHeader('Content-Length', String(contentLength));
+    } else if (!range) {
+      res.setHeader('Content-Length', String(meta.size));
+    }
+
+    if (!body) {
+      throw new AppError(500, 'INTERNAL_ERROR', 'Missing file body from storage');
+    }
+
+    const stream = toNodeReadable(body);
+    stream.pipe(res);
   },
 
   /**

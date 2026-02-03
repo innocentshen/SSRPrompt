@@ -16,6 +16,7 @@ interface TestCaseEditorProps {
   isSelected?: boolean;
   onSelectChange?: (selected: boolean) => void;
   variant?: 'accordion' | 'panel';
+  readOnly?: boolean;
 }
 
 interface LocalInputProps {
@@ -26,9 +27,10 @@ interface LocalInputProps {
   rows?: number;
   as?: 'input' | 'textarea';
   inputRef?: RefObject<HTMLInputElement | HTMLTextAreaElement>;
+  disabled?: boolean;
 }
 
-function LocalInput({ value, onChange, placeholder, className, rows, as = 'input', inputRef }: LocalInputProps) {
+function LocalInput({ value, onChange, placeholder, className, rows, as = 'input', inputRef, disabled }: LocalInputProps) {
   const [localValue, setLocalValue] = useState(value);
   const isComposing = useRef(false);
 
@@ -39,10 +41,12 @@ function LocalInput({ value, onChange, placeholder, className, rows, as = 'input
   }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (disabled) return;
     setLocalValue(e.target.value);
   };
 
   const handleBlur = () => {
+    if (disabled) return;
     if (localValue !== value) {
       onChange(localValue);
     }
@@ -65,6 +69,7 @@ function LocalInput({ value, onChange, placeholder, className, rows, as = 'input
     onCompositionEnd: handleCompositionEnd,
     placeholder,
     className,
+    disabled,
   };
 
   if (as === 'textarea') {
@@ -85,6 +90,7 @@ export function TestCaseEditor({
   isSelected,
   onSelectChange,
   variant = 'accordion',
+  readOnly = false,
 }: TestCaseEditorProps) {
   const { showToast } = useToast();
   const { t } = useTranslation('evaluation');
@@ -113,6 +119,7 @@ export function TestCaseEditor({
   }, [testCase.id]);
 
   const handleUpdate = async (updates: Partial<TestCase>) => {
+    if (readOnly) return;
     await onUpdate({ ...testCase, ...updates });
   };
 
@@ -128,10 +135,16 @@ export function TestCaseEditor({
   const openExpandModal = (field: 'input' | 'expected') => {
     setExpandedField(field);
     setExpandedValue(field === 'input' ? testCase.inputText : (testCase.expectedOutput || ''));
-    setExpandedPreview(false);
+    setExpandedPreview(readOnly);
   };
 
   const closeExpandModal = async () => {
+    if (readOnly) {
+      setExpandedField(null);
+      setExpandedValue('');
+      setExpandedPreview(false);
+      return;
+    }
     if (expandedField === 'input') {
       await handleUpdate({ inputText: expandedValue });
     } else if (expandedField === 'expected') {
@@ -183,7 +196,11 @@ export function TestCaseEditor({
                 type="checkbox"
                 checked={!!isSelected}
                 onClick={(e) => e.stopPropagation()}
-                onChange={(e) => onSelectChange(e.target.checked)}
+                onChange={(e) => {
+                  if (readOnly) return;
+                  onSelectChange(e.target.checked);
+                }}
+                disabled={readOnly}
                 className="w-4 h-4 accent-cyan-500"
                 aria-label={t('selectTestCase')}
               />
@@ -209,7 +226,7 @@ export function TestCaseEditor({
                   e.stopPropagation();
                   onRunSingle();
                 }}
-                disabled={isRunning}
+                disabled={readOnly || isRunning}
                 title={t('runThisCase')}
               >
                 {isRunning ? (
@@ -219,16 +236,18 @@ export function TestCaseEditor({
                 )}
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
-            </Button>
+            {!readOnly && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+              >
+                <Trash2 className="w-4 h-4 text-slate-500 light:text-slate-400 hover:text-rose-400" />
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -289,6 +308,7 @@ export function TestCaseEditor({
                   onChange={(value) => handleUpdate({ inputText: value })}
                   placeholder={t('enterTestContent')}
                   rows={8}
+                  disabled={readOnly}
                   inputRef={inputTextRef as unknown as RefObject<HTMLInputElement | HTMLTextAreaElement>}
                   className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
                 />
@@ -362,6 +382,7 @@ export function TestCaseEditor({
                   onChange={(value) => handleUpdate({ expectedOutput: value || null })}
                   placeholder={t('expectedOutputPlaceholder')}
                   rows={8}
+                  disabled={readOnly}
                   inputRef={expectedOutputRef as unknown as RefObject<HTMLInputElement | HTMLTextAreaElement>}
                   className="flex-1 min-h-0 w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
                 />
@@ -404,6 +425,7 @@ export function TestCaseEditor({
                       value={testCase.inputVariables[varName] || ''}
                       onChange={(value) => updateVariable(varName, value)}
                       placeholder={t('valueOfVar', { name: varName })}
+                      disabled={readOnly}
                       className="flex-1 px-2 py-1 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
                     />
                   </div>
@@ -422,6 +444,7 @@ export function TestCaseEditor({
               onChange={(value) => handleUpdate({ notes: value || null })}
               placeholder={t('notesPlaceholder')}
               rows={4}
+              disabled={readOnly}
               className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-y text-sm min-h-[96px]"
             />
             <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
@@ -464,8 +487,12 @@ export function TestCaseEditor({
           ) : (
             <textarea
               value={expandedValue}
-              onChange={(e) => setExpandedValue(e.target.value)}
+              onChange={(e) => {
+                if (readOnly) return;
+                setExpandedValue(e.target.value);
+              }}
               placeholder={expandedField === 'input' ? t('enterTestContent') : t('expectedOutputPlaceholder')}
+              readOnly={readOnly}
               className="w-full h-[60vh] px-4 py-3 bg-slate-800 light:bg-white border border-slate-600 light:border-slate-300 rounded-lg text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 resize-none text-sm font-mono"
             />
           )}

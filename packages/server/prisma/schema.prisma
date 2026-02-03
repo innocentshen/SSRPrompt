@@ -130,6 +130,7 @@ model Evaluation {
   createdAt       DateTime              @default(now()) @map("created_at")
   completedAt     DateTime?             @map("completed_at")
   isPublic       Boolean               @default(false) @map("is_public")
+  shareAttachments Boolean              @default(false) @map("share_attachments")
   criteria        EvaluationCriterion[]
   runs            EvaluationRun[]
   judgeModel      Model?                @relation("JudgeModel", fields: [judgeModelId], references: [id])

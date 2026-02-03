@@ -31,6 +31,8 @@ interface EvaluationResultsViewProps {
   results: TestCaseResult[];
   criteria: EvaluationCriterion[];
   ocrProvider?: OcrProvider | null;
+  downloadAttachmentBlob?: (fileId: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
+  canViewOcrResults?: boolean;
   onRetryOutput?: (testCaseId: string) => void;
   onRunAiEvaluation?: (testCaseId: string) => void;
   onAbortRetryOutput?: (testCaseId: string) => void;
@@ -51,6 +53,8 @@ export function EvaluationResultsView({
   results,
   criteria,
   ocrProvider,
+  downloadAttachmentBlob,
+  canViewOcrResults = true,
   onRetryOutput,
   onRunAiEvaluation,
   onAbortRetryOutput,
@@ -549,7 +553,9 @@ export function EvaluationResultsView({
                       </div>
                     )}
 
-                    {showOcrResults && <OcrResultsPanel attachments={activeAttachments} provider={ocrProvider} />}
+                    {showOcrResults && canViewOcrResults && (
+                      <OcrResultsPanel attachments={activeAttachments} provider={ocrProvider} />
+                    )}
                   </div>
                 </Collapsible>
               </div>
@@ -569,6 +575,7 @@ export function EvaluationResultsView({
         attachment={previewAttachment}
         isOpen={!!previewAttachment}
         onClose={() => setPreviewAttachment(null)}
+        downloadBlob={downloadAttachmentBlob}
       />
     </div>
   );

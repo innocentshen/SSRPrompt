@@ -113,6 +113,7 @@ interface EvaluationState {
 
   // Actions - Reset
   resetNewEvalForm: () => void;
+  resetStore: () => void;
 }
 
 export const useEvaluationStore = create<EvaluationState>()(
@@ -609,6 +610,32 @@ export const useEvaluationStore = create<EvaluationState>()(
           newEvalJudgeModelId: '',
         });
       },
+
+      resetStore: () =>
+        set({
+          evaluations: [],
+          prompts: [],
+          listLoaded: false,
+          selectedEvaluationId: null,
+          testCases: [],
+          criteria: [],
+          results: [],
+          runs: [],
+          selectedRunId: null,
+          cache: new Map(),
+          runningCount: 0,
+          abortControllers: new Map(),
+          activeTab: 'testcases',
+          listLoading: false,
+          detailsLoading: false,
+          showNewEval: false,
+          newEvalName: '',
+          newEvalPromptId: '',
+          newEvalModelId: '',
+          newEvalJudgeModelId: '',
+          isEditingName: false,
+          editingName: '',
+        }),
     }),
     { name: 'evaluation-store' }
   )

@@ -48,6 +48,7 @@ export const UpdateEvaluationSchema = z.object({
   config: EvaluationConfigSchema.optional(),
   results: z.record(z.unknown()).optional(),
   isPublic: z.boolean().optional(),
+  shareAttachments: z.boolean().optional(),
   completedAt: z.string().datetime().nullable().optional(),
   orderIndex: z.number().int().min(0).optional(),
 });

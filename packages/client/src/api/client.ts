@@ -268,6 +268,7 @@ class ApiClient {
       response = await fetch(this.buildUrl(path, params), {
         ...fetchOptions,
         headers: this.getHeaders(),
+        cache: 'no-store',
       });
     } catch (error) {
       // Preserve AbortError semantics (typically not user-facing).
@@ -287,6 +288,7 @@ class ApiClient {
           retryResponse = await fetch(this.buildUrl(path, params), {
             ...fetchOptions,
             headers: this.getHeaders(),
+            cache: 'no-store',
           });
         } catch (retryError) {
           if (getFetchExceptionCode(retryError) === 'REQUEST_ABORTED') {
@@ -311,6 +313,7 @@ class ApiClient {
       response = await fetch(this.buildUrl(path, params), {
         ...fetchOptions,
         headers: this.getHeaders(),
+        cache: 'no-store',
       });
     } catch (error) {
       if (getFetchExceptionCode(error) === 'REQUEST_ABORTED') {
@@ -328,6 +331,7 @@ class ApiClient {
           retryResponse = await fetch(this.buildUrl(path, params), {
             ...fetchOptions,
             headers: this.getHeaders(),
+            cache: 'no-store',
           });
         } catch (retryError) {
           if (getFetchExceptionCode(retryError) === 'REQUEST_ABORTED') {

@@ -42,6 +42,24 @@ async function main() {
 
   app.use(corsMiddleware);
 
+  // Prevent sensitive API responses from being cached across sessions/users.
+  app.use('/api/v1', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const vary = res.getHeader('Vary');
+    const existing = Array.isArray(vary)
+      ? vary.flatMap((v) => String(v).split(','))
+      : typeof vary === 'string'
+        ? vary.split(',')
+        : [];
+    const values = new Set(existing.map((v) => v.trim()).filter(Boolean));
+    values.add('Authorization');
+    res.setHeader('Vary', Array.from(values).join(', '));
+    next();
+  });
+
   // Global API rate limiting
   app.use(
     '/api/v1',
