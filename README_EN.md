@@ -11,6 +11,18 @@ English | [日本語](./README_JA.md) | [简体中文](./README.md) | [Official 
 
 </div>
 
+> [!IMPORTANT]
+> **Recommended branch: `refactor/upgrade`**
+>
+> - `refactor/upgrade`: v2.0 refactor (new architecture / latest features)
+> - `main`: legacy stable/maintenance (this README applies to legacy)
+>
+> Switch:
+> ```bash
+> git fetch origin
+> git switch refactor/upgrade
+> ```
+
 ## Features
 
 ### Core Features

@@ -11,6 +11,18 @@ AI プロンプトの開発・評価を支援するモダンなプラットフ�
 
 </div>
 
+> [!IMPORTANT]
+> **推奨ブランチ：`refactor/upgrade`**
+>
+> - `refactor/upgrade`：v2.0 リファクタ版（新アーキテクチャ / 最新機能）
+> - `main`：旧版の安定/メンテナンス（この README は旧版向け）
+>
+> 切り替え：
+> ```bash
+> git fetch origin
+> git switch refactor/upgrade
+> ```
+
 ## 機能
 
 ### コア機能

@@ -11,6 +11,18 @@
 
 </div>
 
+> [!IMPORTANT]
+> **强烈建议使用重构分支：`refactor/upgrade`**
+>
+> - `refactor/upgrade`：v2.0 重构版（新架构 / 新功能 / 未来主线）
+> - `main`：旧版稳定/维护分支（本文档内容适用于旧版）
+>
+> 快速切换：
+> ```bash
+> git fetch origin
+> git switch refactor/upgrade
+> ```
+
 ## 功能特性
 
 ### 核心功能
