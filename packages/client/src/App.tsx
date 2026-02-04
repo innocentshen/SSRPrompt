@@ -19,6 +19,7 @@ import {
   LoginPage,
   ForgotPasswordPage,
   OAuthCallbackPage,
+  OAuthProviderCallbackProxyPage,
 } from './pages';
 
 /**
@@ -113,6 +114,7 @@ function AppContent() {
           </PublicRoute>
         }
       />
+      <Route path="/api/v1/auth/oauth/:provider/callback" element={<OAuthProviderCallbackProxyPage />} />
 
       {/* Protected routes */}
       <Route

@@ -4,7 +4,7 @@
 
 一个现代化的 AI Prompt 开发和评测平台，帮助开发者更高效地开发、测试和管理 AI Prompts。
 
-简体中文 | [官网](https://www.ssrprompt.com)
+简体中文 | [繁體中文](./README_ZH_TW.md) | [English](./README_EN.md) | [日本語](./README_JA.md) | [官网](https://www.ssrprompt.com)
 
 [![License](https://img.shields.io/badge/license-GPL-blue.svg)](./LICENSE)
 
@@ -62,6 +62,50 @@ SSRPrompt v2.0 采用全新的前后端分离架构，带来更好的安全性�
 - **多语言支持** - 支持简体中文、繁体中文、英文、日文
 - **主题切换** - 支持明暗主题切换
 - **JWT 认证** - 安全的用户认证机制
+
+## 亮点
+
+- **安全默认**：API Key 仅存于后端并使用 AES-256-GCM 加密；前端永远不直接接触 Key。
+- **可观测**：从 Prompt 运行到评测，都能在 Trace 中看到输入/输出、Thinking、耗时/Token、附件与 OCR 结果，便于定位问题。
+- **多模态**：支持图片/PDF/文本附件；可按模型能力自动选择 vision 或 OCR 流程。
+- **可评测**：用测试用例 + 评价标准（支持 AI 打分）对 Prompt 做系统化对比，并可导出结果用于复盘/报告。
+
+## 页面与功能分布
+
+| 页面 | 路由 | 主要功能 |
+|---|---|---|
+| 首页 | `/` | 快速入口：Prompt 向导 / 工作区 / 广场 |
+| Prompt 向导 | `/wizard` | 选择模板 → 对话生成 Prompt → 一键保存到工作区 |
+| Prompt 工作区 | `/prompts` | Prompt/分组管理、变量、结构化输出、参数面板、测试运行、版本历史/对比、发布到广场、观察/优化 |
+| Prompt 广场 | `/plaza` | 浏览公开 Prompt、查看版本、复制到我的工作区并二次编辑 |
+| 评测中心 | `/evaluation` | 创建评测、管理测试用例/评价标准、运行评测、结果对比、导出 CSV |
+| 调用追踪 | `/traces` | Trace 列表/筛选、查看输入输出、Thinking、参数、耗时/Token、附件与 OCR 结果 |
+| 设置 | `/settings` | 服务商/模型配置、优化设置、OCR 设置、用户管理（管理员） |
+| 登录/找回密码 | `/login` `/forgot-password` | 邮箱密码登录、第三方登录、Demo 模式 |
+
+## 使用指南（从 0 到 1）
+
+1. 登录：邮箱/密码或第三方登录（Google/Linux.do），也可以先进入 Demo 模式快速体验。
+2. 先配置模型：进入「设置 → Providers」，添加服务商并填写 API Key；再添加/启用模型（没有可用模型将无法运行 Prompt）。
+3. 创建 Prompt：
+   - 新手：从「Prompt 向导」选择模板，和 AI 对话生成 Prompt，再保存到工作区。
+   - 进阶：在「Prompt 工作区」直接创建/编辑多轮消息、变量与结构化输出。
+4. 调试 Prompt：在工作区使用测试面板选择模型、填写变量、调整参数；支持流式输出、Thinking 展示、附件（图片/PDF/文本）与 OCR。
+5. 评测对比：在「评测中心」添加测试用例与评价标准（可用 AI 打分），批量运行并对比结果，支持导出 CSV。
+6. 分享复用：将你的 Prompt 发布到「广场」，或从广场一键复制他人 Prompt 到自己的工作区继续迭代。
+
+## 前置依赖（必需 / 可选）
+
+必需：
+
+- PostgreSQL（服务端数据存储）
+
+可选（按需启用）：
+
+- S3 兼容对象存储（附件上传、文件预览、OCR 结果/中间文件存储）
+- SMTP（开启邮箱验证码注册 / 找回密码）
+- OAuth（Google / Linux.do 第三方登录）
+- 评测 Worker（生产建议设置 `EVALUATION_QUEUE_DRIVER=pg` 并运行 worker 进程；开发环境使用 `pnpm dev:all` 或 `pnpm dev:worker`）
 
 ## 技术栈
 
@@ -444,6 +488,28 @@ S3_FORCE_PATH_STYLE=true
 ```env
 VITE_API_URL=https://api.your-domain.com/api/v1
 ```
+
+#### OAuth（第三方登录）
+
+如需启用 Google / Linux.do 第三方登录，需要在**后端**配置以下环境变量，并在对应平台的 OAuth 应用后台把「回调地址」设置为同样的 URL：
+
+```env
+OAUTH_GOOGLE_ENABLED=true
+OAUTH_GOOGLE_CLIENT_ID=...
+OAUTH_GOOGLE_CLIENT_SECRET=...
+OAUTH_GOOGLE_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/google/callback
+
+OAUTH_LINUXDO_ENABLED=true
+OAUTH_LINUXDO_CLIENT_ID=...
+OAUTH_LINUXDO_CLIENT_SECRET=...
+OAUTH_LINUXDO_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/linuxdo/callback
+```
+
+注意：
+
+- `CORS_ORIGIN` 需要包含前端域名（例如 `https://www.your-domain.com`），否则 `/auth/oauth/*?redirect=...` 会拒绝该重定向参数。
+- 如果前后端分离部署（例如前端在 Vercel、后端在 Zeabur），**OAuth 回调 URL 必须指向后端域名**（也就是运行 Express 的域名）。把回调配置到前端域名（尤其是启用了 SPA rewrite）会被前端路由接管，表现为「登录后跳回首页但未登录」。
+- 为兼容「回调误配到前端域名」的情况，前端内置了 `/api/v1/auth/oauth/:provider/callback` 的兜底转发（仅 `google` / `linuxdo`），会把回调参数原样转发到 `${VITE_API_URL}/auth/oauth/:provider/callback`。
 
 ### 构建
 
