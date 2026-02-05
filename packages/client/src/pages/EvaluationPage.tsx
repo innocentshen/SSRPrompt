@@ -2210,6 +2210,11 @@ export function EvaluationPage() {
   const handlePromptChange = async (promptId: string | null) => {
     await handleUpdateEvaluation('promptId', promptId);
 
+    if (!promptId) {
+      await handleUpdateConfig('inherited_from_prompt', false);
+      return;
+    }
+
     if (promptId) {
       const prompt = await ensurePromptDetail(promptId);
       if (prompt?.config) {
@@ -2697,7 +2702,7 @@ export function EvaluationPage() {
                       {selectedEvaluation.config.model_parameters.top_p !== undefined ? `P:${selectedEvaluation.config.model_parameters.top_p} ` : ''}
                     </p>
                   )}
-                  {selectedEvaluation.config.inherited_from_prompt && (
+                  {!!selectedEvaluation.promptId && selectedEvaluation.config.inherited_from_prompt && (
                     <p className="text-xs text-cyan-400 light:text-cyan-600 mt-1">
                       {t('inheritedFromPrompt')}
                     </p>

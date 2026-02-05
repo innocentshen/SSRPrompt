@@ -399,6 +399,22 @@ export class EvaluationsService {
     const nextPromptId =
       data.promptId !== undefined ? (data.promptId ?? null) : (existing.promptId ?? null);
 
+    // Invariant: cannot inherit model parameters from a prompt when no prompt is linked.
+    // If a prompt reference is dropped (e.g. copying public evaluations with private prompts),
+    // auto-clear `inherited_from_prompt` to avoid inconsistent state in UI and runner logic.
+    if (!nextPromptId) {
+      const effectiveConfig =
+        data.config && typeof data.config === 'object' && !Array.isArray(data.config)
+          ? (data.config as Prisma.JsonObject)
+          : existing.config && typeof existing.config === 'object' && !Array.isArray(existing.config)
+            ? (existing.config as Prisma.JsonObject)
+            : {};
+      const inherited = (effectiveConfig as Record<string, unknown>).inherited_from_prompt;
+      if (inherited === true) {
+        updateData.config = { ...effectiveConfig, inherited_from_prompt: false };
+      }
+    }
+
     const nextIsPublic =
       data.isPublic !== undefined ? data.isPublic : existing.isPublic;
 
@@ -483,6 +499,13 @@ export class EvaluationsService {
     })();
 
     const allowAttachmentCopy = original.userId === userId || original.shareAttachments;
+    const copiedConfigBase =
+      original.config && typeof original.config === 'object' && !Array.isArray(original.config)
+        ? (original.config as Prisma.JsonObject)
+        : {};
+    const copiedConfig: Prisma.JsonObject = resolvedPromptId
+      ? copiedConfigBase
+      : { ...copiedConfigBase, inherited_from_prompt: false };
 
     const copiedTestCases = original.testCases
       ? await Promise.all(
@@ -522,7 +545,7 @@ export class EvaluationsService {
         prompt: resolvedPromptId ? { connect: { id: resolvedPromptId } } : undefined,
         model: resolvedModelId ? { connect: { id: resolvedModelId } } : undefined,
         judgeModel: resolvedJudgeModelId ? { connect: { id: resolvedJudgeModelId } } : undefined,
-        config: (original.config as Prisma.JsonObject) || {},
+        config: copiedConfig,
         results: {},
         status: 'pending',
         isPublic: false,
