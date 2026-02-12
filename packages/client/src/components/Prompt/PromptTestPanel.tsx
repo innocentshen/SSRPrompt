@@ -27,6 +27,8 @@ import { useOutputRenderPreferences } from '../../lib/output-renderer-prefs';
 import { toResponseFormat } from '../../lib/schema-utils';
 import { getFileInputAccept, isSupportedFileType } from '../../lib/file-utils';
 import { diffText, hasDiff, type DiffOp } from '../../lib/text-diff';
+import { calculateAiCost, formatUsdCost, formatCostNumber, formatUsdCostFormula } from '../../lib/cost';
+import { buildOcrProviderOptions, useEnabledOcrProviders } from '../../hooks/useEnabledOcrProviders';
 import { useToast } from '../../store/useUIStore';
 import type { ChatTranscriptMessage } from './ChatTranscript';
 import type { PromptVariable, PromptConfig, OutputSchema } from '../../types/database';
@@ -43,6 +45,13 @@ type ChatMessageState = {
   attachments?: FileAttachment[];
   thinking?: string;
   modelId?: string;
+  tokensInput?: number;
+  tokensOutput?: number;
+  costInput?: number | null;
+  costOutput?: number | null;
+  costTotal?: number | null;
+  costCumulative?: number | null;
+  costUnavailable?: boolean;
 };
 
 type ChatRun = {
@@ -182,6 +191,13 @@ export function PromptTestPanel({
   const [running, setRunning] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
+  const [lastSingleUsage, setLastSingleUsage] = useState<{ tokensInput: number; tokensOutput: number } | null>(null);
+  const [lastSingleCost, setLastSingleCost] = useState<{
+    inputCost: number | null;
+    outputCost: number | null;
+    totalCost: number | null;
+    hasPricing: boolean;
+  } | null>(null);
   const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [processingStage, setProcessingStage] = useState<'idle' | 'ocr' | 'llm'>('idle');
@@ -223,6 +239,11 @@ export function PromptTestPanel({
 
   const currentModel = useMemo(() => models.find((m) => m.id === selectedModelId) || null, [models, selectedModelId]);
   const supportsVision = currentModel?.supportsVision ?? false;
+  const { enabledOcrProviders } = useEnabledOcrProviders();
+  const ocrProviderOptions = useMemo(
+    () => buildOcrProviderOptions(enabledOcrProviders, tEval, true),
+    [enabledOcrProviders, tEval]
+  );
 
   const currentChatRun = chatRuns[0] ?? null;
   const baselineChatRun = useMemo(
@@ -384,6 +405,12 @@ export function PromptTestPanel({
   }, [fileProcessing, supportsVision]);
 
   useEffect(() => {
+    if (!ocrProviderOverride) return;
+    if (enabledOcrProviders.includes(ocrProviderOverride)) return;
+    setOcrProviderOverride('');
+  }, [enabledOcrProviders, ocrProviderOverride]);
+
+  useEffect(() => {
     // Reset chat session when switching between prompts.
     setChatRuns([]);
     setChatInput('');
@@ -453,11 +480,6 @@ export function PromptTestPanel({
   };
 
   const handleRunSingle = async () => {
-    if (!promptText) {
-      showToast('error', t('writePromptFirst'));
-      return;
-    }
-
     if (!selectedModelId) {
       showToast('error', t('configureModelFirst'));
       return;
@@ -477,6 +499,8 @@ export function PromptTestPanel({
 
     setRunning(true);
     setLastLatencyMs(null);
+    setLastSingleUsage(null);
+    setLastSingleCost(null);
     setInternalOutput('');
     setInternalThinking('');
     setIsThinking(false);
@@ -576,6 +600,10 @@ export function PromptTestPanel({
           // Get token counts from usage
           const tokensInput = result.usage?.prompt_tokens || 0;
           const tokensOutput = result.usage?.completion_tokens || 0;
+          const runCost = calculateAiCost(tokensInput, tokensOutput, {
+            inputPricePerM: model.inputPricePerM,
+            outputPricePerM: model.outputPricePerM,
+          });
 
           // Extract final thinking content
           const { thinking: extractedThinking, content } = extractThinking(result.content);
@@ -586,6 +614,13 @@ export function PromptTestPanel({
           setIsThinking(false);
 
           setLastLatencyMs(latencyMs);
+          setLastSingleUsage({ tokensInput, tokensOutput });
+          setLastSingleCost({
+            inputCost: runCost.inputCost,
+            outputCost: runCost.outputCost,
+            totalCost: runCost.totalCost,
+            hasPricing: runCost.hasPricing,
+          });
           latestOutput = content;
           setInternalOutput(content);
           onThinkingChange?.(finalThinking);
@@ -614,6 +649,8 @@ export function PromptTestPanel({
           setProcessingStage('idle');
           setIsThinking(false);
           setLastLatencyMs(Date.now() - startTime);
+          setLastSingleUsage(null);
+          setLastSingleCost(null);
           onThinkingChange?.(latestThinking);
           onOutputChange?.(latestOutput);
           setRunning(false);
@@ -626,6 +663,13 @@ export function PromptTestPanel({
           const errorOutput = `**[${t('error')}]**\n\n${errorMessage}\n\n${t('errorCheckList')}`;
           latestOutput = errorOutput;
           setLastLatencyMs(Date.now() - startTime);
+          setLastSingleUsage({ tokensInput: 0, tokensOutput: 0 });
+          setLastSingleCost({
+            inputCost: null,
+            outputCost: null,
+            totalCost: null,
+            hasPricing: false,
+          });
           setInternalOutput(errorOutput);
           onThinkingChange?.('');
           onOutputChange?.(errorOutput);
@@ -696,6 +740,49 @@ export function PromptTestPanel({
       const next = [...prev];
       next[index] = updater(prev[index]);
       return next;
+    });
+  }, []);
+
+  const applyAssistantCost = useCallback((messages: ChatMessageState[], args: {
+    assistantMessageId: string;
+    tokensInput: number;
+    tokensOutput: number;
+    inputCost: number | null;
+    outputCost: number | null;
+    totalCost: number | null;
+    hasPricing: boolean;
+  }): ChatMessageState[] => {
+    const withCurrent = messages.map((message) => {
+      if (message.role !== 'assistant' || message.id !== args.assistantMessageId) return message;
+      return {
+        ...message,
+        tokensInput: args.tokensInput,
+        tokensOutput: args.tokensOutput,
+        costInput: args.inputCost,
+        costOutput: args.outputCost,
+        costTotal: args.totalCost,
+        costUnavailable: !args.hasPricing,
+      };
+    });
+
+    let cumulative = 0;
+    let hasUnknown = false;
+
+    return withCurrent.map((message) => {
+      if (message.role !== 'assistant') return message;
+
+      if (typeof message.costTotal === 'number') {
+        if (!hasUnknown) {
+          cumulative += message.costTotal;
+        }
+      } else {
+        hasUnknown = true;
+      }
+
+      return {
+        ...message,
+        costCumulative: hasUnknown ? null : cumulative,
+      };
     });
   }, []);
 
@@ -861,6 +948,23 @@ export function PromptTestPanel({
     const latencyMs = Date.now() - startTime;
     const tokensInput = lastUsage?.prompt_tokens || 0;
     const tokensOutput = lastUsage?.completion_tokens || 0;
+    const cost = calculateAiCost(tokensInput, tokensOutput, {
+      inputPricePerM: model.inputPricePerM,
+      outputPricePerM: model.outputPricePerM,
+    });
+
+    upsertChatRun(runId, (run) => ({
+      ...run,
+      messages: applyAssistantCost(run.messages, {
+        assistantMessageId,
+        tokensInput,
+        tokensOutput,
+        inputCost: cost.inputCost,
+        outputCost: cost.outputCost,
+        totalCost: cost.totalCost,
+        hasPricing: cost.hasPricing,
+      }),
+    }));
 
     const resolveAssistantLabel = (modelId?: string) => {
       if (!modelId) return undefined;
@@ -914,8 +1018,19 @@ export function PromptTestPanel({
       ocrProvider: runNeedsOcr ? (ocrProviderOverride || undefined) : undefined,
     });
 
-    return { content: latestAssistantContent, thinking: latestThinking, latencyMs, tokensInput, tokensOutput };
+    return {
+      content: latestAssistantContent,
+      thinking: latestThinking,
+      latencyMs,
+      tokensInput,
+      tokensOutput,
+      costInput: cost.inputCost,
+      costOutput: cost.outputCost,
+      costTotal: cost.totalCost,
+      costUnavailable: !cost.hasPricing,
+    };
   }, [
+    applyAssistantCost,
     attachedFiles,
     buildPresetMessages,
     config?.frequency_penalty,
@@ -951,10 +1066,6 @@ export function PromptTestPanel({
   const handleChatRunFirstTurn = async () => {
     if (!selectedModelId) {
       showToast('error', t('configureModelFirst'));
-      return;
-    }
-    if ((!promptText || !promptText.trim()) && (!promptMessages || promptMessages.length === 0)) {
-      showToast('error', t('writePromptFirst'));
       return;
     }
 
@@ -1538,6 +1649,26 @@ export function PromptTestPanel({
                 )}
               </div>
 
+              {!running && lastSingleUsage && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-slate-500 light:text-slate-600">
+                  <span>{t('input', { defaultValue: '输入' })}: {lastSingleUsage.tokensInput}</span>
+                  <span>{t('output', { defaultValue: '输出' })}: {lastSingleUsage.tokensOutput}</span>
+                  <span>{t('roundCost', { defaultValue: '本轮费用' })}: {formatUsdCost(lastSingleCost?.totalCost ?? null)}</span>
+                  <span>
+                    {t('costFormula', { defaultValue: '费用公式' })}: {formatUsdCostFormula(
+                      lastSingleCost?.totalCost ?? null,
+                      lastSingleCost?.inputCost ?? null,
+                      lastSingleCost?.outputCost ?? null
+                    )}
+                  </span>
+                  {lastSingleCost && !lastSingleCost.hasPricing && (
+                    <span className="text-amber-400/90 light:text-amber-700">
+                      {t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' })}
+                    </span>
+                  )}
+                </div>
+              )}
+
               <div className="flex-shrink-0 space-y-2">
                 {showFileUpload && attachedFiles.length > 0 && (
                   <div className="flex flex-wrap gap-2">
@@ -1637,14 +1768,7 @@ export function PromptTestPanel({
                             <Select
                               value={ocrProviderOverride}
                               onChange={(e) => setOcrProviderOverride(e.target.value as OcrProvider | '')}
-                              options={[
-                                { value: '', label: tEval('ocrProviderFollow') },
-                                { value: 'paddle', label: 'PaddleOCR' },
-                                { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                                { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
-                                { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                                { value: 'mineru', label: tEval('ocrProviderMineru') },
-                              ]}
+                              options={ocrProviderOptions}
                               className="py-1 px-2 pr-8 text-xs"
                             />
                           </div>
@@ -1825,6 +1949,21 @@ export function PromptTestPanel({
                         !isReplaying &&
                         message.id === currentChatRun.messages[currentChatRun.messages.length - 1]?.id;
 
+                      const showRoundMeta =
+                        !isUser &&
+                        (
+                          typeof message.tokensInput === 'number' ||
+                          typeof message.tokensOutput === 'number' ||
+                          typeof message.costTotal === 'number' ||
+                          message.costUnavailable
+                        );
+                      const roundCostFormula =
+                        typeof message.costTotal === 'number' &&
+                        typeof message.costInput === 'number' &&
+                        typeof message.costOutput === 'number'
+                          ? `${formatCostNumber(message.costTotal)}(${formatCostNumber(message.costInput)}+${formatCostNumber(message.costOutput)})`
+                          : '--';
+
                       return (
                         <div
                           key={message.id}
@@ -1882,6 +2021,35 @@ export function PromptTestPanel({
                                     {f.name}
                                   </div>
                                 ))}
+                              </div>
+                            )}
+
+                            {showRoundMeta && (
+                              <div className="mt-2 pt-1 border-t border-slate-700/40 light:border-slate-200/80 text-[10px] text-slate-500 light:text-slate-600">
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <span>
+                                    {t('input', { defaultValue: '输入' })}: {message.tokensInput ?? 0}
+                                  </span>
+                                  <span>
+                                    {t('output', { defaultValue: '输出' })}: {message.tokensOutput ?? 0}
+                                  </span>
+                                  <span>
+                                    {t('roundCost', { defaultValue: '本轮费用' })}: {formatUsdCost(message.costTotal ?? null)}
+                                  </span>
+                                  <span>
+                                    {t('conversationCost', { defaultValue: '累计费用' })}: {formatUsdCost(message.costCumulative ?? null)}
+                                  </span>
+                                </div>
+                                <div className="mt-1">
+                                  <span>
+                                    {t('costFormula', { defaultValue: '费用公式' })}: {roundCostFormula}
+                                  </span>
+                                  {message.costUnavailable && (
+                                    <span className="ml-2 text-amber-400/90 light:text-amber-700">
+                                      {t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' })}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -2000,14 +2168,7 @@ export function PromptTestPanel({
                             <Select
                               value={ocrProviderOverride}
                               onChange={(e) => setOcrProviderOverride(e.target.value as OcrProvider | '')}
-                              options={[
-                                { value: '', label: tEval('ocrProviderFollow') },
-                                { value: 'paddle', label: 'PaddleOCR' },
-                                { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                                { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
-                                { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                                { value: 'mineru', label: tEval('ocrProviderMineru') },
-                              ]}
+                              options={ocrProviderOptions}
                               className="py-1 px-2 pr-8 text-xs"
                             />
                           </div>

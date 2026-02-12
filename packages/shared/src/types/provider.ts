@@ -40,6 +40,8 @@ export interface Model {
   name: string;
   capabilities: string[];
   maxContextLength: number;
+  inputPricePerM: number;
+  outputPricePerM: number;
   supportsVision: boolean;
   supportsReasoning: boolean;
   supportsFunctionCalling: boolean;
@@ -51,15 +53,20 @@ export interface CreateModelDto {
   name: string;
   capabilities?: string[];
   maxContextLength?: number;
+  inputPricePerM?: number;
+  outputPricePerM?: number;
   supportsVision?: boolean;
   supportsReasoning?: boolean;
   supportsFunctionCalling?: boolean;
 }
 
 export interface UpdateModelDto {
+  modelId?: string;
   name?: string;
   capabilities?: string[];
   maxContextLength?: number;
+  inputPricePerM?: number;
+  outputPricePerM?: number;
   supportsVision?: boolean;
   supportsReasoning?: boolean;
   supportsFunctionCalling?: boolean;

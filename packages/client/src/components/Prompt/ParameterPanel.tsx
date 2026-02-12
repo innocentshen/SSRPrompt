@@ -113,7 +113,7 @@ export function ParameterPanel({
           label={t('maxTokens')}
           value={config.max_tokens}
           min={1}
-          max={32000}
+          max={128000}
           step={1}
           onChange={(value) => handleChange('max_tokens', value)}
           tooltip={t('maxTokensTooltip')}

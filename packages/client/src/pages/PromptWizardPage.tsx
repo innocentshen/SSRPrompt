@@ -27,6 +27,7 @@ import { uploadFileAttachment, extractThinking, type FileAttachment } from '../l
 import { invalidatePromptsCache } from '../lib/cache-events';
 import { getErrorMessage } from '../lib/error-messages';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
+import { buildOcrProviderOptions, useEnabledOcrProviders } from '../hooks/useEnabledOcrProviders';
 import type { Model, Provider, PromptConfig, OcrProvider } from '../types';
 import { DEFAULT_PROMPT_CONFIG } from '../types/database';
 
@@ -204,6 +205,11 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
   const supportsVision = currentModel?.supportsVision ?? false;
   const [fileProcessing, setFileProcessing] = useState<'auto' | 'vision' | 'ocr' | 'none'>('auto');
   const [ocrProviderOverride, setOcrProviderOverride] = useState<OcrProvider | ''>('');
+  const { enabledOcrProviders } = useEnabledOcrProviders();
+  const ocrProviderOptions = useMemo(
+    () => buildOcrProviderOptions(enabledOcrProviders, tEval, true),
+    [enabledOcrProviders, tEval]
+  );
 
   const resolvedFileMode = useMemo(() => {
     if (fileProcessing === 'none') return 'none';
@@ -228,6 +234,12 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
       setFileProcessing('auto');
     }
   }, [fileProcessing, supportsVision]);
+
+  useEffect(() => {
+    if (!ocrProviderOverride) return;
+    if (enabledOcrProviders.includes(ocrProviderOverride)) return;
+    setOcrProviderOverride('');
+  }, [enabledOcrProviders, ocrProviderOverride]);
 
   const handleSelectTemplate = (template: Template) => {
     setSelectedTemplate(template);
@@ -1017,14 +1029,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                         <Select
                           value={ocrProviderOverride}
                           onChange={(e) => setOcrProviderOverride(e.target.value as OcrProvider | '')}
-                          options={[
-                            { value: '', label: tEval('ocrProviderFollow') },
-                            { value: 'paddle', label: 'PaddleOCR' },
-                            { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                            { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
-                            { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                            { value: 'mineru', label: tEval('ocrProviderMineru') },
-                          ]}
+                          options={ocrProviderOptions}
                           className="py-1 px-2 pr-8 text-xs"
                         />
                       </div>

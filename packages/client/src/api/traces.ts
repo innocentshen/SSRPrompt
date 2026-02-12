@@ -4,6 +4,7 @@ import type {
   TraceListItem,
   PaginatedResponse,
   CreateTraceDto,
+  TraceSource,
 } from '@ssrprompt/shared';
 
 export interface TraceQueryParams {
@@ -11,6 +12,7 @@ export interface TraceQueryParams {
   limit?: number;
   promptId?: string;
   status?: 'success' | 'error';
+  source?: TraceSource;
 }
 
 export interface UsageStats {

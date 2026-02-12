@@ -16,6 +16,33 @@ function normalizeProviderErrorMessage(provider: Provider, status: number, messa
   return normalized;
 }
 
+function normalizeTopP(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || Number.isNaN(value)) return undefined;
+  if (value < 0 || value > 1) return undefined;
+  return value;
+}
+
+function shouldRetryWithoutTopP(
+  status: number,
+  message: string,
+  topP?: number
+): boolean {
+  if (topP !== 0) return false;
+  if (status < 400 || status >= 500) return false;
+
+  const normalized = (message || '').toLowerCase();
+  const mentionsTopP = normalized.includes('top_p') || normalized.includes('top p') || normalized.includes('topp');
+  if (!mentionsTopP) return false;
+
+  return (
+    normalized.includes('(0, 1]') ||
+    normalized.includes('must be in') ||
+    normalized.includes('greater than 0') ||
+    normalized.includes('> 0') ||
+    normalized.includes('between 0 and 1')
+  );
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | ContentPart[];
@@ -246,6 +273,8 @@ export function buildRequestBody(
   messages: ChatMessage[],
   options: ChatCompletionOptions
 ): Record<string, unknown> {
+  const topP = normalizeTopP(options.top_p);
+
   if (provider.type === 'anthropic') {
     const { system, messages: transformedMessages } = transformForAnthropic(messages);
     return {
@@ -254,7 +283,7 @@ export function buildRequestBody(
       system,
       max_tokens: options.max_tokens || 8000,
       temperature: options.temperature,
-      top_p: options.top_p,
+      top_p: topP,
       stream: options.stream ?? true,
     };
   }
@@ -264,7 +293,7 @@ export function buildRequestBody(
     model: model.modelId,
     messages,
     temperature: options.temperature,
-    top_p: options.top_p,
+    top_p: topP,
     max_tokens: options.max_tokens,
     frequency_penalty: options.frequency_penalty,
     presence_penalty: options.presence_penalty,
@@ -376,25 +405,36 @@ export async function* streamChatCompletion(
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const url = buildApiUrl(provider);
   const headers = buildHeaders(provider, apiKey);
-  const body = buildRequestBody(provider, model, messages, { ...options, stream: true });
+  const request = async (omitTopP = false) => {
+    const requestOptions: ChatCompletionOptions = omitTopP
+      ? { ...options, top_p: undefined, stream: true }
+      : { ...options, stream: true };
+    const body = buildRequestBody(provider, model, messages, requestOptions);
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
-
+  let response = await request();
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const rawMessage = errorData.error?.message || `Provider API error: ${response.statusText}`;
     const message = normalizeProviderErrorMessage(provider, response.status, rawMessage);
-    throw new AppError(
-      response.status,
-      'PROVIDER_ERROR',
-      message,
-      errorData
-    );
+
+    if (shouldRetryWithoutTopP(response.status, message, options.top_p)) {
+      response = await request(true);
+      if (!response.ok) {
+        const retryErrorData = await response.json().catch(() => ({}));
+        const retryRawMessage = retryErrorData.error?.message || `Provider API error: ${response.statusText}`;
+        const retryMessage = normalizeProviderErrorMessage(provider, response.status, retryRawMessage);
+        throw new AppError(response.status, 'PROVIDER_ERROR', retryMessage, retryErrorData);
+      }
+    } else {
+      throw new AppError(response.status, 'PROVIDER_ERROR', message, errorData);
+    }
   }
 
   if (!response.body) {
@@ -449,25 +489,36 @@ export async function chatCompletion(
 }> {
   const url = buildApiUrl(provider);
   const headers = buildHeaders(provider, apiKey);
-  const body = buildRequestBody(provider, model, messages, { ...options, stream: false });
+  const request = async (omitTopP = false) => {
+    const requestOptions: ChatCompletionOptions = omitTopP
+      ? { ...options, top_p: undefined, stream: false }
+      : { ...options, stream: false };
+    const body = buildRequestBody(provider, model, messages, requestOptions);
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
-
+  let response = await request();
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const rawMessage = errorData.error?.message || `Provider API error: ${response.statusText}`;
     const message = normalizeProviderErrorMessage(provider, response.status, rawMessage);
-    throw new AppError(
-      response.status,
-      'PROVIDER_ERROR',
-      message,
-      errorData
-    );
+
+    if (shouldRetryWithoutTopP(response.status, message, options.top_p)) {
+      response = await request(true);
+      if (!response.ok) {
+        const retryErrorData = await response.json().catch(() => ({}));
+        const retryRawMessage = retryErrorData.error?.message || `Provider API error: ${response.statusText}`;
+        const retryMessage = normalizeProviderErrorMessage(provider, response.status, retryRawMessage);
+        throw new AppError(response.status, 'PROVIDER_ERROR', retryMessage, retryErrorData);
+      }
+    } else {
+      throw new AppError(response.status, 'PROVIDER_ERROR', message, errorData);
+    }
   }
 
   const data = await response.json();

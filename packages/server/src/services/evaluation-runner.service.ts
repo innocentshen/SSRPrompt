@@ -4,6 +4,7 @@ import { AppError, type EvaluationConfig, type ModelParameters, type PromptConfi
 import { chatCompletion, getModelWithProvider, type ChatMessage } from './chat.service.js';
 import { filesService } from './files.service.js';
 import { ocrService } from './ocr.service.js';
+import { upsertRunResults, type RunResultPayload } from './evaluation-results-writer.js';
 
 type StoredAttachment = { fileId: string; name: string; type: string; size: number };
 
@@ -24,19 +25,6 @@ type PromptSnapshot = {
   config: PromptConfig | null;
 };
 
-type RunResultPayload = {
-  testCaseId: string;
-  modelOutput?: string;
-  scores?: Record<string, number>;
-  aiFeedback?: Prisma.JsonObject;
-  latencyMs?: number;
-  ocrLatencyMs?: number;
-  tokensInput?: number;
-  tokensOutput?: number;
-  passed?: boolean;
-  errorMessage?: string | null;
-};
-
 type ExpandedMessages = {
   messages: ChatMessage[];
   ocrLatencyMs: number;
@@ -53,6 +41,11 @@ const DEFAULT_PROMPT_CONFIG: Required<Pick<PromptConfig, 'temperature' | 'top_p'
 const RUN_CONCURRENCY = Number(process.env.EVALUATION_RUN_CONCURRENCY || '2');
 const CASE_CONCURRENCY = Number(process.env.EVALUATION_CASE_CONCURRENCY || '2');
 const RESULT_BATCH_SIZE = Number(process.env.EVALUATION_RESULT_BATCH_SIZE || '10');
+const EVALUATION_ATTACHMENT_MAX_BYTES = Math.max(
+  1,
+  Number(process.env.EVALUATION_ATTACHMENT_MAX_BYTES || String(20 * 1024 * 1024))
+);
+const OCR_PROVIDER_PRIORITY: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
 
 class RunAbortError extends Error {
   constructor(message = 'Run aborted') {
@@ -240,7 +233,9 @@ async function expandMessages(
     for (const part of parts) {
       if (part.type === 'file_ref') {
         const fileId = part.file_ref.fileId;
-        const { meta, buffer } = await filesService.downloadBuffer(userId, fileId);
+        const { meta, buffer } = await filesService.downloadBuffer(userId, fileId, {
+          maxBytes: EVALUATION_ATTACHMENT_MAX_BYTES,
+        });
 
         if (!seenFileIds.has(fileId)) {
           seenFileIds.add(fileId);
@@ -296,6 +291,13 @@ async function expandMessages(
         const dataUrl = parseDataUrl(part.image_url.url);
         if (dataUrl) {
           const buffer = Buffer.from(dataUrl.base64, 'base64');
+          if (buffer.length > EVALUATION_ATTACHMENT_MAX_BYTES) {
+            throw new AppError(
+              413,
+              'VALIDATION_ERROR',
+              `Attachment exceeds size limit (${EVALUATION_ATTACHMENT_MAX_BYTES} bytes)`
+            );
+          }
           const stored = await filesService.upload(userId, {
             originalName: `image_${seenFileIds.size + 1}.${extensionFromMimeType(dataUrl.mimeType)}`,
             mimeType: dataUrl.mimeType,
@@ -315,6 +317,13 @@ async function expandMessages(
         const dataUrl = parseDataUrl(part.file.file_data);
         if (dataUrl) {
           const buffer = Buffer.from(dataUrl.base64, 'base64');
+          if (buffer.length > EVALUATION_ATTACHMENT_MAX_BYTES) {
+            throw new AppError(
+              413,
+              'VALIDATION_ERROR',
+              `Attachment exceeds size limit (${EVALUATION_ATTACHMENT_MAX_BYTES} bytes)`
+            );
+          }
           const stored = await filesService.upload(userId, {
             originalName: part.file.filename,
             mimeType: dataUrl.mimeType,
@@ -462,13 +471,21 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
   })();
 
   let resolvedOcrProvider: OcrProvider | null = null;
+  let ocrSettings: Awaited<ReturnType<typeof ocrService.getSettings>> | null = null;
   if (hasBinaryAttachments && resolvedFileMode === 'ocr') {
+    ocrSettings = await ocrService.getSettings(userId);
+    const enabledByProvider = ocrSettings.providerEnabled ?? {};
     const preferred = (ocrProvider as OcrProvider | undefined) ?? null;
     if (preferred) {
-      resolvedOcrProvider = preferred;
+      resolvedOcrProvider = enabledByProvider[preferred] ? preferred : null;
     } else {
-      const settings = await ocrService.getSettings(userId);
-      resolvedOcrProvider = settings.provider;
+      resolvedOcrProvider = enabledByProvider[ocrSettings.provider]
+        ? ocrSettings.provider
+        : (OCR_PROVIDER_PRIORITY.find((provider) => enabledByProvider[provider]) ?? null);
+    }
+
+    if (!resolvedOcrProvider) {
+      throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'File upload requires OCR to be enabled');
     }
 
     const currentResolved = (runConfig.ocrProviderResolved as OcrProvider | undefined) ?? null;
@@ -487,6 +504,11 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
   const caseConcurrency =
     Number.isFinite(CASE_CONCURRENCY) && CASE_CONCURRENCY > 0 ? CASE_CONCURRENCY : 1;
   const passThreshold = evalConfig.pass_threshold ?? 0.6;
+
+  // Reset stale results so reruns/retries of the same run remain deterministic.
+  await prisma.testCaseResult.deleteMany({
+    where: { runId },
+  });
 
   await prisma.evaluationRun.update({
     where: { id: runId },
@@ -557,22 +579,7 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
 
     const batch = resultsBatch.splice(0, resultsBatch.length);
     flushInFlight = (async () => {
-      await prisma.testCaseResult.createMany({
-        data: batch.map((item) => ({
-          evaluationId: evaluation.id,
-          runId,
-          testCaseId: item.testCaseId,
-          modelOutput: item.modelOutput,
-          scores: (item.scores as Record<string, number>) || {},
-          aiFeedback: (item.aiFeedback ?? {}) as Prisma.JsonObject,
-          latencyMs: item.latencyMs || 0,
-          ocrLatencyMs: item.ocrLatencyMs || 0,
-          tokensInput: item.tokensInput || 0,
-          tokensOutput: item.tokensOutput || 0,
-          passed: item.passed || false,
-          errorMessage: item.errorMessage || null,
-        })),
-      });
+      await upsertRunResults(prisma, evaluation.id, runId, batch);
     })();
 
     try {
@@ -646,8 +653,9 @@ export async function executeEvaluationRun(runId: string, options: RunExecutionO
       else mode = model.supportsVision ? 'vision' : 'ocr';
 
       if (mode === 'ocr') {
-        const settings = await ocrService.getSettings(userId);
-        if (!settings.enabled) {
+        const settings = ocrSettings ?? await ocrService.getSettings(userId);
+        const targetProvider = effectiveOcrProvider ?? settings.provider;
+        if (!settings.providerEnabled?.[targetProvider]) {
           throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'File upload requires OCR to be enabled');
         }
       }

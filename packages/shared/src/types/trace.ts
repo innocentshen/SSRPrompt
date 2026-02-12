@@ -1,11 +1,13 @@
 // Trace Types
 export type TraceStatus = 'success' | 'error';
+export type TraceSource = 'feature' | 'api';
 
 export interface Trace {
   id: string;
   userId: string;
   promptId: string | null;
   modelId: string | null;
+  source: TraceSource;
   input: string;
   output: string | null;
   tokensInput: number;
@@ -30,6 +32,7 @@ export interface FileAttachment {
 export interface CreateTraceDto {
   promptId?: string;
   modelId?: string;
+  source?: TraceSource;
   input: string;
   output?: string;
   tokensInput?: number;
@@ -49,6 +52,7 @@ export interface TraceListItem {
   userId: string;
   promptId: string | null;
   modelId: string | null;
+  source: TraceSource;
   input: string;  // Added for preview
   tokensInput: number;
   tokensOutput: number;

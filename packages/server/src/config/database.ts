@@ -1,6 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 
+if (!process.env.PRISMA_CLIENT_ENGINE_TYPE) {
+  process.env.PRISMA_CLIENT_ENGINE_TYPE = 'library';
+}
+
 // Create a singleton Prisma client
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;

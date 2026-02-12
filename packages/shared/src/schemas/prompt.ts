@@ -29,6 +29,8 @@ export const ReasoningConfigSchema = z.object({
   effort: z.enum(['default', 'none', 'low', 'medium', 'high']),
 });
 
+export const PromptApiVersionModeSchema = z.enum(['latest', 'fixed']);
+
 // Prompt Config Schema
 export const PromptConfigSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
@@ -50,6 +52,9 @@ export const CreatePromptSchema = z.object({
   config: PromptConfigSchema.optional().default({}),
   defaultModelId: z.string().uuid().optional(),
   groupId: z.string().uuid().nullable().optional(),
+  apiEnabled: z.boolean().optional().default(false),
+  apiVersionMode: PromptApiVersionModeSchema.optional().default('latest'),
+  apiFixedVersion: z.number().int().positive().nullable().optional(),
 });
 
 // Update Prompt Schema
@@ -63,6 +68,9 @@ export const UpdatePromptSchema = z.object({
   defaultModelId: z.string().uuid().nullable().optional(),
   groupId: z.string().uuid().nullable().optional(),
   orderIndex: z.number().int().min(0).optional(),
+  apiEnabled: z.boolean().optional(),
+  apiVersionMode: PromptApiVersionModeSchema.optional(),
+  apiFixedVersion: z.number().int().positive().nullable().optional(),
   isPublic: z.boolean().optional(),
 });
 

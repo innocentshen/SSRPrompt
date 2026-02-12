@@ -1,20 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Sparkles, Users, FileText } from 'lucide-react';
+import { Bot, Sparkles, Users, FileText, Share2, KeyRound } from 'lucide-react';
 import { ProviderList } from '../components/Settings/ProviderList';
 import { ProviderForm } from '../components/Settings/ProviderForm';
 import { AddProviderModal } from '../components/Settings/AddProviderModal';
 import { OptimizationSettings } from '../components/Settings/OptimizationSettings';
 import { OcrSettings } from '../components/Settings/OcrSettings';
 import { UserManagement } from '../components/Settings/UserManagement';
+import { ShareLinksManager } from '../components/Settings/ShareLinksManager';
+import { PromptApiKeysManager } from '../components/Settings/PromptApiKeysManager';
 import { useToast } from '../components/ui';
 import { providersApi, modelsApi } from '../api';
 import { useGlobalStore } from '../store/useGlobalStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { invalidateModelsCache, invalidateProvidersCache } from '../lib/cache-events';
-import type { Provider, Model, ProviderType } from '../types';
+import type { Provider, Model, ProviderType, UpdateModelDto } from '../types';
 
-type SettingsTab = 'providers' | 'optimization' | 'ocr' | 'users';
+type SettingsTab = 'providers' | 'optimization' | 'ocr' | 'shares' | 'promptApi' | 'users';
 
 export function SettingsPage() {
   const { t } = useTranslation('settings');
@@ -35,7 +37,7 @@ export function SettingsPage() {
   const loadProviders = useCallback(async () => {
     setLoading(true);
     try {
-      // 并行加载 providers 和 models
+      // Load providers and models in parallel.
       const [providersData, modelsData] = await Promise.all([
         providersApi.list(),
         modelsApi.list(),
@@ -128,7 +130,14 @@ export function SettingsPage() {
   const handleAddModel = async (
     modelId: string,
     name: string,
-    options?: { supportsVision?: boolean; supportsReasoning?: boolean; maxContextLength?: number }
+    options?: {
+      maxContextLength?: number;
+      inputPricePerM?: number;
+      outputPricePerM?: number;
+      supportsVision?: boolean;
+      supportsReasoning?: boolean;
+      supportsFunctionCalling?: boolean;
+    }
   ) => {
     if (!selectedProviderId) return;
     try {
@@ -136,9 +145,12 @@ export function SettingsPage() {
         modelId,
         name,
         capabilities: ['chat'],
+        maxContextLength: options?.maxContextLength,
+        inputPricePerM: options?.inputPricePerM,
+        outputPricePerM: options?.outputPricePerM,
         supportsVision: options?.supportsVision,
         supportsReasoning: options?.supportsReasoning,
-        maxContextLength: options?.maxContextLength,
+        supportsFunctionCalling: options?.supportsFunctionCalling,
       });
 
       setModels((prev) => [...prev, newModel]);
@@ -152,34 +164,26 @@ export function SettingsPage() {
     }
   };
 
-  const handleToggleVision = async (modelId: string, supportsVision: boolean) => {
+  const handleUpdateModel = async (modelId: string, data: UpdateModelDto) => {
     try {
-      const updated = await modelsApi.update(modelId, { supportsVision });
-      setModels((prev) =>
-        prev.map((m) => (m.id === modelId ? updated : m))
-      );
-      // Sync to global store for other pages
+      const updated = await modelsApi.update(modelId, data);
+      setModels((prev) => prev.map((m) => (m.id === modelId ? updated : m)));
       refreshGlobalStore(true);
       invalidateModelsCache(updated);
+      return updated;
     } catch (err) {
       console.error('Failed to update model:', err);
       showToast('error', t('updateModelFailed'));
+      return null;
     }
   };
 
+  const handleToggleVision = async (modelId: string, supportsVision: boolean) => {
+    await handleUpdateModel(modelId, { supportsVision });
+  };
+
   const handleToggleReasoning = async (modelId: string, supportsReasoning: boolean) => {
-    try {
-      const updated = await modelsApi.update(modelId, { supportsReasoning });
-      setModels((prev) =>
-        prev.map((m) => (m.id === modelId ? updated : m))
-      );
-      // Sync to global store for other pages
-      refreshGlobalStore(true);
-      invalidateModelsCache(updated);
-    } catch (err) {
-      console.error('Failed to update model:', err);
-      showToast('error', t('updateModelFailed'));
-    }
+    await handleUpdateModel(modelId, { supportsReasoning });
   };
 
   const handleRemoveModel = async (modelId: string) => {
@@ -259,6 +263,28 @@ export function SettingsPage() {
           <FileText className="w-4 h-4" />
           {t('fileOcr')}
         </button>
+        <button
+          onClick={() => setActiveTab('shares')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'shares'
+              ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
+              : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+          }`}
+        >
+          <Share2 className="w-4 h-4" />
+          {t('shareManagement')}
+        </button>
+        <button
+          onClick={() => setActiveTab('promptApi')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'promptApi'
+              ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
+              : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+          }`}
+        >
+          <KeyRound className="w-4 h-4" />
+          {t('promptApiTab')}
+        </button>
         {isAdmin && (
           <button
             onClick={() => setActiveTab('users')}
@@ -289,6 +315,7 @@ export function SettingsPage() {
             onSave={handleSaveProvider}
             onDelete={handleDeleteProvider}
             onAddModel={handleAddModel}
+            onUpdateModel={handleUpdateModel}
             onRemoveModel={handleRemoveModel}
             onToggleVision={handleToggleVision}
             onToggleReasoning={handleToggleReasoning}
@@ -308,10 +335,18 @@ export function SettingsPage() {
           </div>
         </div>
       ) : activeTab === 'ocr' ? (
+        <div className="flex-1 flex overflow-hidden">
+          <OcrSettings />
+        </div>
+      ) : activeTab === 'shares' ? (
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-3xl">
-            <OcrSettings />
+          <div className="w-full">
+            <ShareLinksManager />
           </div>
+        </div>
+      ) : activeTab === 'promptApi' ? (
+        <div className="flex-1 flex overflow-hidden">
+          <PromptApiKeysManager />
         </div>
       ) : activeTab === 'users' ? (
         <div className="flex-1 overflow-y-auto p-6">

@@ -2,6 +2,8 @@ import { Model } from '@prisma/client';
 import { modelsRepository, providersRepository } from '../repositories/index.js';
 import { CreateModelInput, UpdateModelInput, NotFoundError } from '@ssrprompt/shared';
 
+const DEFAULT_MODEL_MAX_CONTEXT_LENGTH = 128000;
+
 export class ModelsService {
   /**
    * Get all models for a user
@@ -42,7 +44,9 @@ export class ModelsService {
       modelId: data.modelId,
       name: data.name,
       capabilities: data.capabilities ?? [],
-      maxContextLength: data.maxContextLength ?? 8000,
+      maxContextLength: data.maxContextLength ?? DEFAULT_MODEL_MAX_CONTEXT_LENGTH,
+      inputPricePerM: data.inputPricePerM ?? 0,
+      outputPricePerM: data.outputPricePerM ?? 0,
       supportsVision: data.supportsVision ?? false,
       supportsReasoning: data.supportsReasoning ?? false,
       supportsFunctionCalling: data.supportsFunctionCalling ?? false,

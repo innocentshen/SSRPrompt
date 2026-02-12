@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { GlobalAnalysisTaskWidget } from './GlobalAnalysisTaskWidget';
 
 interface LayoutProps {
   children: ReactNode;
@@ -17,6 +18,7 @@ export function Layout({ children, currentPage, onNavigate, title, onLogout }: L
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title={title} onLogout={onLogout} />
         <main className="flex-1 overflow-hidden">{children}</main>
+        <GlobalAnalysisTaskWidget />
       </div>
     </div>
   );

@@ -8,11 +8,17 @@ export function segmentText(text: string): string[] {
   const granularity = (isCjk(text) ? 'grapheme' : 'word') as 'grapheme' | 'word';
 
   // Intl.Segmenter is available in modern browsers; fall back to grapheme-ish split.
-  const Segmenter = (Intl as unknown as { Segmenter?: new (locales?: string | string[], options?: unknown) => any }).Segmenter;
+  type IntlSegment = { segment: string };
+  type IntlSegmenter = { segment: (input: string) => Iterable<IntlSegment> };
+  type IntlSegmenterConstructor = new (
+    locales?: string | string[],
+    options?: { granularity: 'grapheme' | 'word' }
+  ) => IntlSegmenter;
+  const Segmenter = (Intl as unknown as { Segmenter?: IntlSegmenterConstructor }).Segmenter;
   if (typeof Segmenter === 'function') {
     const segmenter = new Segmenter(undefined, { granularity });
     const parts: string[] = [];
-    for (const part of segmenter.segment(text) as Iterable<{ segment: string }>) {
+    for (const part of segmenter.segment(text)) {
       parts.push(part.segment);
     }
     return parts;

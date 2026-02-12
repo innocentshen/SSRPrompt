@@ -9,3 +9,5 @@ export { OAuthProviderCallbackProxyPage } from './OAuthProviderCallbackProxyPage
 export { HomePage } from './HomePage';
 export { PromptWizardPage } from './PromptWizardPage';
 export { PromptPlazaPage } from './PromptPlazaPage';
+export { SharePromptPage } from './SharePromptPage';
+export { ShareEvaluationPage } from './ShareEvaluationPage';

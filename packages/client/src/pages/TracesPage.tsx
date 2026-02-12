@@ -19,13 +19,14 @@ import {
 } from 'lucide-react';
 import { Button, Badge, Select, Modal, Input, useToast } from '../components/ui';
 import { tracesApi, promptsApi, modelsApi } from '../api';
-import type { Trace, TraceListItem, PromptListItem, Model, OcrProvider } from '../types';
+import type { Trace, TraceListItem, PromptListItem, Model, OcrProvider, TraceSource } from '../types';
 import type { FileAttachment } from '../lib/ai-service';
 import { extractThinking } from '../lib/ai-service';
 import { AttachmentList } from '../components/Prompt/AttachmentPreview';
 import { AttachmentModal } from '../components/Prompt/AttachmentModal';
 import { ChatTranscript, type ChatTranscriptMessage } from '../components/Prompt/ChatTranscript';
 import { OcrResultsPanel } from '../components/Prompt/OcrResultsPanel';
+import { calculateAiCost, formatUsdCost, formatUsdCostFormula } from '../lib/cost';
 
 // API returns camelCase, use directly
 
@@ -33,12 +34,28 @@ interface PromptStats {
   promptId: string | null;
   promptName: string;
   count: number;
-  totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+  pricedCostCount: number;
+  totalLatencyMs: number;
   avgLatency: number;
   errorCount: number;
 }
-
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const toDateInputValue = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const getDefaultDateRange = () => {
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - 1);
+  return {
+    startDate: toDateInputValue(start),
+    endDate: toDateInputValue(end),
+  };
+};
 
 const stripOcrFileBlocks = (content: string, fileNames: string[]) => {
   if (!content || fileNames.length === 0) return content;
@@ -60,12 +77,70 @@ export function TracesPage() {
   const [selectedTrace, setSelectedTrace] = useState<Trace | null>(null);
   const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterSource, setFilterSource] = useState<'all' | TraceSource>('all');
+  const [filterStartDate, setFilterStartDate] = useState<string>(() => getDefaultDateRange().startDate);
+  const [filterEndDate, setFilterEndDate] = useState<string>(() => getDefaultDateRange().endDate);
+  const [draftFilterStatus, setDraftFilterStatus] = useState<string>('all');
+  const [draftFilterSource, setDraftFilterSource] = useState<'all' | TraceSource>('all');
+  const [draftFilterStartDate, setDraftFilterStartDate] = useState<string>(() => getDefaultDateRange().startDate);
+  const [draftFilterEndDate, setDraftFilterEndDate] = useState<string>(() => getDefaultDateRange().endDate);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+
+  const sourceOptions = useMemo(
+    () => [
+      { value: 'all', label: t('sourceAll', { defaultValue: 'All Sources' }) },
+      { value: 'feature', label: t('sourceFeature', { defaultValue: 'Feature Calls' }) },
+      { value: 'api', label: t('sourceApi', { defaultValue: 'API Calls' }) },
+    ],
+    [t]
+  );
+
+  const statusOptions = useMemo(
+    () => [
+      { value: 'all', label: t('allStatus') },
+      { value: 'success', label: t('success') },
+      { value: 'error', label: t('failed') },
+    ],
+    [t]
+  );
+
+  const hasPendingFilterChanges =
+    filterSource !== draftFilterSource
+    || filterStatus !== draftFilterStatus
+    || filterStartDate !== draftFilterStartDate
+    || filterEndDate !== draftFilterEndDate;
+
+  const handleApplyFilters = useCallback(() => {
+    if (draftFilterStartDate && draftFilterEndDate && draftFilterStartDate > draftFilterEndDate) {
+      showToast('error', t('startDateAfterEndDate', { defaultValue: '\u5f00\u59cb\u65f6\u95f4\u4e0d\u80fd\u665a\u4e8e\u7ed3\u675f\u65f6\u95f4' }));
+      return;
+    }
+    setFilterSource(draftFilterSource);
+    setFilterStatus(draftFilterStatus);
+    setFilterStartDate(draftFilterStartDate);
+    setFilterEndDate(draftFilterEndDate);
+  }, [draftFilterEndDate, draftFilterSource, draftFilterStartDate, draftFilterStatus, showToast, t]);
+
+  const handleResetFilters = useCallback(() => {
+    const defaults = getDefaultDateRange();
+    const resetSource: 'all' | TraceSource = 'all';
+    const resetStatus = 'all';
+
+    setDraftFilterSource(resetSource);
+    setDraftFilterStatus(resetStatus);
+    setDraftFilterStartDate(defaults.startDate);
+    setDraftFilterEndDate(defaults.endDate);
+
+    setFilterSource(resetSource);
+    setFilterStatus(resetStatus);
+    setFilterStartDate(defaults.startDate);
+    setFilterEndDate(defaults.endDate);
+  }, []);
 
   // Safe date formatting helper
   const formatDate = (dateString: string | undefined | null) => {
@@ -148,9 +223,23 @@ export function TracesPage() {
     [prompts, t]
   );
   const getModelName = useCallback((id: string | null) => models.find((m) => m.id === id)?.name || '-', [models]);
+  const getTraceCost = useCallback((trace: Pick<TraceListItem, 'modelId' | 'tokensInput' | 'tokensOutput'>) => {
+    const model = models.find((m) => m.id === trace.modelId);
+    return calculateAiCost(trace.tokensInput, trace.tokensOutput, model).totalCost;
+  }, [models]);
+  const getTraceCostBreakdown = useCallback((trace: Pick<Trace, 'modelId' | 'tokensInput' | 'tokensOutput'>) => {
+    const model = models.find((m) => m.id === trace.modelId);
+    return calculateAiCost(trace.tokensInput, trace.tokensOutput, model);
+  }, [models]);
+  const getSourceLabel = useCallback(
+    (source: TraceSource) => (source === 'api'
+      ? t('sourceApi', { defaultValue: 'API Calls' })
+      : t('sourceFeature', { defaultValue: 'Feature Calls' })),
+    [t]
+  );
 
 
-  // 检查 trace 是否有附件
+  // Check whether a trace has attachments.
   const hasAttachments = (trace: Trace): boolean => {
     // Check both attachments array and metadata.files
     if (trace.attachments && trace.attachments.length > 0) {
@@ -160,7 +249,7 @@ export function TracesPage() {
     return !!(metadata?.files && metadata.files.length > 0);
   };
 
-  // 获取附件数量
+  // Get the attachment count.
   const getAttachmentCount = (trace: Trace): number => {
     if (trace.attachments && trace.attachments.length > 0) {
       return trace.attachments.length;
@@ -169,7 +258,7 @@ export function TracesPage() {
     return metadata?.files?.length || 0;
   };
 
-  // 点击查看详情时加载完整数据（包括 input, output, attachments）
+  // Load full trace details (input/output/attachments) when opening details.
   const handleSelectTrace = async (traceItem: TraceListItem) => {
     setSelectedTrace(null);
     setAttachmentsLoading(true);
@@ -218,6 +307,18 @@ export function TracesPage() {
       { label: tPrompts('presencePenalty'), value: candidate.presence_penalty ?? candidate.presencePenalty },
     ].filter((item) => item.value !== undefined && item.value !== null);
   }, [selectedTrace, tPrompts]);
+
+  const selectedTraceCost = useMemo(() => {
+    if (!selectedTrace) {
+      return {
+        inputCost: null as number | null,
+        outputCost: null as number | null,
+        totalCost: null as number | null,
+        hasPricing: false,
+      };
+    }
+    return getTraceCostBreakdown(selectedTrace);
+  }, [getTraceCostBreakdown, selectedTrace]);
 
   const displayInput = useMemo(() => {
     if (!selectedTrace) return '';
@@ -296,6 +397,13 @@ export function TracesPage() {
     return messages;
   }, [assistantResponse.content, assistantResponse.thinking, selectedTrace, selectedTraceOcr]);
 
+  const selectedPromptTraces = useMemo(() => {
+    if (!selectedPromptId || selectedPromptId === '__all__') {
+      return traces;
+    }
+    return traces.filter((trace) => trace.promptId === selectedPromptId);
+  }, [selectedPromptId, traces]);
+
   // Group traces by prompt and calculate stats
   const promptStatsList = useMemo(() => {
     const statsMap = new Map<string | null, PromptStats>();
@@ -304,40 +412,55 @@ export function TracesPage() {
     statsMap.set('__all__', {
       promptId: '__all__',
       promptName: t('all'),
-      count: traces.length,
-      totalTokens: traces.reduce((acc, t) => acc + t.tokensInput + t.tokensOutput, 0),
-      avgLatency: traces.length
-        ? Math.round(traces.reduce((acc, t) => acc + t.latencyMs, 0) / traces.length)
-        : 0,
-      errorCount: traces.filter((t) => t.status === 'error').length,
+      count: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCost: 0,
+      pricedCostCount: 0,
+      totalLatencyMs: 0,
+      avgLatency: 0,
+      errorCount: 0,
     });
 
     // Group by prompt
     for (const trace of traces) {
+      const traceCost = getTraceCost(trace);
+      const applyTraceToStats = (stats: PromptStats) => {
+        stats.count++;
+        stats.totalInputTokens += trace.tokensInput;
+        stats.totalOutputTokens += trace.tokensOutput;
+        stats.totalLatencyMs += trace.latencyMs;
+        if (trace.status === 'error') stats.errorCount++;
+        if (typeof traceCost === 'number') {
+          stats.totalCost += traceCost;
+          stats.pricedCostCount++;
+        }
+      };
+
+      applyTraceToStats(statsMap.get('__all__')!);
+
       const key = trace.promptId;
       if (!statsMap.has(key)) {
         statsMap.set(key, {
           promptId: key,
           promptName: getPromptName(key),
           count: 0,
-          totalTokens: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCost: 0,
+          pricedCostCount: 0,
+          totalLatencyMs: 0,
           avgLatency: 0,
           errorCount: 0,
         });
       }
       const stats = statsMap.get(key)!;
-      stats.count++;
-      stats.totalTokens += trace.tokensInput + trace.tokensOutput;
-      if (trace.status === 'error') stats.errorCount++;
+      applyTraceToStats(stats);
     }
 
     // Calculate average latency for each prompt
-    for (const [key, stats] of statsMap.entries()) {
-      if (key === '__all__') continue;
-      const promptTraces = traces.filter((t) => t.promptId === key);
-      stats.avgLatency = promptTraces.length
-        ? Math.round(promptTraces.reduce((acc, t) => acc + t.latencyMs, 0) / promptTraces.length)
-        : 0;
+    for (const stats of statsMap.values()) {
+      stats.avgLatency = stats.count ? Math.round(stats.totalLatencyMs / stats.count) : 0;
     }
 
     // Convert to array and sort by count (descending)
@@ -348,7 +471,7 @@ export function TracesPage() {
       .sort((a, b) => b.count - a.count);
 
     return [allStats, ...otherStats];
-  }, [traces, getPromptName, t]);
+  }, [traces, getPromptName, getTraceCost, t]);
 
   // Filter prompts by search query
   const filteredPromptStats = useMemo(() => {
@@ -359,25 +482,40 @@ export function TracesPage() {
     );
   }, [promptStatsList, searchQuery]);
 
-  // Filter traces by selected prompt and status
+  // Filter traces in current prompt scope
   const filteredTraces = useMemo(() => {
-    let result = traces;
+    let result = [...selectedPromptTraces];
 
-    // Filter by prompt
-    if (selectedPromptId && selectedPromptId !== '__all__') {
-      result = result.filter((t) => t.promptId === selectedPromptId);
+    if (filterSource !== 'all') {
+      result = result.filter((trace) => trace.source === filterSource);
     }
 
-    // Filter by status
     if (filterStatus !== 'all') {
-      result = result.filter((t) => t.status === filterStatus);
+      result = result.filter((trace) => trace.status === filterStatus);
     }
+
+    const startTs = filterStartDate ? new Date(`${filterStartDate}T00:00:00`).getTime() : Number.NaN;
+    if (!Number.isNaN(startTs)) {
+      result = result.filter((trace) => {
+        const createdTs = new Date(trace.createdAt).getTime();
+        return !Number.isNaN(createdTs) && createdTs >= startTs;
+      });
+    }
+
+    const endTs = filterEndDate ? new Date(`${filterEndDate}T23:59:59.999`).getTime() : Number.NaN;
+    if (!Number.isNaN(endTs)) {
+      result = result.filter((trace) => {
+        const createdTs = new Date(trace.createdAt).getTime();
+        return !Number.isNaN(createdTs) && createdTs <= endTs;
+      });
+    }
+
+    result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return result;
-  }, [traces, selectedPromptId, filterStatus]);
+  }, [filterEndDate, filterSource, filterStartDate, filterStatus, selectedPromptTraces]);
 
-  // Get current stats based on selection
-  const currentStats = useMemo(() => {
+  const selectedPromptStats = useMemo(() => {
     if (!selectedPromptId || selectedPromptId === '__all__') {
       return promptStatsList.find((s) => s.promptId === '__all__')!;
     }
@@ -385,11 +523,50 @@ export function TracesPage() {
       promptId: selectedPromptId,
       promptName: getPromptName(selectedPromptId),
       count: 0,
-      totalTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCost: 0,
+      pricedCostCount: 0,
+      totalLatencyMs: 0,
       avgLatency: 0,
       errorCount: 0,
     };
   }, [selectedPromptId, promptStatsList, getPromptName]);
+
+  // Current top stats follow the filtered result set in current prompt scope.
+  const currentStats = useMemo<PromptStats>(() => {
+    const stats: PromptStats = {
+      promptId: selectedPromptStats.promptId,
+      promptName: selectedPromptStats.promptName,
+      count: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCost: 0,
+      pricedCostCount: 0,
+      totalLatencyMs: 0,
+      avgLatency: 0,
+      errorCount: 0,
+    };
+
+    for (const trace of filteredTraces) {
+      stats.count++;
+      stats.totalInputTokens += trace.tokensInput;
+      stats.totalOutputTokens += trace.tokensOutput;
+      stats.totalLatencyMs += trace.latencyMs;
+      if (trace.status === 'error') stats.errorCount++;
+
+      const cost = getTraceCost(trace);
+      if (typeof cost === 'number') {
+        stats.totalCost += cost;
+        stats.pricedCostCount++;
+      }
+    }
+
+    stats.avgLatency = stats.count ? Math.round(stats.totalLatencyMs / stats.count) : 0;
+    return stats;
+  }, [filteredTraces, getTraceCost, selectedPromptStats.promptId, selectedPromptStats.promptName]);
+
+  const currentStatsMissingPriceCount = Math.max(0, currentStats.count - currentStats.pricedCostCount);
 
   const errorRate = currentStats.count
     ? ((currentStats.errorCount / currentStats.count) * 100).toFixed(1)
@@ -423,34 +600,20 @@ export function TracesPage() {
                   : 'hover:bg-slate-800/50 light:hover:bg-slate-100'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  {stats.promptId === '__all__' ? (
-                    <History className="w-4 h-4 flex-shrink-0 text-slate-400" />
-                  ) : (
-                    <FileText className={`w-4 h-4 flex-shrink-0 ${
-                      stats.promptId === null
-                        ? 'text-amber-400'
-                        : 'text-cyan-400'
-                    }`} />
-                  )}
-                  <span className="text-sm text-slate-200 light:text-slate-800 truncate">
-                    {stats.promptName}
-                  </span>
-                </div>
-                <Badge variant="info">
-                  {stats.count}
-                </Badge>
+              <div className="flex items-center gap-2 min-w-0">
+                {stats.promptId === '__all__' ? (
+                  <History className="w-4 h-4 flex-shrink-0 text-slate-400" />
+                ) : (
+                  <FileText className={`w-4 h-4 flex-shrink-0 ${
+                    stats.promptId === null
+                      ? 'text-amber-400'
+                      : 'text-cyan-400'
+                  }`} />
+                )}
+                <span className="text-sm text-slate-200 light:text-slate-800 truncate">
+                  {stats.promptName}
+                </span>
               </div>
-              {stats.promptId !== '__all__' && (
-                <div className="mt-1.5 flex items-center gap-3 text-xs text-slate-500">
-                  <span>{stats.totalTokens.toLocaleString()} tokens</span>
-                  <span>{stats.avgLatency}ms</span>
-                  {stats.errorCount > 0 && (
-                    <span className="text-rose-400">{stats.errorCount} {t('errors')}</span>
-                  )}
-                </div>
-              )}
             </button>
           ))}
           {filteredPromptStats.length === 1 && filteredPromptStats[0].promptId === '__all__' && (
@@ -464,35 +627,25 @@ export function TracesPage() {
       {/* Right content - Stats and traces */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-shrink-0 p-6 border-b border-slate-700 light:border-slate-200">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-xl font-semibold text-white light:text-slate-900">{t("title")}</h2>
               {selectedPromptId && selectedPromptId !== '__all__' && (
                 <p className="text-sm text-slate-400 light:text-slate-600 mt-1">
-                  {currentStats.promptName}
+                  {selectedPromptStats.promptName}
                 </p>
               )}
             </div>
             <div className="flex items-center gap-3">
-              {selectedPromptId && selectedPromptId !== '__all__' && currentStats.count > 0 && (
+              {selectedPromptId && selectedPromptId !== '__all__' && selectedPromptStats.count > 0 && (
                 <Button
                   variant="danger"
-                  size="sm"
                   onClick={() => setShowDeleteConfirm(true)}
                 >
                   <Trash2 className="w-4 h-4" />
                   <span>{tCommon("delete")}</span>
                 </Button>
               )}
-              <Select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                options={[
-                  { value: 'all', label: t('allStatus') },
-                  { value: 'success', label: t('success') },
-                  { value: 'error', label: t('failed') },
-                ]}
-              />
               <Button variant="secondary" onClick={loadData} loading={loading}>
                 <RefreshCw className="w-4 h-4" />
                 <span>{tCommon("refresh")}</span>
@@ -500,7 +653,72 @@ export function TracesPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-4">
+          <div className="mb-6 p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 min-w-[260px]">
+                <span className="text-sm text-slate-400 light:text-slate-600 whitespace-nowrap">
+                  {t('sourceType', { defaultValue: 'Source Type' })}:
+                </span>
+                <div className="w-[180px]">
+                  <Select
+                    value={draftFilterSource}
+                    onChange={(e) => setDraftFilterSource(e.target.value as 'all' | TraceSource)}
+                    options={sourceOptions}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 min-w-[260px]">
+                <span className="text-sm text-slate-400 light:text-slate-600 whitespace-nowrap">
+                  {t('status', { defaultValue: 'Status' })}:
+                </span>
+                <div className="w-[180px]">
+                  <Select
+                    value={draftFilterStatus}
+                    onChange={(e) => setDraftFilterStatus(e.target.value)}
+                    options={statusOptions}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 min-w-[300px]">
+                <span className="text-sm text-slate-400 light:text-slate-600 whitespace-nowrap">
+                  {t('startTime', { defaultValue: '\u5f00\u59cb\u65f6\u95f4' })}:
+                </span>
+                <div className="w-[200px]">
+                  <Input
+                    type="date"
+                    value={draftFilterStartDate}
+                    onChange={(e) => setDraftFilterStartDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 min-w-[300px]">
+                <span className="text-sm text-slate-400 light:text-slate-600 whitespace-nowrap">
+                  {t('endTime', { defaultValue: '\u7ed3\u675f\u65f6\u95f4' })}:
+                </span>
+                <div className="w-[200px]">
+                  <Input
+                    type="date"
+                    value={draftFilterEndDate}
+                    onChange={(e) => setDraftFilterEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 sm:ml-auto">
+                <Button onClick={handleApplyFilters} disabled={!hasPendingFilterChanges}>
+                  {tCommon('search', { defaultValue: 'Search' })}
+                </Button>
+                <Button variant="secondary" onClick={handleResetFilters}>
+                  {tCommon('reset', { defaultValue: 'Reset' })}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-5 gap-4">
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
                 <Activity className="w-4 h-4" />
@@ -510,10 +728,31 @@ export function TracesPage() {
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
-                <Coins className="w-4 h-4" />
+                <FileText className="w-4 h-4" />
                 <span className="text-xs">{t("tokens")}</span>
               </div>
-              <p className="text-2xl font-bold text-white light:text-slate-900">{currentStats.totalTokens.toLocaleString()}</p>
+              <div className="space-y-1 text-sm">
+                <p className="text-white light:text-slate-900">
+                  {t('input', { defaultValue: 'Input' })}: <span className="font-semibold">{currentStats.totalInputTokens.toLocaleString()}</span>
+                </p>
+                <p className="text-white light:text-slate-900">
+                  {t('output', { defaultValue: 'Output' })}: <span className="font-semibold">{currentStats.totalOutputTokens.toLocaleString()}</span>
+                </p>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
+              <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
+                <Coins className="w-4 h-4" />
+                <span className="text-xs">{t('cost', { defaultValue: 'Cost' })}</span>
+              </div>
+              <p className="text-2xl font-bold text-white light:text-slate-900">
+                {formatUsdCost(currentStats.pricedCostCount > 0 ? currentStats.totalCost : null)}
+              </p>
+              {currentStatsMissingPriceCount > 0 && (
+                <p className="text-xs text-amber-400 light:text-amber-700 mt-1">
+                  {t('modelPriceNotConfigured', { defaultValue: 'Model price is not configured' })} ({currentStatsMissingPriceCount})
+                </p>
+              )}
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
               <div className="flex items-center gap-2 text-slate-500 light:text-slate-600 mb-2">
@@ -538,11 +777,16 @@ export function TracesPage() {
               <thead className="sticky top-0 bg-slate-900 light:bg-slate-100 border-b border-slate-700 light:border-slate-200">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("status")}</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t('source', { defaultValue: 'Source' })}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("timestamp")}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("model")}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
-                    Tokens
+                    {t('input', { defaultValue: 'Input' })} Tokens
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">
+                    {t('output', { defaultValue: 'Output' })} Tokens
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t('cost', { defaultValue: 'Cost' })}</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 light:text-slate-600 uppercase tracking-wider">{t("latency")}</th>
                   <th className="px-6 py-3"></th>
                 </tr>
@@ -561,16 +805,25 @@ export function TracesPage() {
                         <XCircle className="w-5 h-5 text-rose-500" />
                       )}
                     </td>
+                    <td className="px-6 py-4">
+                      <Badge variant={trace.source === 'api' ? 'info' : 'default'}>
+                        {getSourceLabel(trace.source)}
+                      </Badge>
+                    </td>
                     <td className="px-6 py-4 text-sm text-slate-400 light:text-slate-600">
                       {formatDate(trace.createdAt)}
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-300 light:text-slate-800">
                       {getModelName(trace.modelId)}
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-400">
-                      <span className="text-cyan-400 light:text-cyan-600">{trace.tokensInput}</span>
-                      <span className="mx-1 light:text-slate-400">/</span>
-                      <span className="text-teal-400 light:text-teal-600">{trace.tokensOutput}</span>
+                    <td className="px-6 py-4 text-sm text-cyan-400 light:text-cyan-600">
+                      {trace.tokensInput}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-teal-400 light:text-teal-600">
+                      {trace.tokensOutput}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-400 light:text-slate-600">
+                      {formatUsdCost(getTraceCost(trace))}
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-400 light:text-slate-600">
                       {trace.latencyMs}ms
@@ -591,7 +844,7 @@ export function TracesPage() {
                 ))}
                 {filteredTraces.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500 light:text-slate-600">
+                    <td colSpan={9} className="px-6 py-12 text-center text-slate-500 light:text-slate-600">
                       <Eye className="w-12 h-12 mx-auto mb-3 text-slate-700 light:text-slate-400" />
                       <p>{t("noRecords")}</p>
                       <p className="text-xs mt-1"></p>
@@ -633,6 +886,20 @@ export function TracesPage() {
                   <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("output")} Tokens</p>
                   <p className="text-sm font-medium text-teal-400 light:text-teal-600">{selectedTrace.tokensOutput}</p>
                 </div>
+                <div className="col-span-2 p-3 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                  <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('cost', { defaultValue: 'Cost' })}</p>
+                  <p className="text-sm font-medium text-amber-300 light:text-amber-700">
+                    {formatUsdCost(selectedTraceCost.totalCost)}
+                  </p>
+                  <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
+                    {formatUsdCostFormula(selectedTraceCost.totalCost, selectedTraceCost.inputCost, selectedTraceCost.outputCost)}
+                  </p>
+                  {!selectedTraceCost.hasPricing && (
+                    <p className="text-xs text-amber-400 light:text-amber-700 mt-1">
+                      {t('modelPriceNotConfigured', { defaultValue: 'Model price is not configured' })}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
@@ -643,6 +910,13 @@ export function TracesPage() {
               <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
                 <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t("model")}</p>
                 <p className="text-sm text-slate-200 light:text-slate-800">{getModelName(selectedTrace.modelId)}</p>
+              </div>
+
+              <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                <p className="text-xs text-slate-500 light:text-slate-600 mb-1">{t('source', { defaultValue: 'Source' })}</p>
+                <Badge variant={selectedTrace.source === 'api' ? 'info' : 'default'}>
+                  {getSourceLabel(selectedTrace.source)}
+                </Badge>
               </div>
 
               <div className="p-3 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
@@ -756,10 +1030,10 @@ export function TracesPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-300 light:text-slate-700">
-            {t('confirmDeletePromptHistory', { name: currentStats.promptName })}
+            {t('confirmDeletePromptHistory', { name: selectedPromptStats.promptName })}
           </p>
           <p className="text-sm text-slate-500 light:text-slate-600">
-            {t('recordsWillBeDeleted', { count: currentStats.count })}
+            {t('recordsWillBeDeleted', { count: selectedPromptStats.count })}
           </p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)}>

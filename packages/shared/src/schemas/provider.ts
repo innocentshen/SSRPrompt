@@ -29,16 +29,21 @@ export const CreateModelSchema = z.object({
   modelId: z.string().min(1, 'Model ID is required'),
   name: z.string().min(1, 'Name is required'),
   capabilities: z.array(z.string()).optional().default([]),
-  maxContextLength: z.number().int().min(256).optional().default(8000),
+  maxContextLength: z.number().int().min(256).optional().default(128000),
+  inputPricePerM: z.number().min(0).optional().default(0),
+  outputPricePerM: z.number().min(0).optional().default(0),
   supportsVision: z.boolean().optional().default(false),
   supportsReasoning: z.boolean().optional().default(false),
   supportsFunctionCalling: z.boolean().optional().default(false),
 });
 
 export const UpdateModelSchema = z.object({
+  modelId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   maxContextLength: z.number().int().min(256).optional(),
+  inputPricePerM: z.number().min(0).optional(),
+  outputPricePerM: z.number().min(0).optional(),
   supportsVision: z.boolean().optional(),
   supportsReasoning: z.boolean().optional(),
   supportsFunctionCalling: z.boolean().optional(),

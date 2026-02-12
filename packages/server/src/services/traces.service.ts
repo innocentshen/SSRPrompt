@@ -48,6 +48,7 @@ export class TracesService {
       limit: query.limit,
       promptId: query.promptId,
       status: query.status,
+      source: query.source,
     });
   }
 
@@ -107,6 +108,7 @@ export class TracesService {
       prompt: data.promptId ? { connect: { id: data.promptId } } : undefined,
       model: data.modelId ? { connect: { id: data.modelId } } : undefined,
       input: data.input,
+      source: data.source ?? 'feature',
       output: data.output,
       tokensInput: data.tokensInput ?? 0,
       tokensOutput: data.tokensOutput ?? 0,

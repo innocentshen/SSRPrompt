@@ -11,6 +11,7 @@ interface OcrResultsPanelProps {
   provider?: OcrProvider | null;
   defaultOpen?: boolean;
   heightClassName?: string;
+  refreshToken?: number;
 }
 
 function isOcrEligible(file: FileAttachment): boolean {
@@ -35,7 +36,13 @@ function providerLabel(provider?: string | null): string {
   }
 }
 
-export function OcrResultsPanel({ attachments, provider, defaultOpen = true, heightClassName }: OcrResultsPanelProps) {
+export function OcrResultsPanel({
+  attachments,
+  provider,
+  defaultOpen = true,
+  heightClassName,
+  refreshToken,
+}: OcrResultsPanelProps) {
   const { t } = useTranslation('common');
   const [results, setResults] = useState<OcrResultItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,7 +89,7 @@ export function OcrResultsPanel({ attachments, provider, defaultOpen = true, hei
     return () => {
       active = false;
     };
-  }, [fileIds, provider, t]);
+  }, [fileIds, provider, refreshToken, t]);
 
   const resultsByFile = useMemo(() => {
     const map = new Map<string, OcrResultItem[]>();

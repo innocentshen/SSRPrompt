@@ -17,12 +17,18 @@ import chatRoutes from './chat.routes.js';
 import usersRoutes from './users.routes.js';
 import filesRoutes from './files.routes.js';
 import ocrRoutes from './ocr.routes.js';
+import evaluationImportsRoutes from './evaluation-imports.routes.js';
+import shareLinksRoutes from './share-links.routes.js';
+import shareRoutes from './share.routes.js';
+import promptApiKeysRoutes from './prompt-api-keys.routes.js';
+import openRoutes from './open.routes.js';
 
 const router: IRouter = Router();
 
 // Public routes
 router.use('/auth', authRoutes);
 router.use('/health', healthRoutes);
+router.use('/open', openRoutes);
 
 // Protected routes (require authentication)
 router.use('/providers', authenticateJWT, providersRoutes);
@@ -46,6 +52,14 @@ router.use('/files', authenticateJWT, filesRoutes);
 
 // OCR routes
 router.use('/ocr', authenticateJWT, ocrRoutes);
+
+// Evaluation imports
+router.use('/evaluation-imports', authenticateJWT, evaluationImportsRoutes);
+
+// Private share links
+router.use('/share-links', authenticateJWT, shareLinksRoutes);
+router.use('/share', authenticateJWT, shareRoutes);
+router.use('/prompt-api-keys', authenticateJWT, promptApiKeysRoutes);
 
 // Admin routes
 router.use('/users', authenticateJWT, usersRoutes);

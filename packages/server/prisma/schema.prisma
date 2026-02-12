@@ -33,7 +33,9 @@ model Model {
   modelId                 String       @map("model_id")
   name                    String
   capabilities            Json         @default("[]")
-  maxContextLength        Int          @default(8000) @map("max_context_length")
+  maxContextLength        Int          @default(128000) @map("max_context_length")
+  inputPricePerM          Decimal      @default(0) @db.Decimal(18, 8) @map("input_price_per_m")
+  outputPricePerM         Decimal      @default(0) @db.Decimal(18, 8) @map("output_price_per_m")
   supportsVision          Boolean      @default(false) @map("supports_vision")
   supportsReasoning       Boolean      @default(false) @map("supports_reasoning")
   supportsFunctionCalling Boolean      @default(false) @map("supports_function_calling")
@@ -61,9 +63,12 @@ model Prompt {
   defaultModelId String?         @map("default_model_id")
   groupId        String?         @map("group_id")
   orderIndex     Int             @default(0) @map("order_index")
+  apiEnabled     Boolean         @default(false) @map("api_enabled")
+  apiVersionMode PromptApiVersionMode @default(latest) @map("api_version_mode")
+  apiFixedVersion Int?           @map("api_fixed_version")
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
-  isPublic      Boolean         @default(false) @map("is_public")
+  isPublic       Boolean         @default(false) @map("is_public")
   evaluations    Evaluation[]
   versions       PromptVersion[]
   defaultModel   Model?          @relation("DefaultModel", fields: [defaultModelId], references: [id])
@@ -139,11 +144,63 @@ model Evaluation {
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   testCaseResults TestCaseResult[]
   testCases       TestCase[]
+  importJobsAsTarget EvaluationImportJob[] @relation("EvaluationImportTarget")
+  importJobsAsResult EvaluationImportJob[] @relation("EvaluationImportResult")
+  analysisReports EvaluationAnalysisReport[]
 
   @@index([userId])
   @@index([promptId])
   @@index([status])
   @@map("evaluations")
+}
+
+model EvaluationImportJob {
+  id                 String                 @id @default(uuid())
+  userId             String                 @map("user_id")
+  status             EvaluationImportStatus @default(pending)
+  mode               EvaluationImportMode
+  sourceZipFileId    String                 @map("source_zip_file_id")
+  targetEvaluationId String?                @map("target_evaluation_id")
+  resultEvaluationId String?                @map("result_evaluation_id")
+  progress           Json                   @default("{}")
+  errors             Json                   @default("[]")
+  errorMessage       String?                @map("error_message")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  completedAt        DateTime?              @map("completed_at")
+
+  user               User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceZipFile      StoredFile             @relation("EvaluationImportSourceZip", fields: [sourceZipFileId], references: [id], onDelete: Cascade)
+  targetEvaluation   Evaluation?            @relation("EvaluationImportTarget", fields: [targetEvaluationId], references: [id], onDelete: SetNull)
+  resultEvaluation   Evaluation?            @relation("EvaluationImportResult", fields: [resultEvaluationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("evaluation_import_jobs")
+}
+
+model EvaluationAnalysisReport {
+  id                String                  @id @default(uuid())
+  userId            String                  @map("user_id")
+  evaluationId      String                  @map("evaluation_id")
+  scope             EvaluationAnalysisScope
+  title             String?
+  runIds            Json                    @default("[]") @map("run_ids")
+  analysisModelId   String                  @map("analysis_model_id")
+  analysisModelName String?                 @map("analysis_model_name")
+  promptText        String                  @map("prompt_text")
+  analysisData      Json                    @default("{}") @map("analysis_data")
+  summaryMarkdown   String                  @map("summary_markdown")
+  locale            String?
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  evaluation        Evaluation              @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, evaluationId, createdAt(sort: Desc)])
+  @@index([evaluationId, createdAt(sort: Desc)])
+  @@map("evaluation_analysis_reports")
 }
 
 model TestCase {
@@ -224,6 +281,7 @@ model TestCaseResult {
   @@index([evaluationId])
   @@index([testCaseId])
   @@index([runId])
+  @@unique([runId, testCaseId])
   @@map("test_case_results")
 }
 
@@ -250,10 +308,94 @@ model User {
   oauthAccounts OAuthAccount[]
   traces        Trace[]
   roles         UserRole[]
+  evaluationImportJobs EvaluationImportJob[]
+  evaluationAnalysisReports EvaluationAnalysisReport[]
+  shareLinks    ShareLink[]
+  shareLinkPasswordGrants ShareLinkPasswordGrant[]
+  shareLinkAccessLogs ShareLinkAccessLog[] @relation("ShareLinkAccessLogAccessor")
+  promptApiKeys PromptApiKey[]
 
   @@index([email])
   @@index([status])
   @@map("users")
+}
+
+model PromptApiKey {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  name       String
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  keyLast4   String    @map("key_last4")
+  expiresAt  DateTime? @map("expires_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([keyPrefix])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("prompt_api_keys")
+}
+
+model ShareLink {
+  id               String                   @id @default(uuid())
+  userId           String                   @map("user_id")
+  resourceType     ShareResourceType        @map("resource_type")
+  resourceId       String                   @map("resource_id")
+  token            String                   @unique
+  passwordHash     String?                  @map("password_hash")
+  allowCopy        Boolean                  @default(true) @map("allow_copy")
+  expiresAt        DateTime?                @map("expires_at")
+  revokedAt        DateTime?                @map("revoked_at")
+  accessCount      Int                      @default(0) @map("access_count")
+  lastAccessedAt   DateTime?                @map("last_accessed_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordGrants   ShareLinkPasswordGrant[]
+  accessLogs       ShareLinkAccessLog[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@index([token])
+  @@index([revokedAt])
+  @@map("share_links")
+}
+
+model ShareLinkPasswordGrant {
+  id         String    @id @default(uuid())
+  shareLinkId String   @map("share_link_id")
+  userId     String    @map("user_id")
+  grantedAt  DateTime  @default(now()) @map("granted_at")
+  expiresAt  DateTime? @map("expires_at")
+  shareLink  ShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([shareLinkId, userId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("share_link_password_grants")
+}
+
+model ShareLinkAccessLog {
+  id             String            @id @default(uuid())
+  shareLinkId    String            @map("share_link_id")
+  accessorUserId String?           @map("accessor_user_id")
+  action         ShareAccessAction
+  ipAddress      String?           @map("ip_address")
+  userAgent      String?           @map("user_agent")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  shareLink      ShareLink         @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+  accessorUser   User?             @relation("ShareLinkAccessLogAccessor", fields: [accessorUserId], references: [id], onDelete: SetNull)
+
+  @@index([shareLinkId, createdAt(sort: Desc)])
+  @@index([accessorUserId])
+  @@index([action])
+  @@map("share_link_access_logs")
 }
 
 model UserProviderSetting {
@@ -383,6 +525,7 @@ model StoredFile {
   updatedAt    DateTime @updatedAt @map("updated_at")
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   ocrResults   OcrResult[]
+  importJobsAsSourceZip EvaluationImportJob[] @relation("EvaluationImportSourceZip")
 
   @@index([userId])
   @@index([sha256])
@@ -442,6 +585,7 @@ model Trace {
   userId          String      @default("default") @map("user_id")
   promptId        String?     @map("prompt_id")
   modelId         String?     @map("model_id")
+  source          TraceSource @default(feature)
   input           String
   output          String?
   tokensInput     Int         @default(0) @map("tokens_input")
@@ -460,6 +604,7 @@ model Trace {
 
   @@index([userId])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, source, createdAt(sort: Desc)])
   @@index([promptId])
   @@index([createdAt(sort: Desc)])
   @@map("traces")
@@ -483,6 +628,11 @@ enum EvaluationStatus {
 enum TraceStatus {
   success
   error
+}
+
+enum TraceSource {
+  feature
+  api
 }
 
 enum UserStatus {
@@ -517,4 +667,40 @@ enum OcrCredentialSource {
 enum OcrStatus {
   success
   failed
+}
+
+enum EvaluationImportStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+enum EvaluationImportMode {
+  create
+  append
+  overwrite
+}
+
+enum EvaluationAnalysisScope {
+  single
+  multi
+}
+
+enum ShareResourceType {
+  prompt
+  evaluation
+}
+
+enum ShareAccessAction {
+  view
+  copy
+  download_attachment
+  password_success
+  password_failure
+}
+
+enum PromptApiVersionMode {
+  latest
+  fixed
 }

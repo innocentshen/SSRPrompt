@@ -25,6 +25,7 @@ export class TracesRepository extends TenantRepository<
       limit?: number;
       promptId?: string;
       status?: 'success' | 'error';
+      source?: 'feature' | 'api';
     } = {}
   ): Promise<{ data: Partial<Trace>[]; total: number; page: number; limit: number }> {
     const page = options.page ?? 1;
@@ -35,6 +36,7 @@ export class TracesRepository extends TenantRepository<
       userId,
       ...(options.promptId && { promptId: options.promptId }),
       ...(options.status && { status: options.status }),
+      ...(options.source && { source: options.source }),
     };
 
     const [traces, total] = await Promise.all([
@@ -45,6 +47,7 @@ export class TracesRepository extends TenantRepository<
           userId: true,
           promptId: true,
           modelId: true,
+          source: true,
           input: true,  // Include input for preview
           tokensInput: true,
           tokensOutput: true,

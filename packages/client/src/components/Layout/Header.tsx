@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { User, LogOut, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../../contexts';
+import { useAuthStore } from '../../store/useAuthStore';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { GitHubStar } from './GitHubStar';
 
@@ -14,6 +15,8 @@ export function Header({ title, onLogout }: HeaderProps) {
   const { t } = useTranslation('common');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const { theme, toggleTheme } = useTheme();
+  const user = useAuthStore((state) => state.user);
+  const currentUser = user?.name?.trim() || user?.email?.trim() || user?.id || '-';
 
   return (
     <header className="h-14 bg-slate-900 dark:bg-slate-900 light:bg-white border-b border-slate-700 dark:border-slate-700 light:border-slate-200 flex items-center justify-between px-6">
@@ -46,6 +49,12 @@ export function Header({ title, onLogout }: HeaderProps) {
                 onClick={() => setShowUserMenu(false)}
               />
               <div className="absolute right-0 mt-2 w-48 bg-slate-800 dark:bg-slate-800 light:bg-white border border-slate-700 dark:border-slate-700 light:border-slate-200 rounded-lg shadow-xl z-20 overflow-hidden">
+                <div
+                  className="px-4 py-2 border-b border-slate-700 dark:border-slate-700 light:border-slate-200 text-xs text-slate-400 dark:text-slate-400 light:text-slate-500 truncate"
+                  title={currentUser}
+                >
+                  {currentUser}
+                </div>
                 {onLogout && (
                   <button
                     onClick={() => {

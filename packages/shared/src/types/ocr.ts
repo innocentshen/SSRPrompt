@@ -74,6 +74,7 @@ export interface PaddleVlOcrParams {
 
 export interface OcrProviderSettings {
   enabled: boolean;
+  providerEnabled: Partial<Record<OcrProvider, boolean>>;
   provider: OcrProvider;
   credentialSource: OcrCredentialSource;
   baseUrl: string | null;
@@ -94,6 +95,7 @@ export interface OcrProviderSettings {
 
 export interface UpdateOcrProviderSettingsDto {
   enabled?: boolean;
+  providerEnabled?: Partial<Record<OcrProvider, boolean>>;
   provider?: OcrProvider;
   credentialSource?: OcrCredentialSource;
   baseUrl?: string | null;

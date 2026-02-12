@@ -9,10 +9,8 @@ import {
 import type { Model, Provider, Prisma } from '@prisma/client';
 import { tracesRepository } from '../repositories/traces.repository.js';
 import { AppError, type OcrProvider } from '@ssrprompt/shared';
-import { prisma } from '../config/database.js';
 import { filesService } from '../services/files.service.js';
 import { ocrService } from '../services/ocr.service.js';
-import { providersService } from '../services/providers.service.js';
 
 function normalizeThinkingText(value: string): string {
   return value
@@ -192,50 +190,19 @@ interface ExpandedMessages {
   ocrFileIds: string[];
 }
 
-const DEFAULT_MAX_CONTEXT_LENGTH = 8000;
-const MODEL_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
-const modelContextCache = new Map<string, { value: number; checkedAt: number }>();
+const DEFAULT_MAX_CONTEXT_LENGTH = 128000;
+const CHAT_ATTACHMENT_MAX_BYTES = Math.max(
+  1,
+  Number(process.env.CHAT_ATTACHMENT_MAX_BYTES || String(20 * 1024 * 1024))
+);
 
 async function resolveModelMaxContextLength(
-  userId: string,
-  model: Model,
-  provider: Provider,
-  origin?: string
+  _userId: string,
+  _model: Model,
+  _provider: Provider,
+  _origin?: string
 ): Promise<number> {
-  const cached = modelContextCache.get(model.id);
-  const now = Date.now();
-
-  if (cached && cached.value === model.maxContextLength && now - cached.checkedAt < MODEL_CONTEXT_TTL_MS) {
-    return cached.value;
-  }
-
-  if (model.maxContextLength !== DEFAULT_MAX_CONTEXT_LENGTH) {
-    modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
-    return model.maxContextLength;
-  }
-
-  if (provider.type !== 'openrouter' && provider.type !== 'gemini') {
-    modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
-    return model.maxContextLength;
-  }
-
-  try {
-    const discovered = await providersService.discoverModels(userId, provider.id, { type: provider.type }, origin);
-    const match = discovered.find((item) => item.id === model.modelId);
-    if (match?.maxContextLength && match.maxContextLength >= 256) {
-      await prisma.model.update({
-        where: { id: model.id },
-        data: { maxContextLength: match.maxContextLength },
-      });
-      modelContextCache.set(model.id, { value: match.maxContextLength, checkedAt: now });
-      return match.maxContextLength;
-    }
-  } catch (error) {
-    console.error('Failed to refresh model context length:', error);
-  }
-
-  modelContextCache.set(model.id, { value: model.maxContextLength, checkedAt: now });
-  return model.maxContextLength;
+  return DEFAULT_MAX_CONTEXT_LENGTH;
 }
 
 /**
@@ -312,7 +279,9 @@ async function expandMessages(
     for (const part of parts) {
       if (part.type === 'file_ref') {
         const fileId = part.file_ref.fileId;
-        const { meta, buffer } = await filesService.downloadBuffer(userId, fileId);
+        const { meta, buffer } = await filesService.downloadBuffer(userId, fileId, {
+          maxBytes: CHAT_ATTACHMENT_MAX_BYTES,
+        });
 
         if (!seenFileIds.has(fileId)) {
           attachments.push({
@@ -378,6 +347,13 @@ async function expandMessages(
         const dataUrl = parseDataUrl(part.image_url.url);
         if (dataUrl) {
           const buffer = Buffer.from(dataUrl.base64, 'base64');
+          if (buffer.length > CHAT_ATTACHMENT_MAX_BYTES) {
+            throw new AppError(
+              413,
+              'VALIDATION_ERROR',
+              `Attachment exceeds size limit (${CHAT_ATTACHMENT_MAX_BYTES} bytes)`
+            );
+          }
           const stored = await filesService.upload(userId, {
             originalName: `image_${attachments.length + 1}.${extensionFromMimeType(dataUrl.mimeType)}`,
             mimeType: dataUrl.mimeType,
@@ -404,6 +380,13 @@ async function expandMessages(
         const dataUrl = parseDataUrl(part.file.file_data);
         if (dataUrl) {
           const buffer = Buffer.from(dataUrl.base64, 'base64');
+          if (buffer.length > CHAT_ATTACHMENT_MAX_BYTES) {
+            throw new AppError(
+              413,
+              'VALIDATION_ERROR',
+              `Attachment exceeds size limit (${CHAT_ATTACHMENT_MAX_BYTES} bytes)`
+            );
+          }
           const stored = await filesService.upload(userId, {
             originalName: part.file.filename,
             mimeType: dataUrl.mimeType,
@@ -501,6 +484,7 @@ export const chatController = {
   async completions(req: Request, res: Response): Promise<void> {
     const data = ChatCompletionSchema.parse(req.body);
     const userId = req.user!.userId;
+    const traceSource: 'feature' | 'api' = req.promptApiKeyId ? 'api' : 'feature';
 
     // Get model with decrypted API key
     const { model, provider, apiKey } = await getModelWithProvider(userId, data.modelId);
@@ -524,7 +508,11 @@ export const chatController = {
 
     if (wantsFiles && mode === 'ocr') {
       const ocrSettings = await ocrService.getSettings(userId);
-      if (!ocrSettings.enabled) {
+      const hasEnabledProvider = Object.values(ocrSettings.providerEnabled ?? {}).some(Boolean);
+      if (data.ocrProvider && !ocrSettings.providerEnabled?.[data.ocrProvider]) {
+        throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'Selected OCR provider is disabled');
+      }
+      if (!data.ocrProvider && !hasEnabledProvider) {
         throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'File upload requires OCR to be enabled');
       }
     }
@@ -706,6 +694,7 @@ export const chatController = {
         if (data.saveTrace && !abortController.signal.aborted) {
           try {
             await tracesRepository.create(userId, {
+              source: traceSource,
               input: expanded.inputContent,
               output: normalizedOutput || null,
               thinkingContent: extractedThinking || undefined,
@@ -762,6 +751,7 @@ export const chatController = {
         if (data.saveTrace) {
           try {
             await tracesRepository.create(userId, {
+              source: traceSource,
               input: expanded.inputContent,
               output: normalizedOutput,
               tokensInput: result.usage.prompt_tokens,
@@ -815,6 +805,7 @@ export const chatController = {
         if (data.saveTrace) {
           try {
             await tracesRepository.create(userId, {
+              source: traceSource,
               input: expanded.inputContent,
               output: null,
               latencyMs,

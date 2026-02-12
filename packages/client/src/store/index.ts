@@ -13,6 +13,7 @@ export { useTracesStore } from './useTracesStore';
 
 // Evaluation store - evaluations, test cases, runs
 export { useEvaluationStore } from './useEvaluationStore';
+export { useAnalysisTaskStore } from './useAnalysisTaskStore';
 
 // Selectors - optimized state access
 export {

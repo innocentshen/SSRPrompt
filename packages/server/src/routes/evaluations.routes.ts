@@ -5,6 +5,7 @@ import {
   criteriaController,
   runsController,
 } from '../controllers/evaluations.controller.js';
+import { evaluationAnalysisReportsController } from '../controllers/evaluation-analysis-reports.controller.js';
 import { asyncHandler } from '../middleware/error-handler.js';
 
 const router: IRouter = Router();
@@ -195,5 +196,19 @@ router.post('/:evaluationId/runs', asyncHandler(runsController.create));
  *         description: 创建成功
  */
 router.post('/:evaluationId/runs/execute', asyncHandler(runsController.execute));
+
+/**
+ * /evaluations/{evaluationId}/analysis-reports:
+ *   get:
+ *     tags: [Evaluations]
+ *     summary: List saved evaluation analysis reports
+ *   post:
+ *     tags: [Evaluations]
+ *     summary: Create a saved evaluation analysis report
+ */
+router.get('/:evaluationId/analysis-reports', asyncHandler(evaluationAnalysisReportsController.list));
+router.post('/:evaluationId/analysis-reports', asyncHandler(evaluationAnalysisReportsController.create));
+router.put('/:evaluationId/analysis-reports/:reportId', asyncHandler(evaluationAnalysisReportsController.updateTitle));
+router.delete('/:evaluationId/analysis-reports/:reportId', asyncHandler(evaluationAnalysisReportsController.delete));
 
 export default router;

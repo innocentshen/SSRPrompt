@@ -21,6 +21,9 @@ export type {
   PromptGroup,
   CreatePromptGroupDto,
   UpdatePromptGroupDto,
+  PromptApiKey,
+  CreatePromptApiKeyDto,
+  CreatePromptApiKeyResult,
 
   // Evaluation types
   Evaluation,
@@ -39,11 +42,16 @@ export type {
   CreateCriterionDto,
   UpdateCriterionDto,
   EvaluationDetail,
+  EvaluationAnalysisScope,
+  EvaluationAnalysisReport,
+  CreateEvaluationAnalysisReportDto,
+  UpdateEvaluationAnalysisReportDto,
 
   // Trace types
   Trace,
   TraceListItem,
   TraceStatus,
+  TraceSource,
   FileAttachment,
   CreateTraceDto,
   PaginatedResponse,
@@ -63,6 +71,22 @@ export type {
   OcrStatus,
   OcrResultItem,
   OcrResultsRequest,
+
+  // Share types
+  ShareResourceType,
+  ShareAccessAction,
+  ShareLink,
+  ShareAccessLog,
+  ShareLinkPage,
+  ShareAccessLogPage,
+  CreateShareLinkDto,
+  UpdateShareLinkDto,
+  ListShareLinksQueryDto,
+  VerifySharePasswordDto,
+  SharePromptContent,
+  ShareEvaluationContent,
+  SharePromptDetail,
+  ShareEvaluationDetail,
 } from '@ssrprompt/shared';
 
 // Re-export frontend-specific types from database.ts

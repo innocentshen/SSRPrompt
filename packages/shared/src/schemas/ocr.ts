@@ -69,8 +69,17 @@ export const PaddleVlOcrParamsSchema = z.object({
   visualize: z.boolean().nullable().optional(),
 });
 
+export const OcrProviderEnabledSchema = z.object({
+  paddle: z.boolean().optional(),
+  paddle_vl: z.boolean().optional(),
+  paddle_vl_1_5: z.boolean().optional(),
+  datalab: z.boolean().optional(),
+  mineru: z.boolean().optional(),
+});
+
 export const UpdateOcrProviderSettingsSchema = z.object({
   enabled: z.boolean().optional(),
+  providerEnabled: OcrProviderEnabledSchema.optional(),
   provider: OcrProviderSchema.optional(),
   credentialSource: OcrCredentialSourceSchema.optional(),
   baseUrl: z.string().url().nullable().optional(),

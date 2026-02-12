@@ -107,7 +107,8 @@
       "Bash(pnpm build:*)",
       "WebFetch(domain:www.paddleocr.ai)",
       "WebFetch(domain:ai.baidu.com)",
-      "WebFetch(domain:deepwiki.com)"
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(tee:*)"
     ]
   }
 }

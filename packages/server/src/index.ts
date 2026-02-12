@@ -56,6 +56,7 @@ async function main() {
         : [];
     const values = new Set(existing.map((v) => v.trim()).filter(Boolean));
     values.add('Authorization');
+    values.add('X-API-Key');
     res.setHeader('Vary', Array.from(values).join(', '));
     next();
   });

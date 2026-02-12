@@ -16,6 +16,7 @@ import {
   Scale,
   Search,
   Square,
+  Coins,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -25,11 +26,13 @@ import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
 import type { EvaluationCriterion, FileAttachment, OcrProvider, TestCase, TestCaseResult } from '../../types';
 import { getFileIconType } from '../../lib/file-utils';
 import { useOutputRenderPreferences } from '../../lib/output-renderer-prefs';
+import { calculateAiCost, formatUsdCost, formatUsdCostFormula } from '../../lib/cost';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
   results: TestCaseResult[];
   criteria: EvaluationCriterion[];
+  pricing?: { inputPricePerM: number; outputPricePerM: number } | null;
   ocrProvider?: OcrProvider | null;
   downloadAttachmentBlob?: (fileId: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
   canViewOcrResults?: boolean;
@@ -39,6 +42,7 @@ interface EvaluationResultsViewProps {
   onAbortAiEvaluation?: (testCaseId: string) => void;
   retryingOutputTestCaseId?: string | null;
   retryingAiEvaluationTestCaseId?: string | null;
+  retryOutputRefreshTick?: number;
 }
 
 type ResultFilter = 'all' | 'passed' | 'failed';
@@ -52,6 +56,7 @@ export function EvaluationResultsView({
   testCases,
   results,
   criteria,
+  pricing = null,
   ocrProvider,
   downloadAttachmentBlob,
   canViewOcrResults = true,
@@ -61,6 +66,7 @@ export function EvaluationResultsView({
   onAbortAiEvaluation,
   retryingOutputTestCaseId,
   retryingAiEvaluationTestCaseId,
+  retryOutputRefreshTick = 0,
 }: EvaluationResultsViewProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
@@ -161,6 +167,15 @@ export function EvaluationResultsView({
   const passedCount = results.filter((result) => result.passed).length;
   const failedCount = results.length - passedCount;
 
+  const resultCostMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof calculateAiCost>>();
+    for (const result of results) {
+      map.set(result.id, calculateAiCost(result.tokensInput, result.tokensOutput, pricing));
+    }
+    return map;
+  }, [pricing, results]);
+  const activeResultCost = activeResult ? resultCostMap.get(activeResult.id) ?? null : null;
+
   const getFileIcon = (attachment: { type: string; name?: string }) => {
     const iconType = getFileIconType(attachment);
     switch (iconType) {
@@ -241,6 +256,7 @@ export function EvaluationResultsView({
                 const index = testCaseIndexMap.get(result.testCaseId) ?? 0;
                 const attachmentsCount = testCase?.attachments?.length ?? 0;
                 const totalTokens = result.tokensInput + result.tokensOutput;
+                const aiCost = resultCostMap.get(result.id);
 
                 return (
                   <button
@@ -284,6 +300,10 @@ export function EvaluationResultsView({
                           <span className="flex items-center gap-1">
                             <Zap className="w-3 h-3" />
                             {totalTokens.toLocaleString()}
+                          </span>
+                          <span className="flex items-center gap-1" title={!aiCost?.hasPricing ? t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' }) : undefined}>
+                            <Coins className="w-3 h-3" />
+                            {formatUsdCost(aiCost?.totalCost ?? null)}
                           </span>
                           {attachmentsCount > 0 && (
                             <span className="flex items-center gap-1">
@@ -334,11 +354,25 @@ export function EvaluationResultsView({
                         <Zap className="w-3.5 h-3.5" />
                         {(activeResult.tokensInput + activeResult.tokensOutput).toLocaleString()} tokens
                       </span>
+                      <span
+                        className="flex items-center gap-1"
+                        title={activeResultCost && !activeResultCost.hasPricing ? t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' }) : undefined}
+                      >
+                        <Coins className="w-3.5 h-3.5" />
+                        {formatUsdCost(activeResultCost?.totalCost ?? null)}
+                      </span>
                       {activeAttachments.length > 0 && (
                         <span className="flex items-center gap-1">
                           <Paperclip className="w-3.5 h-3.5" />
                           {activeAttachments.length}
                         </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500 light:text-slate-600">
+                      {formatUsdCostFormula(
+                        activeResultCost?.totalCost ?? null,
+                        activeResultCost?.inputCost ?? null,
+                        activeResultCost?.outputCost ?? null
                       )}
                     </div>
                   </div>
@@ -554,7 +588,11 @@ export function EvaluationResultsView({
                     )}
 
                     {showOcrResults && canViewOcrResults && (
-                      <OcrResultsPanel attachments={activeAttachments} provider={ocrProvider} />
+                      <OcrResultsPanel
+                        attachments={activeAttachments}
+                        provider={ocrProvider}
+                        refreshToken={retryOutputRefreshTick}
+                      />
                     )}
                   </div>
                 </Collapsible>

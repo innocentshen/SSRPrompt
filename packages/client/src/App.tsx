@@ -16,6 +16,8 @@ import {
   HomePage,
   PromptWizardPage,
   PromptPlazaPage,
+  SharePromptPage,
+  ShareEvaluationPage,
   LoginPage,
   ForgotPasswordPage,
   OAuthCallbackPage,
@@ -115,6 +117,23 @@ function AppContent() {
         }
       />
       <Route path="/api/v1/auth/oauth/:provider/callback" element={<OAuthProviderCallbackProxyPage />} />
+
+      <Route
+        path="/share/p/:token"
+        element={
+          <ProtectedRoute>
+            <SharePromptPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/share/e/:token"
+        element={
+          <ProtectedRoute>
+            <ShareEvaluationPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Protected routes */}
       <Route

@@ -9,7 +9,7 @@ import type {
   CreateVersionInput,
   CopyPublicPromptInput,
 } from '@ssrprompt/shared';
-import { NotFoundError } from '@ssrprompt/shared';
+import { NotFoundError, ValidationError } from '@ssrprompt/shared';
 
 export class PromptsService {
   /**
@@ -43,6 +43,9 @@ export class PromptsService {
       messages: data.messages ?? [],
       config: (data.config ?? {}) as Prisma.InputJsonValue,
       defaultModel: data.defaultModelId ? { connect: { id: data.defaultModelId } } : undefined,
+      apiEnabled: data.apiEnabled ?? false,
+      apiVersionMode: data.apiVersionMode ?? 'latest',
+      apiFixedVersion: data.apiVersionMode === 'fixed' ? 1 : null,
       ...(groupId ? { group: { connect: { id: groupId } } } : {}),
     });
   }
@@ -52,10 +55,33 @@ export class PromptsService {
    * When setting isPublic to false, cascade to related evaluations
    */
   async update(userId: string, id: string, data: UpdatePromptInput): Promise<Prompt> {
+    const existing = await promptsRepository.findByIdOrThrow(userId, id);
     const updateData = {
       ...data,
       config: data.config ? (data.config as Prisma.InputJsonValue) : undefined,
     };
+
+    const nextApiVersionMode = data.apiVersionMode ?? existing.apiVersionMode;
+    const nextApiFixedVersion =
+      data.apiFixedVersion !== undefined ? data.apiFixedVersion : existing.apiFixedVersion;
+
+    if (nextApiVersionMode === 'fixed' && !nextApiFixedVersion) {
+      throw new ValidationError('apiFixedVersion is required when apiVersionMode is fixed');
+    }
+
+    if (nextApiVersionMode === 'fixed' && nextApiFixedVersion) {
+      const fixedVersionExists = await prisma.promptVersion.findUnique({
+        where: { promptId_version: { promptId: id, version: nextApiFixedVersion } },
+        select: { id: true },
+      });
+      const isCurrentDraftVersion = nextApiFixedVersion === existing.currentVersion;
+      if (!fixedVersionExists && !isCurrentDraftVersion) {
+        throw new ValidationError(`Prompt version ${nextApiFixedVersion} does not exist`);
+      }
+    }
+
+    updateData.apiFixedVersion = nextApiVersionMode === 'fixed' ? nextApiFixedVersion : null;
+    updateData.apiVersionMode = nextApiVersionMode;
 
     const groupId = data.groupId;
     if (typeof groupId !== 'undefined') {

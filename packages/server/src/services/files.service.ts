@@ -15,6 +15,11 @@ export type UploadFileInput = {
 
 export type DownloadRange = { start: number; end?: number } | null;
 
+const DEFAULT_BUFFER_DOWNLOAD_MAX_BYTES = Math.max(
+  1,
+  Number(process.env.FILES_BUFFER_DOWNLOAD_MAX_BYTES || String(20 * 1024 * 1024))
+);
+
 export class FilesService {
   async upload(userId: string, input: UploadFileInput): Promise<StoredFile> {
     const { client, bucket } = getS3Client();
@@ -88,12 +93,21 @@ export class FilesService {
 
   async downloadBuffer(
     userId: string,
-    id: string
+    id: string,
+    options?: { maxBytes?: number }
   ): Promise<{
     meta: StoredFile;
     buffer: Buffer;
   }> {
+    const maxBytes =
+      options?.maxBytes && Number.isFinite(options.maxBytes) && options.maxBytes > 0
+        ? options.maxBytes
+        : DEFAULT_BUFFER_DOWNLOAD_MAX_BYTES;
+
     const { meta, body } = await this.download(userId, id, null);
+    if (meta.size > maxBytes) {
+      throw new AppError(413, 'VALIDATION_ERROR', `File exceeds size limit (${maxBytes} bytes)`);
+    }
 
     if (!body) {
       throw new AppError(500, 'INTERNAL_ERROR', 'Missing file body from storage');
@@ -102,8 +116,15 @@ export class FilesService {
     const stream = toNodeReadable(body);
 
     const chunks: Buffer[] = [];
+    let total = 0;
     for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        stream.destroy();
+        throw new AppError(413, 'VALIDATION_ERROR', `File exceeds size limit (${maxBytes} bytes)`);
+      }
+      chunks.push(buf);
     }
 
     return {

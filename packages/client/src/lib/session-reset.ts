@@ -1,4 +1,5 @@
 import { resetPromptTestPanelCaches } from '../components/Prompt/PromptTestPanel';
+import { useAnalysisTaskStore } from '../store/useAnalysisTaskStore';
 import { useEvaluationStore } from '../store/useEvaluationStore';
 import { useGlobalStore } from '../store/useGlobalStore';
 import { useOcrSettingsStore } from '../store/useOcrSettingsStore';
@@ -15,5 +16,6 @@ export function resetUserSessionState(): void {
   usePromptsStore.getState().resetStore();
   useTracesStore.getState().resetStore();
   useEvaluationStore.getState().resetStore();
+  useAnalysisTaskStore.getState().clearTask();
   useOcrSettingsStore.getState().clear();
 }

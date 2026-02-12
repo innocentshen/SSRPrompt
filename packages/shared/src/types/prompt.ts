@@ -27,6 +27,8 @@ export interface PromptConfig {
   };
 }
 
+export type PromptApiVersionMode = 'latest' | 'fixed';
+
 export interface OutputSchema {
   name: string;
   description?: string;
@@ -47,6 +49,9 @@ export interface Prompt {
   defaultModelId: string | null;
   groupId: string | null;
   orderIndex: number;
+  apiEnabled: boolean;
+  apiVersionMode: PromptApiVersionMode;
+  apiFixedVersion: number | null;
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;
@@ -88,6 +93,9 @@ export interface CreatePromptDto {
   config?: PromptConfig;
   defaultModelId?: string;
   groupId?: string | null;
+  apiEnabled?: boolean;
+  apiVersionMode?: PromptApiVersionMode;
+  apiFixedVersion?: number | null;
 }
 
 export interface UpdatePromptDto {
@@ -100,6 +108,9 @@ export interface UpdatePromptDto {
   defaultModelId?: string | null;
   groupId?: string | null;
   orderIndex?: number;
+  apiEnabled?: boolean;
+  apiVersionMode?: PromptApiVersionMode;
+  apiFixedVersion?: number | null;
   isPublic?: boolean;
 }
 
@@ -113,6 +124,9 @@ export interface PromptListItem {
   defaultModelId: string | null;
   groupId: string | null;
   orderIndex: number;
+  apiEnabled: boolean;
+  apiVersionMode: PromptApiVersionMode;
+  apiFixedVersion: number | null;
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;

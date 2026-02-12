@@ -37,7 +37,10 @@ type EffectiveOcrConfig = {
   paddle_vl: PaddleVlOcrParams;
 };
 
+type OcrProviderEnabledMap = Record<OcrProvider, boolean>;
+
 const OCR_TEST_PREVIEW_LIMIT = 100_000;
+const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
 
 function normalizeBaseUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -284,6 +287,41 @@ function normalizePaddleVlParams(raw: unknown): PaddleVlOcrParams {
     prettifyMarkdown: toBoolean(paddle.prettifyMarkdown) ?? defaults.prettifyMarkdown,
     visualize: toBoolean(paddle.visualize) ?? defaults.visualize,
   };
+}
+
+function normalizeProviderEnabledMap(
+  rawProviderParams: unknown,
+  selectedProvider: OcrProvider,
+  legacyEnabled: boolean
+): OcrProviderEnabledMap {
+  const defaults: OcrProviderEnabledMap = {
+    paddle: false,
+    paddle_vl: false,
+    paddle_vl_1_5: false,
+    datalab: false,
+    mineru: false,
+  };
+  defaults[selectedProvider] = legacyEnabled;
+
+  if (!isRecord(rawProviderParams)) return defaults;
+  const rawMap = rawProviderParams.providerEnabled;
+  if (!isRecord(rawMap)) return defaults;
+
+  const next: OcrProviderEnabledMap = { ...defaults };
+  for (const provider of OCR_PROVIDERS) {
+    const rawValue = rawMap[provider];
+    if (typeof rawValue === 'boolean') {
+      next[provider] = rawValue;
+    }
+  }
+  return next;
+}
+
+function pickFirstEnabledProvider(enabledByProvider: OcrProviderEnabledMap): OcrProvider | null {
+  for (const provider of OCR_PROVIDERS) {
+    if (enabledByProvider[provider]) return provider;
+  }
+  return null;
 }
 
 function mergePaddleParams(base: PaddleOcrParams, override?: Partial<PaddleOcrParams>): PaddleOcrParams {
@@ -1219,11 +1257,16 @@ export class OcrService {
     const system = await this.getSystemDefaults();
     const row = await this.getSettingRow(userId);
 
-    const enabled = override?.enabled ?? row?.enabled ?? false;
-    const provider = override?.provider ?? (row?.provider as OcrProvider | undefined) ?? 'paddle';
+    const rowProvider = (row?.provider as OcrProvider | undefined) ?? 'paddle';
+    const requestedProvider = override?.provider ?? rowProvider;
     const credentialSource = override?.credentialSource ?? (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system';
-
     const providerParams = row?.providerParams ?? null;
+    const enabledByProvider = normalizeProviderEnabledMap(providerParams, rowProvider, row?.enabled ?? false);
+    const provider = override?.provider
+      ? requestedProvider
+      : (enabledByProvider[requestedProvider] ? requestedProvider : (pickFirstEnabledProvider(enabledByProvider) ?? requestedProvider));
+    const enabled = override?.enabled ?? enabledByProvider[provider];
+
     const mineruFromRow = normalizeMineruParams(userId, providerParams);
     const mineruOverride = override?.mineru;
     const mineru: MineruOcrParams = mineruOverride
@@ -1298,15 +1341,17 @@ export class OcrService {
     const row = await this.getSettingRow(userId);
     const provider = (row?.provider as OcrProvider | undefined) ?? 'paddle';
     const credentialSource = (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system';
+    const providerEnabled = normalizeProviderEnabledMap(row?.providerParams ?? null, provider, row?.enabled ?? false);
 
-    const effective = await this.resolveEffectiveConfig(userId);
+    const effective = await this.resolveEffectiveConfig(userId, { provider });
 
     const hasApiKey = effective.credentialSource === 'system'
       ? !!effective.apiKey
       : !!(row?.apiKey);
 
     return {
-      enabled: row?.enabled ?? false,
+      enabled: providerEnabled[provider],
+      providerEnabled,
       provider,
       credentialSource,
       baseUrl: effective.baseUrl,
@@ -1329,6 +1374,7 @@ export class OcrService {
   async updateSettings(userId: string, data: UpdateOcrProviderSettingsDto): Promise<OcrProviderSettings> {
     const row = await this.getSettingRow(userId);
 
+    const rowProvider = (row?.provider as OcrProvider | undefined) ?? 'paddle';
     const nextProvider: OcrProvider = (data.provider ?? (row?.provider as OcrProvider | undefined) ?? 'paddle');
     const nextCredentialSource: OcrCredentialSource = (data.credentialSource ?? (row?.credentialSource as OcrCredentialSource | undefined) ?? 'system');
 
@@ -1341,7 +1387,6 @@ export class OcrService {
       apiKeyLast4?: string | null;
       providerParams?: Prisma.JsonObject;
     } = {};
-    if (typeof data.enabled === 'boolean') update.enabled = data.enabled;
     if (data.provider) update.provider = data.provider;
     if (data.credentialSource) update.credentialSource = data.credentialSource;
 
@@ -1351,6 +1396,36 @@ export class OcrService {
         ? { ...(existingParams as Record<string, unknown>) }
         : {};
     let hasProviderParamsUpdate = false;
+    const nextProviderEnabled = normalizeProviderEnabledMap(existingParams, rowProvider, row?.enabled ?? false);
+    let providerEnabledChanged = false;
+
+    if (isRecord(data.providerEnabled)) {
+      for (const provider of OCR_PROVIDERS) {
+        const raw = data.providerEnabled[provider];
+        if (typeof raw === 'boolean') {
+          nextProviderEnabled[provider] = raw;
+          providerEnabledChanged = true;
+        }
+      }
+    }
+
+    if (typeof data.enabled === 'boolean') {
+      nextProviderEnabled[nextProvider] = data.enabled;
+      providerEnabledChanged = true;
+    }
+
+    if (providerEnabledChanged) {
+      nextProviderParams.providerEnabled = nextProviderEnabled;
+      hasProviderParamsUpdate = true;
+    }
+
+    if (
+      providerEnabledChanged ||
+      (data.provider !== undefined && data.provider !== rowProvider) ||
+      (row?.enabled ?? false) !== nextProviderEnabled[nextProvider]
+    ) {
+      update.enabled = nextProviderEnabled[nextProvider];
+    }
 
     if (data.mineru) {
       const current = normalizeMineruParams(userId, existingParams);

@@ -5,6 +5,7 @@ import type { TaskList } from 'graphile-worker';
 import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { executeEvaluationRun } from './services/evaluation-runner.service.js';
+import { evaluationImportsService } from './services/evaluation-imports.service.js';
 
 const taskList: TaskList = {
   'evaluation.run': async (payload) => {
@@ -14,6 +15,14 @@ const taskList: TaskList = {
       throw new Error('evaluation.run payload missing runId');
     }
     await executeEvaluationRun(runId);
+  },
+  'evaluation.import': async (payload) => {
+    const data = payload as { jobId?: unknown } | null;
+    const jobId = data && typeof data.jobId === 'string' ? data.jobId : null;
+    if (!jobId) {
+      throw new Error('evaluation.import payload missing jobId');
+    }
+    await evaluationImportsService.execute(jobId);
   },
 };
 

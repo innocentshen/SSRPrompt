@@ -46,5 +46,15 @@
   "confirmDeletePromptHistory": "Are you sure you want to delete all history for {{name}}?",
   "recordsWillBeDeleted": "{{count}} records will be permanently deleted. This action cannot be undone.",
   "confirmDeleteBtn": "Confirm Delete",
-  "empty": "(Empty)"
+  "empty": "(Empty)",
+  "source": "Source",
+  "sourceType": "Source Type",
+  "sourceAll": "All Sources",
+  "sourceFeature": "Feature Calls",
+  "sourceApi": "API Calls",
+  "startTime": "Start Date",
+  "endTime": "End Date",
+  "cost": "Cost",
+  "modelPriceNotConfigured": "Model price is not configured",
+  "startDateAfterEndDate": "Start date cannot be later than end date"
 }

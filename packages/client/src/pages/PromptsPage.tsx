@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { flushSync } from 'react-dom';
+import { useLocation } from 'react-router-dom';
 import {
   Plus,
   Search,
@@ -33,11 +34,11 @@ import {
   Globe,
   Play,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, Toggle, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel, ChatTranscript } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { DebugRun } from '../components/Prompt';
-import { promptsApi, promptGroupsApi, ApiError } from '../api';
+import { promptsApi, promptGroupsApi, ApiError, shareApi } from '../api';
 import { chatApi, type ContentPart } from '../api/chat';
 import { uploadFileAttachment, extractThinking, type FileAttachment } from '../lib/ai-service';
 import { useOutputRenderPreferences } from '../lib/output-renderer-prefs';
@@ -48,7 +49,9 @@ import { formatDateTime } from '../lib/date-utils';
 import { getErrorMessage } from '../lib/error-messages';
 import { smartReplace } from '../lib/text-utils';
 import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
-import type { Prompt, PromptVersion, PromptGroup, OcrProvider } from '../types';
+import { buildExpiresAtByPreset, generateSharePassword, getShareExpirePreset, type ShareExpirePreset } from '../lib/share-link-settings';
+import { buildOcrProviderOptions, useEnabledOcrProviders } from '../hooks/useEnabledOcrProviders';
+import type { Prompt, PromptVersion, PromptGroup, OcrProvider, ShareLink } from '../types';
 import { PromptMessage, PromptMessageRole, PromptConfig, PromptVariable, ReasoningEffort, DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
@@ -117,6 +120,7 @@ export function PromptsPage() {
   const { t: tEval } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
   const { t: tTraces } = useTranslation('traces');
+  const location = useLocation();
   const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
 
   // Use global store for providers and models (shared across pages, with caching)
@@ -146,6 +150,11 @@ export function PromptsPage() {
   const [compareFiles, setCompareFiles] = useState<FileAttachment[]>([]);
   const [compareFileProcessing, setCompareFileProcessing] = useState<'auto' | 'vision' | 'ocr' | 'none'>('auto');
   const [compareOcrProviderOverride, setCompareOcrProviderOverride] = useState<OcrProvider | ''>('');
+  const { enabledOcrProviders } = useEnabledOcrProviders();
+  const compareOcrProviderOptions = useMemo(
+    () => buildOcrProviderOptions(enabledOcrProviders, tEval, true),
+    [enabledOcrProviders, tEval]
+  );
   const [compareRunning, setCompareRunning] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
   const [compareResults, setCompareResults] = useState<{
     left: { content: string; thinking: string; latency: number; tokensIn: number; tokensOut: number; error?: string; isThinking?: boolean } | null;
@@ -165,6 +174,9 @@ export function PromptsPage() {
   const [promptMessages, setPromptMessages] = useState<PromptMessage[]>([]);
   const [promptConfig, setPromptConfig] = useState<PromptConfig>(DEFAULT_PROMPT_CONFIG);
   const [promptVariables, setPromptVariables] = useState<PromptVariable[]>([]);
+  const [promptApiEnabled, setPromptApiEnabled] = useState(false);
+  const [promptApiVersionMode, setPromptApiVersionMode] = useState<'latest' | 'fixed'>('latest');
+  const [promptApiFixedVersion, setPromptApiFixedVersion] = useState('');
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [testInput, setTestInput] = useState('');
   const [testOutput, setTestOutput] = useState('');
@@ -205,6 +217,13 @@ export function PromptsPage() {
   const initializedPromptIdRef = useRef<string | null>(null);
   const [publishPromptModal, setPublishPromptModal] = useState<{ promptId: string; step: 'confirm' | 'done' } | null>(null);
   const [publishingPrompt, setPublishingPrompt] = useState(false);
+  const [privateShareModalOpen, setPrivateShareModalOpen] = useState(false);
+  const [privateShareLink, setPrivateShareLink] = useState<ShareLink | null>(null);
+  const [privateShareExpirePreset, setPrivateShareExpirePreset] = useState<ShareExpirePreset>('30d');
+  const [privateSharePasswordMode, setPrivateSharePasswordMode] = useState<'none' | 'random' | 'custom'>('none');
+  const [privateSharePassword, setPrivateSharePassword] = useState('');
+  const [privateShareLoading, setPrivateShareLoading] = useState(false);
+  const [privateShareSaving, setPrivateShareSaving] = useState(false);
 
   useEffect(() => {
     if (!editingGroupId) return;
@@ -272,6 +291,12 @@ export function PromptsPage() {
     // In multi-message mode, ignore promptContent diffs because content is derived from messages.
     const isMultiMessage = currentMessages.length > 0 || selectedMessages.length > 0;
     const contentChanged = isMultiMessage ? false : promptContent !== (selectedPrompt.content || '');
+    const selectedApiMode = selectedPrompt.apiVersionMode || 'latest';
+    const selectedApiFixedVersion =
+      selectedApiMode === 'fixed' && selectedPrompt.apiFixedVersion
+        ? String(selectedPrompt.apiFixedVersion)
+        : '';
+    const currentApiFixedVersion = promptApiVersionMode === 'fixed' ? promptApiFixedVersion.trim() : '';
 
     return (
       promptName !== selectedPrompt.name ||
@@ -279,9 +304,23 @@ export function PromptsPage() {
       messagesChanged ||
       JSON.stringify(promptConfig) !== JSON.stringify(selectedConfig) ||
       JSON.stringify(promptVariables) !== JSON.stringify(selectedPrompt.variables || []) ||
-      (selectedModel || '') !== (selectedPrompt.defaultModelId || '')
+      (selectedModel || '') !== (selectedPrompt.defaultModelId || '') ||
+      promptApiEnabled !== Boolean(selectedPrompt.apiEnabled) ||
+      promptApiVersionMode !== selectedApiMode ||
+      currentApiFixedVersion !== selectedApiFixedVersion
     );
-  }, [promptConfig, promptContent, promptMessages, promptName, promptVariables, selectedModel, selectedPrompt]);
+  }, [
+    promptApiEnabled,
+    promptApiFixedVersion,
+    promptApiVersionMode,
+    promptConfig,
+    promptContent,
+    promptMessages,
+    promptName,
+    promptVariables,
+    selectedModel,
+    selectedPrompt,
+  ]);
 
   const publishPromptModalPrompt = useMemo(() => {
     if (!publishPromptModal) return null;
@@ -295,6 +334,37 @@ export function PromptsPage() {
     url.searchParams.set('promptId', publishPromptModal.promptId);
     return url.toString();
   }, [publishPromptModal]);
+
+  const privateSharePromptUrl = useMemo(() => {
+    if (!privateShareLink) return '';
+    const url = new URL(`/share/p/${privateShareLink.token}`, window.location.origin);
+    return url.toString();
+  }, [privateShareLink]);
+
+  const promptApiInvokeUrl = useMemo(() => {
+    if (!selectedPrompt?.id) return '';
+    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
+    return `${baseUrl}/open/prompts/${selectedPrompt.id}/invoke`;
+  }, [selectedPrompt?.id]);
+
+  const promptApiVersionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...(selectedPrompt?.currentVersion ? [selectedPrompt.currentVersion] : []),
+          ...versions.map((version) => version.version),
+        ])
+      )
+        .sort((a, b) => b - a)
+        .map((version) => ({ value: String(version), label: `v${version}` })),
+    [selectedPrompt?.currentVersion, versions]
+  );
+
+  const promptIdFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const promptId = params.get('promptId');
+    return promptId && promptId.trim() ? promptId.trim() : null;
+  }, [location.search]);
 
   const loadData = useCallback(async () => {
     try {
@@ -318,8 +388,11 @@ export function PromptsPage() {
         });
         setPrompts(sorted as Prompt[]);
         if (sorted.length > 0) {
-          // Fetch full prompt details for the first one
-          const fullPrompt = await promptsApi.getById(sorted[0].id);
+          const preferredPromptId =
+            promptIdFromUrl && sorted.some((prompt) => prompt.id === promptIdFromUrl)
+              ? promptIdFromUrl
+              : sorted[0].id;
+          const fullPrompt = await promptsApi.getById(preferredPromptId);
           setSelectedPrompt(fullPrompt);
         }
       }
@@ -343,7 +416,7 @@ export function PromptsPage() {
 
       showToast('error', t('loadFailed'));
     }
-  }, [fetchProvidersAndModels, showToast, t]);
+  }, [fetchProvidersAndModels, promptIdFromUrl, showToast, t]);
 
   useEffect(() => {
     loadData();
@@ -374,6 +447,9 @@ export function PromptsPage() {
     setPromptMessages(toFrontendMessages(selectedPrompt.messages));
     setPromptConfig(toFrontendConfig(selectedPrompt.config));
     setPromptVariables(selectedPrompt.variables || []);
+    setPromptApiEnabled(Boolean(selectedPrompt.apiEnabled));
+    setPromptApiVersionMode((selectedPrompt.apiVersionMode || 'latest') as 'latest' | 'fixed');
+    setPromptApiFixedVersion(selectedPrompt.apiFixedVersion ? String(selectedPrompt.apiFixedVersion) : '');
     if (selectedPrompt.defaultModelId) {
       setSelectedModel(selectedPrompt.defaultModelId);
     }
@@ -404,6 +480,18 @@ export function PromptsPage() {
       setTestThinking('');
     }
   }, [loadVersions, selectedPrompt?.id]);
+
+  useEffect(() => {
+    if (promptApiVersionMode !== 'fixed') return;
+    if (promptApiFixedVersion.trim().length > 0) return;
+
+    const fallbackVersion =
+      promptApiVersionOptions[0]?.value ||
+      (selectedPrompt?.currentVersion ? String(selectedPrompt.currentVersion) : '');
+    if (fallbackVersion) {
+      setPromptApiFixedVersion(fallbackVersion);
+    }
+  }, [promptApiFixedVersion, promptApiVersionMode, promptApiVersionOptions, selectedPrompt?.currentVersion]);
 
   const handleSelectPrompt = async (promptId: string) => {
     if (loadingPromptId === promptId || selectedPrompt?.id === promptId) return;
@@ -558,6 +646,19 @@ export function PromptsPage() {
       return false;
     }
 
+    const parsedApiFixedVersion =
+      promptApiVersionMode === 'fixed'
+        ? Number.parseInt(promptApiFixedVersion.trim(), 10)
+        : null;
+
+    if (
+      promptApiVersionMode === 'fixed' &&
+      (!parsedApiFixedVersion || Number.isNaN(parsedApiFixedVersion) || parsedApiFixedVersion <= 0)
+    ) {
+      showToast('error', t('apiFixedVersionRequired', { defaultValue: '请设置固定可调用版本' }));
+      return false;
+    }
+
     setSaving(true);
     try {
       const contentToSave =
@@ -581,6 +682,9 @@ export function PromptsPage() {
         config: toApiConfig(promptConfig),
         variables: promptVariables,
         defaultModelId: selectedModel || undefined,
+        apiEnabled: promptApiEnabled,
+        apiVersionMode: promptApiVersionMode,
+        apiFixedVersion: promptApiVersionMode === 'fixed' ? parsedApiFixedVersion : null,
       });
 
       setSelectedPrompt(updatedPrompt as Prompt);
@@ -787,6 +891,11 @@ export function PromptsPage() {
     }
   };
 
+  const handleCreatePublishedPromptLink = async (promptId: string) => {
+    await handleCopyPromptShareLink(promptId);
+    closePublishPromptModal();
+  };
+
   const openPublishPromptModal = () => {
     if (!selectedPrompt || selectedPrompt.isPublic) return;
     setPublishPromptModal({ promptId: selectedPrompt.id, step: 'confirm' });
@@ -824,6 +933,71 @@ export function PromptsPage() {
       showToast('success', t('promptPrivate'));
     } catch (e) {
       showToast('error', t('updateFailed') + ': ' + getErrorMessage(e));
+    }
+  };
+
+  const openPrivateShareModal = async () => {
+    if (!selectedPrompt) return;
+    setPrivateShareModalOpen(true);
+    setPrivateShareLoading(true);
+    try {
+      const link = await shareApi.createLink({
+        resourceType: 'prompt',
+        resourceId: selectedPrompt.id,
+        allowCopy: true,
+      });
+      setPrivateShareLink(link);
+      setPrivateShareExpirePreset(getShareExpirePreset(link.expiresAt));
+      setPrivateSharePasswordMode(link.hasPassword ? 'custom' : 'none');
+      setPrivateSharePassword('');
+    } catch (error) {
+      showToast('error', getErrorMessage(error));
+      setPrivateShareModalOpen(false);
+    } finally {
+      setPrivateShareLoading(false);
+    }
+  };
+
+  const closePrivateShareModal = () => {
+    if (privateShareSaving) return;
+    setPrivateShareModalOpen(false);
+    setPrivateShareLink(null);
+    setPrivateShareExpirePreset('30d');
+    setPrivateSharePasswordMode('none');
+    setPrivateSharePassword('');
+  };
+
+  const handleCreatePrivateShareLink = async () => {
+    if (!privateShareLink) return;
+
+    if (privateSharePasswordMode === 'custom' && !privateSharePassword.trim() && !privateShareLink.hasPassword) {
+      showToast('error', tCommon('privateSharePasswordRequired'));
+      return;
+    }
+
+    setPrivateShareSaving(true);
+    try {
+      const updated = await shareApi.updateLink(privateShareLink.id, {
+        allowCopy: true,
+        expiresAt: buildExpiresAtByPreset(privateShareExpirePreset),
+        ...(privateSharePasswordMode === 'none' ? { clearPassword: true } : {}),
+        ...(privateSharePasswordMode !== 'none' && privateSharePassword.trim()
+          ? { password: privateSharePassword.trim() }
+          : {}),
+      });
+
+      setPrivateShareLink(updated);
+      setPrivateShareExpirePreset(getShareExpirePreset(updated.expiresAt));
+      setPrivateSharePasswordMode(updated.hasPassword ? 'custom' : 'none');
+      setPrivateSharePassword('');
+
+      const shareUrl = new URL(`/share/p/${updated.token}`, window.location.origin).toString();
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('success', tCommon('privateShareCreatedAndCopied'));
+    } catch (error) {
+      showToast('error', getErrorMessage(error));
+    } finally {
+      setPrivateShareSaving(false);
     }
   };
 
@@ -1203,6 +1377,12 @@ export function PromptsPage() {
       setCompareFileProcessing('auto');
     }
   }, [compareFileProcessing, compareVisionEligible]);
+
+  useEffect(() => {
+    if (!compareOcrProviderOverride) return;
+    if (enabledOcrProviders.includes(compareOcrProviderOverride)) return;
+    setCompareOcrProviderOverride('');
+  }, [compareOcrProviderOverride, enabledOcrProviders]);
 
   const getFileIcon = (type: string) => {
     if (type.startsWith('image/')) return Image;
@@ -1882,7 +2062,7 @@ export function PromptsPage() {
           <>
             {/* Header */}
             <div className="h-14 flex-shrink-0 px-6 flex items-center justify-between border-b border-slate-700 light:border-slate-200">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
                 <input
                   type="text"
                   value={promptName}
@@ -1900,24 +2080,42 @@ export function PromptsPage() {
                     void handleSetPromptPrivate();
                   }}
                   disabled={saving || publishingPrompt}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
                     selectedPrompt.isPublic
-                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600 light:bg-slate-200 light:text-slate-500 light:hover:bg-slate-300'
+                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-700'
+                      : 'border-slate-600/70 bg-slate-800/70 text-slate-200 hover:bg-slate-700 light:border-slate-300 light:bg-slate-100 light:text-slate-600 light:hover:bg-slate-200'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   title={selectedPrompt.isPublic ? t('clickToPrivate') : t('clickToPublic')}
                 >
-                  <Globe className="w-3 h-3" />
+                  <Globe className="w-3.5 h-3.5" />
                   {selectedPrompt.isPublic ? t('public') : t('private')}
-              </button>
+                </button>
+                <div className="inline-flex items-center gap-1">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void openPrivateShareModal()}
+                    disabled={saving || publishingPrompt}
+                    className="h-8 px-3"
+                  >
+                    <Link className="w-4 h-4" />
+                    <span>{tCommon('privateShare')}</span>
+                  </Button>
+                  {selectedPrompt.isPublic && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void handleCopyPromptShareLink(selectedPrompt.id)}
+                      disabled={saving || publishingPrompt}
+                      className="h-8 px-3"
+                    >
+                      <Link className="w-4 h-4" />
+                      <span>{tCommon('shareLink')}</span>
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                {selectedPrompt.isPublic && (
-                  <Button variant="ghost" size="sm" onClick={() => void handleCopyPromptShareLink(selectedPrompt.id)}>
-                    <Link className="w-4 h-4" />
-                    <span>{tCommon('shareLink')}</span>
-                  </Button>
-                )}
                 <Button variant="ghost" size="sm" onClick={() => setShowCompare(true)}>
                   <GitCompare className="w-4 h-4" />
                   <span>{t('compare')}</span>
@@ -2038,6 +2236,64 @@ export function PromptsPage() {
                           onSelect={setSelectedModel}
                           placeholder={t("configureModelFirst")}
                         />
+                      </div>
+
+                      <div className="p-3 bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs text-slate-300 light:text-slate-700 font-medium">
+                              {t('promptApiAccessTitle', { defaultValue: 'API 调用' })}
+                            </p>
+                            <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
+                              {t('promptApiEnablePromptHint', { defaultValue: '仅开启后，外部系统才可通过统一 URL 调用该 Prompt。' })}
+                            </p>
+                          </div>
+                          <Toggle enabled={promptApiEnabled} onChange={setPromptApiEnabled} size="sm" />
+                        </div>
+
+                        {promptApiEnabled && (
+                          <div className="space-y-2">
+                            <Select
+                              label={t('promptApiVersionMode', { defaultValue: '默认调用版本' })}
+                              value={promptApiVersionMode}
+                              onChange={(e) => setPromptApiVersionMode(e.target.value as 'latest' | 'fixed')}
+                              options={[
+                                { value: 'latest', label: t('promptApiVersionLatest', { defaultValue: '最新版本（latest）' }) },
+                                { value: 'fixed', label: t('promptApiVersionFixed', { defaultValue: '固定版本' }) },
+                              ]}
+                            />
+                            {promptApiVersionMode === 'fixed' && (
+                              <Select
+                                label={t('promptApiFixedVersion', { defaultValue: '固定版本号' })}
+                                value={promptApiFixedVersion}
+                                onChange={(e) => setPromptApiFixedVersion(e.target.value)}
+                                options={
+                                  promptApiVersionOptions.length > 0
+                                    ? promptApiVersionOptions
+                                    : [
+                                        {
+                                          value: selectedPrompt?.currentVersion ? String(selectedPrompt.currentVersion) : '',
+                                          label: selectedPrompt?.currentVersion ? `v${selectedPrompt.currentVersion}` : 'v1',
+                                        },
+                                      ]
+                                }
+                              />
+                            )}
+                            <div className="rounded-md border border-slate-700 light:border-slate-200 bg-slate-950/60 light:bg-slate-100 px-2 py-1.5">
+                              <p className="text-[11px] text-slate-500 light:text-slate-600 mb-1">
+                                {t('promptApiInvokeUrl', { defaultValue: '调用 URL（示例）' })}
+                              </p>
+                              <code className="text-[11px] text-cyan-300 light:text-cyan-700 break-all">
+                                {promptApiInvokeUrl || '-'}
+                              </code>
+                              <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
+                                {t('promptApiInvokeSpecHint', {
+                                  defaultValue: '调用规范（入参/回参/SSE 示例）见：设置 -> Prompt API',
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Parameter panel */}
@@ -2256,6 +2512,144 @@ export function PromptsPage() {
       </div>
 
       <Modal
+        isOpen={privateShareModalOpen}
+        onClose={closePrivateShareModal}
+        title={tCommon('privateShareSettings')}
+        size="lg"
+      >
+        {privateShareLoading ? (
+          <div className="rounded-xl border border-cyan-500/20 bg-gradient-to-r from-cyan-500/10 via-cyan-500/5 to-transparent p-5">
+            <div className="flex items-center gap-3 text-sm text-slate-300 light:text-slate-700">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-300 light:bg-cyan-500/15 light:text-cyan-700">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </span>
+              <div>
+                <p className="font-medium text-slate-200 light:text-slate-900">{tCommon('privateShareGenerating')}</p>
+                <p className="mt-0.5 text-xs text-slate-400 light:text-slate-600">{tCommon('privateShareGeneratingHint')}</p>
+              </div>
+            </div>
+          </div>
+        ) : !privateShareLink ? (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+            <div className="flex items-start gap-2 text-sm text-rose-200 light:text-rose-700">
+              <AlertCircle className="mt-0.5 h-4 w-4" />
+              <div>
+                <p className="font-medium">{tCommon('privateShareCreateFailed')}</p>
+                <p className="mt-1 text-xs text-rose-200/80 light:text-rose-700/80">{tCommon('privateShareCreateFailedHint')}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-cyan-500/20 bg-gradient-to-r from-cyan-500/10 via-cyan-500/5 to-transparent p-4">
+              <p className="text-xs uppercase tracking-wider text-cyan-300 light:text-cyan-700">{tCommon('privateShareNoticeTitle')}</p>
+              <p className="mt-1 text-sm text-slate-200 light:text-slate-800">{tCommon('privateShareNoticeDesc')}</p>
+            </div>
+
+            <div className="space-y-4 rounded-xl border border-slate-700/70 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 p-4">
+              <Input
+                label={tCommon('shareLink')}
+                value={privateSharePromptUrl}
+                readOnly
+                className="font-mono text-xs md:text-sm"
+                onFocus={(event) => event.currentTarget.select()}
+              />
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{tCommon('privateShareExpiry')}</p>
+                <div className="grid grid-cols-5 gap-2">
+                  {[
+                    { key: '1d' as const, label: tCommon('privateShareExpiry1d') },
+                    { key: '7d' as const, label: tCommon('privateShareExpiry7d') },
+                    { key: '30d' as const, label: tCommon('privateShareExpiry30d') },
+                    { key: '1y' as const, label: tCommon('privateShareExpiry1y') },
+                    { key: 'never' as const, label: tCommon('privateShareExpiryNever') },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setPrivateShareExpirePreset(item.key)}
+                      className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
+                        privateShareExpirePreset === item.key
+                          ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
+                          : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-slate-200 light:text-slate-800">{tCommon('privateSharePassword')}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrivateSharePasswordMode('none');
+                      setPrivateSharePassword('');
+                    }}
+                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
+                      privateSharePasswordMode === 'none'
+                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
+                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
+                    }`}
+                  >
+                    {tCommon('privateSharePasswordNone')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrivateSharePasswordMode('random');
+                      setPrivateSharePassword(generateSharePassword(4));
+                    }}
+                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
+                      privateSharePasswordMode === 'random'
+                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
+                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
+                    }`}
+                  >
+                    {tCommon('privateSharePasswordRandom')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrivateSharePasswordMode('custom')}
+                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
+                      privateSharePasswordMode === 'custom'
+                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
+                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
+                    }`}
+                  >
+                    {tCommon('privateSharePasswordCustom')}
+                  </button>
+                </div>
+                {privateSharePasswordMode !== 'none' && (
+                  <Input
+                    label={privateShareLink.hasPassword ? tCommon('privateSharePasswordWithKeep') : tCommon('privateSharePassword')}
+                    type="text"
+                    value={privateSharePassword}
+                    onChange={(event) => setPrivateSharePassword(event.target.value.toUpperCase())}
+                    placeholder={privateSharePasswordMode === 'random' ? tCommon('privateSharePasswordAutoGenerated') : tCommon('privateSharePasswordPlaceholder')}
+                    readOnly={privateSharePasswordMode === 'random'}
+                    maxLength={8}
+                    className="uppercase tracking-widest"
+                  />
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button className="min-w-[132px]" onClick={() => void handleCreatePrivateShareLink()} loading={privateShareSaving}>
+                <Link className="w-4 h-4" />
+                <span>{tCommon('privateShareCreateLink')}</span>
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         isOpen={publishPromptModal !== null}
         onClose={closePublishPromptModal}
         title={t('publishPrompt')}
@@ -2320,13 +2714,11 @@ export function PromptsPage() {
             />
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
               <Button
-                variant="secondary"
-                onClick={() => void handleCopyPromptShareLink(publishPromptModal.promptId)}
+                onClick={() => void handleCreatePublishedPromptLink(publishPromptModal.promptId)}
               >
                 <Link className="w-4 h-4" />
-                <span>{tCommon('copy')}</span>
+                <span>{tCommon('privateShareCreateLink')}</span>
               </Button>
-              <Button onClick={closePublishPromptModal}>{tCommon('close')}</Button>
             </div>
           </div>
         )}
@@ -2734,14 +3126,7 @@ export function PromptsPage() {
                       <Select
                         value={compareOcrProviderOverride}
                         onChange={(e) => setCompareOcrProviderOverride(e.target.value as OcrProvider | '')}
-                        options={[
-                          { value: '', label: tEval('ocrProviderFollow') },
-                          { value: 'paddle', label: 'PaddleOCR' },
-                          { value: 'paddle_vl', label: tEval('ocrProviderPaddleVl') },
-                          { value: 'paddle_vl_1_5', label: tEval('ocrProviderPaddleVl15') },
-                          { value: 'datalab', label: tEval('ocrProviderDatalab') },
-                          { value: 'mineru', label: tEval('ocrProviderMineru') },
-                        ]}
+                        options={compareOcrProviderOptions}
                       />
                     )}
                   </div>
@@ -2844,7 +3229,7 @@ export function PromptsPage() {
                           <input
                             type="number"
                             min="1"
-                            max="32000"
+                            max="128000"
                             step="1"
                             value={compareParams.left.max_tokens}
                             onChange={(e) => setCompareParams((prev) => ({ ...prev, left: { ...prev.left, max_tokens: parseInt(e.target.value) || 8000 } }))}
@@ -2937,7 +3322,7 @@ export function PromptsPage() {
                           <input
                             type="number"
                             min="1"
-                            max="32000"
+                            max="128000"
                             step="1"
                             value={compareParams.right.max_tokens}
                             onChange={(e) => setCompareParams((prev) => ({ ...prev, right: { ...prev.right, max_tokens: parseInt(e.target.value) || 8000 } }))}

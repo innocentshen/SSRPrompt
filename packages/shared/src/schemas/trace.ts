@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { FileAttachmentSchema } from './evaluation.js';
 
+export const TraceSourceSchema = z.enum(['feature', 'api']);
+
 // Create Trace Schema
 export const CreateTraceSchema = z.object({
   promptId: z.string().uuid().optional(),
   modelId: z.string().uuid().optional(),
+  source: TraceSourceSchema.optional().default('feature'),
   input: z.string().min(1, 'Input is required'),
   output: z.string().optional(),
   tokensInput: z.number().int().min(0).optional().default(0),
@@ -24,6 +27,7 @@ export const TraceQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   promptId: z.string().uuid().optional(),
   status: z.enum(['success', 'error']).optional(),
+  source: TraceSourceSchema.optional(),
 });
 
 export type CreateTraceInput = z.infer<typeof CreateTraceSchema>;

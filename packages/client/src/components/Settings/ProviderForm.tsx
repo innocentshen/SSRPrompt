@@ -13,9 +13,11 @@ import {
   CheckCircle2,
   Brain,
   Wrench,
+  Search,
+  Pencil,
 } from 'lucide-react';
 import { Button, Input, Select, Toggle, Modal, useToast } from '../ui';
-import type { Provider, Model, ProviderType } from '../../types';
+import type { Provider, Model, ProviderType, UpdateModelDto } from '../../types';
 import { inferVisionSupport, inferReasoningSupport, inferFunctionCallingSupport } from '../../lib/model-capabilities';
 import { getErrorMessage } from '../../lib/error-messages';
 import { providersApi } from '../../api';
@@ -36,8 +38,16 @@ interface ProviderFormProps {
   onAddModel: (
     modelId: string,
     name: string,
-    options?: { supportsVision?: boolean; supportsReasoning?: boolean; maxContextLength?: number }
+    options?: {
+      supportsVision?: boolean;
+      supportsReasoning?: boolean;
+      supportsFunctionCalling?: boolean;
+      maxContextLength?: number;
+      inputPricePerM?: number;
+      outputPricePerM?: number;
+    }
   ) => Promise<void>;
+  onUpdateModel: (modelId: string, data: UpdateModelDto) => Promise<Model | null>;
   onRemoveModel: (modelId: string) => Promise<void>;
   onToggleVision?: (modelId: string, enabled: boolean) => Promise<void>;
   onToggleReasoning?: (modelId: string, enabled: boolean) => Promise<void>;
@@ -67,6 +77,7 @@ export function ProviderForm({
   onDelete,
   isAdmin = false,
   onAddModel,
+  onUpdateModel,
   onRemoveModel,
   onToggleVision,
   onToggleReasoning,
@@ -82,11 +93,18 @@ export function ProviderForm({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [saving, setSaving] = useState(false);
-  const [newModelId, setNewModelId] = useState('');
-  const [newModelName, setNewModelName] = useState('');
-  const [newModelMaxContextLength, setNewModelMaxContextLength] = useState('8000');
-  const [newModelSupportsVision, setNewModelSupportsVision] = useState(false);
-  const [newModelSupportsReasoning, setNewModelSupportsReasoning] = useState(false);
+  const [showModelEditor, setShowModelEditor] = useState(false);
+  const [editingModel, setEditingModel] = useState<Model | null>(null);
+  const [savingModelEditor, setSavingModelEditor] = useState(false);
+  const [modelFormId, setModelFormId] = useState('');
+  const [modelFormName, setModelFormName] = useState('');
+  const [modelFormMaxContextLength, setModelFormMaxContextLength] = useState('8000');
+  const [modelFormInputPricePerM, setModelFormInputPricePerM] = useState('0');
+  const [modelFormOutputPricePerM, setModelFormOutputPricePerM] = useState('0');
+  const [modelFormSupportsVision, setModelFormSupportsVision] = useState(false);
+  const [modelFormSupportsReasoning, setModelFormSupportsReasoning] = useState(false);
+  const [modelFormSupportsFunctionCalling, setModelFormSupportsFunctionCalling] = useState(false);
+  const [modelSearch, setModelSearch] = useState('');
   const [fetchingModels, setFetchingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -98,14 +116,19 @@ export function ProviderForm({
   const isSystemProvider = provider?.isSystem ?? false;
   const isReadonlySystemProvider = isSystemProvider && !isAdmin;
   const filteredModels = useMemo(() => {
-    const query = newModelId.trim().toLowerCase();
+    const query = modelSearch.trim().toLowerCase();
     if (!query) return models;
     return models.filter((model) => {
       const modelName = model.name?.toLowerCase() ?? '';
       const modelId = model.modelId?.toLowerCase() ?? '';
       return modelId.includes(query) || modelName.includes(query);
     });
-  }, [models, newModelId]);
+  }, [models, modelSearch]);
+
+  const formatPricePerM = (value: number | undefined) => {
+    if (!Number.isFinite(value)) return '0';
+    return Number(value).toString();
+  };
 
   const providerTypes = providerTypesStatic.map(p => ({
     value: p.value,
@@ -132,6 +155,7 @@ export function ProviderForm({
     }
     setShowApiKey(false);
     setTestResult(null);
+    setModelSearch('');
   }, [provider]);
 
   const handleTypeChange = (newType: ProviderType) => {
@@ -178,19 +202,100 @@ export function ProviderForm({
     }
   };
 
-  const handleAddModel = async () => {
-    if (!newModelId.trim()) return;
-    const parsedMaxContext = Number.parseInt(newModelMaxContextLength, 10);
-    await onAddModel(newModelId.trim(), newModelName.trim() || newModelId.trim(), {
-      supportsVision: newModelSupportsVision,
-      supportsReasoning: newModelSupportsReasoning,
-      maxContextLength: Number.isFinite(parsedMaxContext) ? parsedMaxContext : undefined,
-    });
-    setNewModelId('');
-    setNewModelName('');
-    setNewModelMaxContextLength('8000');
-    setNewModelSupportsVision(false);
-    setNewModelSupportsReasoning(false);
+  const resetModelEditor = () => {
+    setEditingModel(null);
+    setModelFormId('');
+    setModelFormName('');
+    setModelFormMaxContextLength('8000');
+    setModelFormInputPricePerM('0');
+    setModelFormOutputPricePerM('0');
+    setModelFormSupportsVision(false);
+    setModelFormSupportsReasoning(false);
+    setModelFormSupportsFunctionCalling(false);
+  };
+
+  const openCreateModelEditor = () => {
+    resetModelEditor();
+    setShowModelEditor(true);
+  };
+
+  const openEditModelEditor = (model: Model) => {
+    setEditingModel(model);
+    setModelFormId(model.modelId || '');
+    setModelFormName(model.name || '');
+    setModelFormMaxContextLength(String(model.maxContextLength ?? 8000));
+    setModelFormInputPricePerM(String(model.inputPricePerM ?? 0));
+    setModelFormOutputPricePerM(String(model.outputPricePerM ?? 0));
+    setModelFormSupportsVision(model.supportsVision ?? inferVisionSupport(model.modelId));
+    setModelFormSupportsReasoning(model.supportsReasoning ?? inferReasoningSupport(model.modelId));
+    setModelFormSupportsFunctionCalling(model.supportsFunctionCalling ?? inferFunctionCallingSupport(model.modelId));
+    setShowModelEditor(true);
+  };
+
+  const closeModelEditor = () => {
+    if (savingModelEditor) return;
+    setShowModelEditor(false);
+    resetModelEditor();
+  };
+
+  const handleSaveModelEditor = async () => {
+    const trimmedModelId = modelFormId.trim();
+    if (!trimmedModelId) {
+      showToast('error', t('modelIdPlaceholder'));
+      return;
+    }
+
+    const parsedMaxContext = Number.parseInt(modelFormMaxContextLength.trim(), 10);
+    if (!Number.isFinite(parsedMaxContext) || parsedMaxContext < 256) {
+      showToast('error', `${t('maxContextLength')} >= 256`);
+      return;
+    }
+
+    const parsedInputPrice = Number.parseFloat(modelFormInputPricePerM.trim());
+    const parsedOutputPrice = Number.parseFloat(modelFormOutputPricePerM.trim());
+
+    if (!Number.isFinite(parsedInputPrice) || parsedInputPrice < 0) {
+      showToast('error', t('inputPricePerM', { defaultValue: 'Input Price/1M' }));
+      return;
+    }
+
+    if (!Number.isFinite(parsedOutputPrice) || parsedOutputPrice < 0) {
+      showToast('error', t('outputPricePerM', { defaultValue: 'Output Price/1M' }));
+      return;
+    }
+
+    setSavingModelEditor(true);
+    try {
+      if (editingModel) {
+        const updated = await onUpdateModel(editingModel.id, {
+          modelId: trimmedModelId,
+          name: modelFormName.trim() || trimmedModelId,
+          maxContextLength: parsedMaxContext,
+          inputPricePerM: parsedInputPrice,
+          outputPricePerM: parsedOutputPrice,
+          supportsVision: modelFormSupportsVision,
+          supportsReasoning: modelFormSupportsReasoning,
+          supportsFunctionCalling: modelFormSupportsFunctionCalling,
+        });
+        if (updated) {
+          showToast('success', t('modelUpdated'));
+          closeModelEditor();
+        }
+        return;
+      }
+
+      await onAddModel(trimmedModelId, modelFormName.trim() || trimmedModelId, {
+        maxContextLength: parsedMaxContext,
+        inputPricePerM: parsedInputPrice,
+        outputPricePerM: parsedOutputPrice,
+        supportsVision: modelFormSupportsVision,
+        supportsReasoning: modelFormSupportsReasoning,
+        supportsFunctionCalling: modelFormSupportsFunctionCalling,
+      });
+      closeModelEditor();
+    } finally {
+      setSavingModelEditor(false);
+    }
   };
 
   const handleFetchModels = async () => {
@@ -248,7 +353,10 @@ export function ProviderForm({
       await onAddModel(model.id, model.name, {
         supportsVision: inferVisionSupport(model.id),
         supportsReasoning: inferReasoningSupport(model.id),
+        supportsFunctionCalling: inferFunctionCallingSupport(model.id),
         maxContextLength: model.maxContextLength ?? 8000,
+        inputPricePerM: 0,
+        outputPricePerM: 0,
       });
     }
     setShowModelPicker(false);
@@ -270,253 +378,238 @@ export function ProviderForm({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-6 space-y-8">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white light:text-slate-900">{t('providerConfig')}</h2>
-          <div className="flex items-center gap-4">
-            {isAdmin && (
-              <Toggle enabled={isSystem} onChange={setIsSystem} label={t('systemProvider')} size="sm" />
-            )}
-            <Toggle enabled={enabled} onChange={setEnabled} label={t('enable')} />
-          </div>
-        </div>
-
-        {isReadonlySystemProvider && (
-          <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-4 py-3">
-            <p className="text-sm text-slate-300 light:text-slate-700">
-              {t('systemProviderDesc')}
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-5">
-          <Input
-            label={t('providerName')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t('providerNamePlaceholder')}
-            disabled={isReadonlySystemProvider}
-            className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
-          />
-
-          <Select
-            label={t('providerType')}
-            value={type}
-            onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
-            options={providerTypes}
-            disabled={isReadonlySystemProvider}
-            className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
-          />
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
-              API Key
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                 <input
-                   type={showApiKey ? 'text' : 'password'}
-                   value={apiKey}
-                   onChange={(e) => setApiKey(e.target.value)}
-                   placeholder={provider?.apiKey ? provider.apiKey : 'sk-...'}
-                   disabled={isReadonlySystemProvider}
-                   className={`w-full px-3 py-2 pr-10 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all ${isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}`}
-                 />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  disabled={isReadonlySystemProvider}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400 hover:text-slate-300 light:hover:text-slate-600"
-                >
-                  {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <Button
-                variant="secondary"
-                onClick={handleTest}
-                disabled={isReadonlySystemProvider || !apiKey || testing}
-              >
-                {testing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : testResult === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                ) : testResult === 'error' ? (
-                  <X className="w-4 h-4 text-rose-500" />
-                ) : (
-                  <Check className="w-4 h-4" />
-                )}
-                <span>{t('test')}</span>
-              </Button>
+    <div className="flex-1 overflow-hidden">
+      <div className="w-full h-full max-w-5xl mx-auto p-6 flex flex-col gap-6 overflow-hidden">
+        <div className="flex-shrink-0 rounded-xl border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-white p-5 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-white light:text-slate-900">{t('providerConfig')}</h2>
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-400 light:text-slate-600">
+                {provider.type}
+              </span>
+              <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-400 light:text-slate-600">
+                {models.length}
+              </span>
+              {isAdmin && (
+                <Toggle enabled={isSystem} onChange={setIsSystem} label={t('systemProvider')} size="sm" />
+              )}
+              <Toggle enabled={enabled} onChange={setEnabled} label={t('enable')} />
             </div>
-            <p className="text-xs text-slate-500 light:text-slate-600">
-              {t('apiKeyHint')}
-            </p>
           </div>
 
-          <div className="space-y-1.5">
-            <Input
-              label={t('apiAddress')}
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={defaultBaseUrls[type] || 'https://api.example.com'}
-              hint={
-                type === 'custom'
-                  ? t('customBaseUrlHint')
-                  : t('defaultBaseUrlHint')
-              }
-              disabled={isReadonlySystemProvider}
-              className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
-            />
-          </div>
-        </div>
+          {isReadonlySystemProvider && (
+            <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-4 py-3">
+              <p className="text-sm text-slate-300 light:text-slate-700">
+                {t('systemProviderDesc')}
+              </p>
+            </div>
+          )}
 
-        <div className="border-t border-slate-700 light:border-slate-200 pt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-medium text-white light:text-slate-900">{t('modelManagement')}</h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleFetchModels}
-              loading={fetchingModels}
-              disabled={isReadonlySystemProvider || fetchingModels}
-            >
-              <RefreshCw className={`w-4 h-4 ${fetchingModels ? 'animate-spin' : ''}`} />
-              <span>{t('autoFetch')}</span>
-            </Button>
-          </div>
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <Input
+                label={t('providerName')}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('providerNamePlaceholder')}
+                disabled={isReadonlySystemProvider}
+                className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
+              />
 
-            <div className="space-y-3">
+              <Select
+                label={t('providerType')}
+                value={type}
+                onChange={(e) => handleTypeChange(e.target.value as ProviderType)}
+                options={providerTypes}
+                disabled={isReadonlySystemProvider}
+                className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                API Key
+              </label>
               <div className="flex gap-2">
-                <Input
-                  placeholder={t('modelIdPlaceholder')}
-                  value={newModelId}
-                  onChange={(e) => setNewModelId(e.target.value)}
-                  className="flex-1"
-                  disabled={isReadonlySystemProvider}
-                />
-                <Input
-                  placeholder={t('displayNamePlaceholder')}
-                  value={newModelName}
-                  onChange={(e) => setNewModelName(e.target.value)}
-                  className="flex-1"
-                  disabled={isReadonlySystemProvider}
-                />
-                <Input
-                  placeholder={t('maxContextLengthPlaceholder')}
-                  value={newModelMaxContextLength}
-                  onChange={(e) => setNewModelMaxContextLength(e.target.value)}
-                  className="w-40"
-                  type="number"
-                  min={256}
-                  title={t('maxContextLength')}
-                  disabled={isReadonlySystemProvider}
-                />
-                <label
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800"
-                  title={t('supportsVision')}
-                >
+                <div className="relative flex-1">
                   <input
-                    type="checkbox"
-                    checked={newModelSupportsVision}
-                    onChange={(e) => setNewModelSupportsVision(e.target.checked)}
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={provider?.apiKey ? provider.apiKey : 'sk-...'}
                     disabled={isReadonlySystemProvider}
-                    className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-cyan-500 focus:ring-cyan-500/50"
+                    className={`w-full px-3 py-2 pr-10 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all ${isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}`}
                   />
-                  <span className="text-xs whitespace-nowrap">{t('supportsVision')}</span>
-                </label>
-                <label
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800"
-                  title={t('supportsReasoning')}
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    disabled={isReadonlySystemProvider}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400 hover:text-slate-300 light:hover:text-slate-600"
+                  >
+                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={handleTest}
+                  disabled={isReadonlySystemProvider || !apiKey || testing}
                 >
-                  <input
-                    type="checkbox"
-                    checked={newModelSupportsReasoning}
-                    onChange={(e) => setNewModelSupportsReasoning(e.target.checked)}
-                    disabled={isReadonlySystemProvider}
-                    className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-purple-500 focus:ring-purple-500/50"
-                  />
-                  <span className="text-xs whitespace-nowrap">{t('supportsReasoning')}</span>
-                </label>
-                <Button variant="secondary" onClick={handleAddModel} disabled={isReadonlySystemProvider || !newModelId.trim()}>
-                  <Plus className="w-4 h-4" />
+                  {testing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : testResult === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  ) : testResult === 'error' ? (
+                    <X className="w-4 h-4 text-rose-500" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>{t('test')}</span>
                 </Button>
               </div>
+              <p className="text-xs text-slate-500 light:text-slate-600">
+                {t('apiKeyHint')}
+              </p>
+            </div>
 
-            <div className="max-h-[50vh] overflow-y-auto bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 divide-y divide-slate-700 light:divide-slate-200">
-              {models.length === 0 ? (
-                <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
-                  {t('noModelsAddOrFetch')}
-                </div>
-              ) : filteredModels.length === 0 ? (
-                <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
-                  {t('noMatchingModels')}
-                </div>
-              ) : (
-                filteredModels.map((model) => (
-                  <div
-                    key={model.id}
-                    className="flex items-center justify-between px-4 py-3"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-200 light:text-slate-800">{model.name}</p>
-                      <p className="text-xs text-slate-500 light:text-slate-600">{model.modelId}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* 能力图标 */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => onToggleVision?.(model.id, !(model.supportsVision ?? inferVisionSupport(model.modelId)))}
-                          title={t('vision')}
-                          disabled={isReadonlySystemProvider}
-                          className={`p-1 rounded transition-colors ${
-                            (model.supportsVision ?? inferVisionSupport(model.modelId))
-                              ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
-                              : 'bg-slate-800/50 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200'
-                          }`}
-                        >
-                          {(model.supportsVision ?? inferVisionSupport(model.modelId)) ? (
-                            <Eye className="w-3 h-3 text-cyan-400" />
-                          ) : (
-                            <EyeOff className="w-3 h-3 text-slate-500" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onToggleReasoning?.(model.id, !(model.supportsReasoning ?? inferReasoningSupport(model.modelId)))}
-                          title={t('supportsReasoning')}
-                          disabled={isReadonlySystemProvider}
-                          className={`p-1 rounded transition-colors ${
-                            (model.supportsReasoning ?? inferReasoningSupport(model.modelId))
-                              ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
-                              : 'bg-slate-800/50 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200'
-                          }`}
-                        >
-                          <Brain className={`w-3 h-3 ${(model.supportsReasoning ?? inferReasoningSupport(model.modelId)) ? 'text-purple-400' : 'text-slate-500'}`} />
-                        </button>
-                        {(model.supportsFunctionCalling ?? inferFunctionCallingSupport(model.modelId)) && (
-                          <span title={t('supportsFunctionCalling')} className="p-1 rounded bg-slate-700/50 light:bg-slate-200">
-                            <Wrench className="w-3 h-3 text-amber-400" />
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => onRemoveModel(model.id)}
-                        disabled={isReadonlySystemProvider}
-                        className="p-1.5 text-slate-500 light:text-slate-400 hover:text-rose-500 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
+            <div className="space-y-1.5">
+              <Input
+                label={t('apiAddress')}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={defaultBaseUrls[type] || 'https://api.example.com'}
+                hint={
+                  type === 'custom'
+                    ? t('customBaseUrlHint')
+                    : t('defaultBaseUrlHint')
+                }
+                disabled={isReadonlySystemProvider}
+                className={isReadonlySystemProvider ? 'opacity-60 cursor-not-allowed' : ''}
+              />
             </div>
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-4 border-t border-slate-700 light:border-slate-200">
+        <div className="flex-1 min-h-0 rounded-xl border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-white p-5 flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-lg font-medium text-white light:text-slate-900">{t('modelManagement')}</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={openCreateModelEditor}
+                disabled={isReadonlySystemProvider}
+              >
+                <Plus className="w-4 h-4" />
+                <span>{t('addModel')}</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleFetchModels}
+                loading={fetchingModels}
+                disabled={isReadonlySystemProvider || fetchingModels}
+              >
+                <RefreshCw className={`w-4 h-4 ${fetchingModels ? 'animate-spin' : ''}`} />
+                <span>{t('autoFetch')}</span>
+              </Button>
+            </div>
+          </div>
+
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
+            <input
+              value={modelSearch}
+              onChange={(e) => setModelSearch(e.target.value)}
+              placeholder={t('searchModels')}
+              className="w-full pl-9 pr-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+            />
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 divide-y divide-slate-700 light:divide-slate-200">
+            {models.length === 0 ? (
+              <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
+                {t('noModelsAddOrFetch')}
+              </div>
+            ) : filteredModels.length === 0 ? (
+              <div className="p-4 text-center text-sm text-slate-500 light:text-slate-600">
+                {t('noMatchingModels')}
+              </div>
+            ) : (
+              filteredModels.map((model) => (
+                <div
+                  key={model.id}
+                  className="flex items-center justify-between px-4 py-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-200 light:text-slate-800">{model.name}</p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">{model.modelId}</p>
+                    <p className="text-[11px] text-slate-500 light:text-slate-600">
+                      {t('inputPricePerM', { defaultValue: 'Input /1M' })}: {formatPricePerM(model.inputPricePerM)} | {t('outputPricePerM', { defaultValue: 'Output /1M' })}: {formatPricePerM(model.outputPricePerM)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* 能力图标 */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onToggleVision?.(model.id, !(model.supportsVision ?? inferVisionSupport(model.modelId)))}
+                        title={t('vision')}
+                        disabled={isReadonlySystemProvider}
+                        className={`p-1 rounded transition-colors ${
+                          (model.supportsVision ?? inferVisionSupport(model.modelId))
+                            ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
+                            : 'bg-slate-800/50 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200'
+                        }`}
+                      >
+                        {(model.supportsVision ?? inferVisionSupport(model.modelId)) ? (
+                          <Eye className="w-3 h-3 text-cyan-400" />
+                        ) : (
+                          <EyeOff className="w-3 h-3 text-slate-500" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onToggleReasoning?.(model.id, !(model.supportsReasoning ?? inferReasoningSupport(model.modelId)))}
+                        title={t('supportsReasoning')}
+                        disabled={isReadonlySystemProvider}
+                        className={`p-1 rounded transition-colors ${
+                          (model.supportsReasoning ?? inferReasoningSupport(model.modelId))
+                            ? 'bg-slate-700/50 light:bg-slate-200 hover:bg-slate-600 light:hover:bg-slate-300'
+                            : 'bg-slate-800/50 light:bg-slate-100 hover:bg-slate-700 light:hover:bg-slate-200'
+                        }`}
+                      >
+                        <Brain className={`w-3 h-3 ${(model.supportsReasoning ?? inferReasoningSupport(model.modelId)) ? 'text-purple-400' : 'text-slate-500'}`} />
+                      </button>
+                      {(model.supportsFunctionCalling ?? inferFunctionCallingSupport(model.modelId)) && (
+                        <span title={t('supportsFunctionCalling')} className="p-1 rounded bg-slate-700/50 light:bg-slate-200">
+                          <Wrench className="w-3 h-3 text-amber-400" />
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openEditModelEditor(model)}
+                      disabled={isReadonlySystemProvider}
+                      title={tCommon('edit')}
+                      className="p-1.5 text-slate-500 light:text-slate-500 hover:text-cyan-400 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onRemoveModel(model.id)}
+                      disabled={isReadonlySystemProvider}
+                      className="p-1.5 text-slate-500 light:text-slate-400 hover:text-rose-500 hover:bg-slate-700 light:hover:bg-slate-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 flex items-center justify-between border-t border-slate-700 light:border-slate-200 pt-4">
           <Button variant="danger" onClick={onDelete} disabled={isReadonlySystemProvider}>
             <Trash2 className="w-4 h-4" />
             <span>{t('deleteProvider')}</span>
@@ -526,6 +619,103 @@ export function ProviderForm({
           </Button>
         </div>
       </div>
+
+      <Modal
+        isOpen={showModelEditor}
+        onClose={closeModelEditor}
+        title={editingModel ? t('editModel', { defaultValue: 'Edit Model' }) : t('addModel')}
+        size="lg"
+      >
+        <div className="space-y-4">
+          <Input
+            label={t('modelIdPlaceholder')}
+            value={modelFormId}
+            onChange={(e) => setModelFormId(e.target.value)}
+            placeholder={t('modelIdPlaceholder')}
+            disabled={isReadonlySystemProvider}
+          />
+          <Input
+            label={t('displayNamePlaceholder')}
+            value={modelFormName}
+            onChange={(e) => setModelFormName(e.target.value)}
+            placeholder={t('displayNamePlaceholder')}
+            disabled={isReadonlySystemProvider}
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Input
+              label={t('maxContextLength')}
+              value={modelFormMaxContextLength}
+              onChange={(e) => setModelFormMaxContextLength(e.target.value)}
+              placeholder={t('maxContextLengthPlaceholder')}
+              type="number"
+              min={256}
+              disabled={isReadonlySystemProvider}
+            />
+            <Input
+              label={t('inputPricePerM', { defaultValue: 'Input Price / 1M Tokens' })}
+              value={modelFormInputPricePerM}
+              onChange={(e) => setModelFormInputPricePerM(e.target.value)}
+              placeholder="0"
+              type="number"
+              step="0.000001"
+              min="0"
+              disabled={isReadonlySystemProvider}
+            />
+            <Input
+              label={t('outputPricePerM', { defaultValue: 'Output Price / 1M Tokens' })}
+              value={modelFormOutputPricePerM}
+              onChange={(e) => setModelFormOutputPricePerM(e.target.value)}
+              placeholder="0"
+              type="number"
+              step="0.000001"
+              min="0"
+              disabled={isReadonlySystemProvider}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800">
+              <input
+                type="checkbox"
+                checked={modelFormSupportsVision}
+                onChange={(e) => setModelFormSupportsVision(e.target.checked)}
+                disabled={isReadonlySystemProvider}
+                className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-cyan-500 focus:ring-cyan-500/50"
+              />
+              <span>{t('supportsVision')}</span>
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800">
+              <input
+                type="checkbox"
+                checked={modelFormSupportsReasoning}
+                onChange={(e) => setModelFormSupportsReasoning(e.target.checked)}
+                disabled={isReadonlySystemProvider}
+                className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-purple-500 focus:ring-purple-500/50"
+              />
+              <span>{t('supportsReasoning')}</span>
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 text-sm text-slate-200 light:text-slate-800">
+              <input
+                type="checkbox"
+                checked={modelFormSupportsFunctionCalling}
+                onChange={(e) => setModelFormSupportsFunctionCalling(e.target.checked)}
+                disabled={isReadonlySystemProvider}
+                className="w-4 h-4 rounded border-slate-600 light:border-slate-400 bg-slate-900 light:bg-white text-amber-500 focus:ring-amber-500/50"
+              />
+              <span>{t('supportsFunctionCalling')}</span>
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={closeModelEditor} disabled={savingModelEditor}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={handleSaveModelEditor} loading={savingModelEditor} disabled={isReadonlySystemProvider}>
+              {editingModel ? tCommon('save') : tCommon('add')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={showModelPicker}
@@ -622,3 +812,4 @@ export function ProviderForm({
     </div>
   );
 }
+

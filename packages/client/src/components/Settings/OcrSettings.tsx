@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, Save, FlaskConical, Loader2 } from 'lucide-react';
+import { Save, FlaskConical, Loader2, Search } from 'lucide-react';
 import { Button, Input, Modal, Toggle, useToast } from '../ui';
 import { useOcrSettingsStore } from '../../store/useOcrSettingsStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -29,6 +29,32 @@ function credentialLabel(source: OcrCredentialSource, t: (k: string) => string):
 }
 
 type TriStateBoolean = 'default' | 'true' | 'false';
+type ProviderEnabledState = Record<OcrProvider, boolean>;
+
+const OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+
+function createProviderEnabledState(
+  initial?: Partial<Record<OcrProvider, boolean>>,
+  selectedProvider: OcrProvider = 'paddle',
+  selectedEnabled = false
+): ProviderEnabledState {
+  const next: ProviderEnabledState = {
+    paddle: false,
+    paddle_vl: false,
+    paddle_vl_1_5: false,
+    datalab: false,
+    mineru: false,
+  };
+  for (const provider of OCR_PROVIDER_ITEMS) {
+    if (typeof initial?.[provider] === 'boolean') {
+      next[provider] = initial[provider];
+    }
+  }
+  if (typeof initial?.[selectedProvider] !== 'boolean') {
+    next[selectedProvider] = selectedEnabled;
+  }
+  return next;
+}
 
 function toTriState(value?: boolean | null): TriStateBoolean {
   if (value === true) return 'true';
@@ -57,8 +83,9 @@ export function OcrSettings() {
   const { user } = useAuthStore();
   const isAdmin = user?.roles?.includes('admin') ?? false;
 
-  const [enabled, setEnabled] = useState(false);
   const [provider, setProvider] = useState<OcrProvider>('paddle');
+  const [providerEnabled, setProviderEnabled] = useState<ProviderEnabledState>(() => createProviderEnabledState());
+  const [providerQuery, setProviderQuery] = useState('');
   const [credentialSource, setCredentialSource] = useState<OcrCredentialSource>('system');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -137,6 +164,7 @@ export function OcrSettings() {
   const [clearSystemPaddleVl15Key, setClearSystemPaddleVl15Key] = useState(false);
   const [clearSystemDatalabKey, setClearSystemDatalabKey] = useState(false);
   const [clearSystemMineruKey, setClearSystemMineruKey] = useState(false);
+  const [systemEditingProvider, setSystemEditingProvider] = useState<OcrProvider>('paddle');
 
   useEffect(() => {
     fetchSettings().catch(() => {});
@@ -144,8 +172,8 @@ export function OcrSettings() {
 
   useEffect(() => {
     if (!settings) return;
-    setEnabled(settings.enabled);
     setProvider(settings.provider);
+    setProviderEnabled(createProviderEnabledState(settings.providerEnabled, settings.provider, settings.enabled));
     setCredentialSource(settings.credentialSource);
     setBaseUrl(settings.baseUrl || '');
     // Never hydrate stored key back into the input; show last4 as a hint.
@@ -224,6 +252,13 @@ export function OcrSettings() {
       .finally(() => setSystemLoading(false));
   }, [isAdmin, showToast, t]);
 
+  const enabled = providerEnabled[provider] ?? false;
+  const filteredOcrProviders = useMemo(() => {
+    const query = providerQuery.trim().toLowerCase();
+    if (!query) return OCR_PROVIDER_ITEMS;
+    return OCR_PROVIDER_ITEMS.filter((item) => providerLabel(item, t).toLowerCase().includes(query));
+  }, [providerQuery, t]);
+
   const effectiveBaseUrl = useMemo(() => {
     if (!settings) return baseUrl || '';
     if (credentialSource === 'custom') return baseUrl || '';
@@ -251,6 +286,7 @@ export function OcrSettings() {
     try {
       const payload: UpdateOcrProviderSettingsDto = {
         enabled,
+        providerEnabled,
         provider,
         credentialSource,
       };
@@ -390,104 +426,264 @@ export function OcrSettings() {
     }
   };
 
+  const systemProviderItems: OcrProvider[] = OCR_PROVIDER_ITEMS;
+
+  const renderSystemProviderEditor = () => {
+    if (systemEditingProvider === 'paddle') {
+      return (
+        <SystemProviderCard
+          title={providerLabel('paddle', t)}
+          baseUrlLabel={`${providerLabel('paddle', t)} ${t('baseUrl')}`}
+          baseUrlPlaceholder={t('baseUrlPlaceholder')}
+          baseUrl={systemPaddleBaseUrl}
+          onBaseUrlChange={setSystemPaddleBaseUrl}
+          apiKeyLabel={`${providerLabel('paddle', t)} ${t('apiKey')}`}
+          apiKey={systemPaddleApiKey}
+          onApiKeyChange={setSystemPaddleApiKey}
+          apiKeyPlaceholder={
+            systemSettings?.paddle?.hasApiKey && systemSettings.paddle.apiKeyLast4
+              ? t('apiKeyLast4', { last4: systemSettings.paddle.apiKeyLast4 })
+              : t('apiKeyPlaceholder')
+          }
+          clearMarked={clearSystemPaddleKey}
+          onClear={() => {
+            setClearSystemPaddleKey(true);
+            setSystemPaddleApiKey('');
+          }}
+          clearText={tCommon('clear')}
+          clearHint={t('apiKeyWillBeCleared')}
+        />
+      );
+    }
+
+    if (systemEditingProvider === 'paddle_vl') {
+      return (
+        <SystemProviderCard
+          title={providerLabel('paddle_vl', t)}
+          baseUrlLabel={`${providerLabel('paddle_vl', t)} ${t('baseUrl')}`}
+          baseUrlPlaceholder={t('baseUrlPlaceholder')}
+          baseUrl={systemPaddleVlBaseUrl}
+          onBaseUrlChange={setSystemPaddleVlBaseUrl}
+          apiKeyLabel={`${providerLabel('paddle_vl', t)} ${t('apiKey')}`}
+          apiKey={systemPaddleVlApiKey}
+          onApiKeyChange={setSystemPaddleVlApiKey}
+          apiKeyPlaceholder={
+            systemSettings?.paddle_vl?.hasApiKey && systemSettings.paddle_vl.apiKeyLast4
+              ? t('apiKeyLast4', { last4: systemSettings.paddle_vl.apiKeyLast4 })
+              : t('apiKeyPlaceholder')
+          }
+          clearMarked={clearSystemPaddleVlKey}
+          onClear={() => {
+            setClearSystemPaddleVlKey(true);
+            setSystemPaddleVlApiKey('');
+          }}
+          clearText={tCommon('clear')}
+          clearHint={t('apiKeyWillBeCleared')}
+        />
+      );
+    }
+
+    if (systemEditingProvider === 'paddle_vl_1_5') {
+      return (
+        <SystemProviderCard
+          title={providerLabel('paddle_vl_1_5', t)}
+          baseUrlLabel={`${providerLabel('paddle_vl_1_5', t)} ${t('baseUrl')}`}
+          baseUrlPlaceholder={t('baseUrlPlaceholder')}
+          baseUrl={systemPaddleVl15BaseUrl}
+          onBaseUrlChange={setSystemPaddleVl15BaseUrl}
+          apiKeyLabel={`${providerLabel('paddle_vl_1_5', t)} ${t('apiKey')}`}
+          apiKey={systemPaddleVl15ApiKey}
+          onApiKeyChange={setSystemPaddleVl15ApiKey}
+          apiKeyPlaceholder={
+            systemSettings?.paddle_vl_1_5?.hasApiKey && systemSettings.paddle_vl_1_5.apiKeyLast4
+              ? t('apiKeyLast4', { last4: systemSettings.paddle_vl_1_5.apiKeyLast4 })
+              : t('apiKeyPlaceholder')
+          }
+          clearMarked={clearSystemPaddleVl15Key}
+          onClear={() => {
+            setClearSystemPaddleVl15Key(true);
+            setSystemPaddleVl15ApiKey('');
+          }}
+          clearText={tCommon('clear')}
+          clearHint={t('apiKeyWillBeCleared')}
+        />
+      );
+    }
+
+    if (systemEditingProvider === 'datalab') {
+      return (
+        <SystemProviderCard
+          title={providerLabel('datalab', t)}
+          baseUrlLabel={`${providerLabel('datalab', t)} ${t('baseUrl')}`}
+          baseUrlPlaceholder={t('baseUrlPlaceholder')}
+          baseUrl={systemDatalabBaseUrl}
+          onBaseUrlChange={setSystemDatalabBaseUrl}
+          apiKeyLabel={`${providerLabel('datalab', t)} ${t('apiKey')}`}
+          apiKey={systemDatalabApiKey}
+          onApiKeyChange={setSystemDatalabApiKey}
+          apiKeyPlaceholder={
+            systemSettings?.datalab?.hasApiKey && systemSettings.datalab.apiKeyLast4
+              ? t('apiKeyLast4', { last4: systemSettings.datalab.apiKeyLast4 })
+              : t('apiKeyPlaceholder')
+          }
+          clearMarked={clearSystemDatalabKey}
+          onClear={() => {
+            setClearSystemDatalabKey(true);
+            setSystemDatalabApiKey('');
+          }}
+          clearText={tCommon('clear')}
+          clearHint={t('apiKeyWillBeCleared')}
+        />
+      );
+    }
+
+    return (
+      <SystemProviderCard
+        title={providerLabel('mineru', t)}
+        baseUrlLabel={`${providerLabel('mineru', t)} ${t('baseUrl')}`}
+        baseUrlPlaceholder={t('baseUrlPlaceholder')}
+        baseUrl={systemMineruBaseUrl}
+        onBaseUrlChange={setSystemMineruBaseUrl}
+        apiKeyLabel={`${providerLabel('mineru', t)} ${t('apiKey')}`}
+        apiKey={systemMineruApiKey}
+        onApiKeyChange={setSystemMineruApiKey}
+        apiKeyPlaceholder={
+          systemSettings?.mineru?.hasApiKey && systemSettings.mineru.apiKeyLast4
+            ? t('apiKeyLast4', { last4: systemSettings.mineru.apiKeyLast4 })
+            : t('apiKeyPlaceholder')
+        }
+        clearMarked={clearSystemMineruKey}
+        onClear={() => {
+          setClearSystemMineruKey(true);
+          setSystemMineruApiKey('');
+        }}
+        clearText={tCommon('clear')}
+        clearHint={t('apiKeyWillBeCleared')}
+      />
+    );
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
-          <FileText className="w-5 h-5 text-white" />
-        </div>
-        <div className="flex-1">
-          <h2 className="text-lg font-semibold text-slate-200 light:text-slate-800">
-            {t('fileOcrSettingsTitle')}
-          </h2>
-          <p className="text-sm text-slate-500 light:text-slate-600">
-            {t('fileOcrSettingsDesc')}
-          </p>
-        </div>
-        <Button variant="secondary" onClick={() => setTestOpen(true)} disabled={!settings || isLoading}>
-          <FlaskConical className="w-4 h-4 mr-1" />
-          {t('testProvider')}
-        </Button>
-      </div>
-
-      <div className="bg-slate-800/30 light:bg-slate-100 rounded-lg p-4 border border-slate-700 light:border-slate-200 space-y-4">
-        {isLoading && (
-          <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('loading')}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-200 light:text-slate-800">{t('enableFileOcr')}</p>
-            <p className="text-xs text-slate-500 light:text-slate-600">{t('enableFileOcrHint')}</p>
-          </div>
-          <button
-            onClick={() => setEnabled((v) => !v)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              enabled ? 'bg-cyan-600' : 'bg-slate-700 light:bg-slate-300'
-            }`}
-            aria-label={t('enableFileOcr')}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                enabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-1">
-              {t('ocrProvider')}
-            </label>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value as OcrProvider)}
-              className="w-full px-3 py-2 bg-slate-900 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:border-cyan-500"
-            >
-              <option value="paddle">PaddleOCR</option>
-              <option value="paddle_vl">PaddleOCR-VL</option>
-              <option value="paddle_vl_1_5">PaddleOCR-VL-1.5</option>
-              <option value="datalab">{t('datalabExperimental')}</option>
-              <option value="mineru">MinerU</option>
-            </select>
+    <>
+      <div className="flex-1 flex overflow-hidden">
+          <div className="w-64 bg-slate-900/50 light:bg-white border-r border-slate-700 light:border-slate-200 flex flex-col">
+            <div className="p-4 border-b border-slate-700 light:border-slate-200">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-300 light:text-slate-700 flex-1 min-w-0 whitespace-nowrap">
+                  {t('ocrProvider')}
+                </h2>
+                <div className="relative w-32">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400" />
+                  <input
+                    type="text"
+                    value={providerQuery}
+                    onChange={(e) => setProviderQuery(e.target.value)}
+                    placeholder={t('searchProviders')}
+                    aria-label={t('searchProviders')}
+                    className="w-full pl-7 pr-2 py-1.5 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded-md text-xs text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {filteredOcrProviders.map((item) => {
+                const selected = provider === item;
+                const itemEnabled = providerEnabled[item] ?? false;
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setProvider(item)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-left text-sm transition-colors ${
+                      selected
+                        ? 'bg-slate-800 light:bg-cyan-50 border border-slate-600 light:border-cyan-200 text-slate-100 light:text-slate-900'
+                        : 'text-slate-300 light:text-slate-700 hover:bg-slate-800/50 light:hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="truncate">{providerLabel(item, t)}</span>
+                    <span className={`w-2 h-2 rounded-full ${itemEnabled ? 'bg-emerald-500' : 'bg-slate-600 light:bg-slate-400'}`} />
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-1">
-              {t('credentialSource')}
-            </label>
-            <select
-              value={credentialSource}
-              onChange={(e) => setCredentialSource(e.target.value as OcrCredentialSource)}
-              className="w-full px-3 py-2 bg-slate-900 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:border-cyan-500"
-            >
-              <option value="system">{t('credentialSystem')}</option>
-              <option value="custom">{t('credentialCustom')}</option>
-            </select>
-          </div>
-        </div>
+          <div className="flex-1 overflow-hidden">
+            <div className="w-full h-full max-w-5xl mx-auto p-6 flex flex-col gap-6 overflow-hidden">
+              <div className="rounded-xl border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-white p-5 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-xl font-semibold text-white light:text-slate-900">{t('fileOcrSettingsTitle')}</h2>
+                  <div className="flex items-center gap-3">
+                    <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-300 light:text-slate-700">
+                      {providerLabel(provider, t)}
+                    </span>
+                    <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-400 light:text-slate-600">
+                      {credentialLabel(credentialSource, t)}
+                    </span>
+                    <Toggle enabled={enabled} onChange={(value) => setProviderEnabled((prev) => ({ ...prev, [provider]: value }))} label={t('enable')} />
+                  </div>
+                </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label={t('baseUrl')}
-            value={effectiveBaseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            disabled={credentialSource === 'system'}
-            placeholder={t('baseUrlPlaceholder')}
-          />
-          <Input
-            label={t('apiKey')}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            disabled={credentialSource === 'system'}
-            placeholder={apiKeyHint || t('apiKeyPlaceholder')}
-            type="password"
-          />
-        </div>
+                <p className="text-xs text-slate-500 light:text-slate-600">{t('enableFileOcrHint')}</p>
+
+                {isLoading && (
+                  <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {t('loading')}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-1">
+                      {t('credentialSource')}
+                    </label>
+                    <select
+                      value={credentialSource}
+                      onChange={(e) => setCredentialSource(e.target.value as OcrCredentialSource)}
+                      className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+                    >
+                      <option value="system">{t('credentialSystem')}</option>
+                      <option value="custom">{t('credentialCustom')}</option>
+                    </select>
+                  </div>
+                  <Input
+                    label={t('baseUrl')}
+                    value={effectiveBaseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    disabled={credentialSource === 'system'}
+                    placeholder={t('baseUrlPlaceholder')}
+                  />
+                  <div className="md:col-span-2">
+                    <Input
+                      label={t('apiKey')}
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      disabled={credentialSource === 'system'}
+                      placeholder={apiKeyHint || t('apiKeyPlaceholder')}
+                      type="password"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-white p-5 flex flex-col gap-4 min-h-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-slate-200 light:text-slate-800">
+                    {t('ocrProvider')}: {providerLabel(provider, t)}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-slate-500 light:text-slate-600">
+                      {t('providerParamsTitle', { defaultValue: 'Provider Parameters' })}
+                    </p>
+                    <Button variant="secondary" onClick={() => setTestOpen(true)} disabled={!settings || isLoading}>
+                      <FlaskConical className="w-4 h-4 mr-1" />
+                      {t('testProvider')}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
 
         {provider === 'datalab' && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
@@ -500,7 +696,7 @@ export function OcrSettings() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
                   {t('datalabMode')}
@@ -527,7 +723,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('datalabMaxPages')}
                 value={datalabMaxPages}
@@ -545,7 +741,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="flex flex-wrap gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               <Toggle checked={datalabPaginate} onChange={setDatalabPaginate} label={t('datalabPaginate')} />
               <Toggle checked={datalabAddBlockIds} onChange={setDatalabAddBlockIds} label={t('datalabAddBlockIds')} />
               <Toggle checked={datalabDisableImageExtraction} onChange={setDatalabDisableImageExtraction} label={t('datalabDisableImageExtraction')} />
@@ -557,7 +753,7 @@ export function OcrSettings() {
               {t('datalabToggleDefaults')}
             </p>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('datalabExtras')}
                 value={datalabExtras}
@@ -587,7 +783,7 @@ export function OcrSettings() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
                   {t('paddleUseDocOrientationClassify')}
@@ -649,7 +845,7 @@ export function OcrSettings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleTextDetLimitSideLen')}
                 value={paddleTextDetLimitSideLen}
@@ -673,7 +869,7 @@ export function OcrSettings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleTextDetThresh')}
                 value={paddleTextDetThresh}
@@ -690,7 +886,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleTextDetUnclipRatio')}
                 value={paddleTextDetUnclipRatio}
@@ -720,7 +916,7 @@ export function OcrSettings() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
                   {t('paddleVlUseDocOrientationClassify')}
@@ -842,7 +1038,7 @@ export function OcrSettings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleVlLayoutThreshold')}
                 value={paddleVlLayoutThreshold}
@@ -859,7 +1055,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
                   {t('paddleVlLayoutMergeBboxesMode')}
@@ -883,7 +1079,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleVlRepetitionPenalty')}
                 value={paddleVlRepetitionPenalty}
@@ -900,7 +1096,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleVlTopP')}
                 value={paddleVlTopP}
@@ -917,7 +1113,7 @@ export function OcrSettings() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('paddleVlMaxPixels')}
                 value={paddleVlMaxPixels}
@@ -940,7 +1136,7 @@ export function OcrSettings() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('mineruUserToken')}
                 value={mineruUserToken}
@@ -966,7 +1162,7 @@ export function OcrSettings() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               <Toggle checked={mineruIsOcr} onChange={setMineruIsOcr} label={t('mineruIsOcr')} />
               <Toggle checked={mineruEnableFormula} onChange={setMineruEnableFormula} label={t('mineruEnableFormula')} />
               <Toggle checked={mineruEnableTable} onChange={setMineruEnableTable} label={t('mineruEnableTable')} />
@@ -975,7 +1171,7 @@ export function OcrSettings() {
               {t('mineruToggleDefaults')}
             </p>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
                 label={t('mineruLanguage')}
                 value={mineruLanguage}
@@ -1032,12 +1228,76 @@ export function OcrSettings() {
           </div>
         )}
 
-        <div className="flex justify-end">
+        {isAdmin && (
+          <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
+                {t('systemOcrProviderConfigTitle')}
+              </h3>
+              <p className="text-xs text-slate-500 light:text-slate-600">
+                {t('systemOcrProviderConfigDesc')}
+              </p>
+            </div>
+
+            {systemLoading && (
+              <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('loading')}
+              </div>
+            )}
+
+            <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 overflow-hidden">
+              <div className="flex flex-col lg:flex-row min-h-[320px]">
+                <div className="w-full lg:w-64 lg:border-r border-slate-700 light:border-slate-200 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500 light:text-slate-600 mb-2">
+                    {t('ocrProvider')}
+                  </p>
+                  <div className="space-y-1">
+                    {systemProviderItems.map((item) => {
+                      const selected = systemEditingProvider === item;
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setSystemEditingProvider(item)}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                            selected
+                              ? 'bg-slate-800 light:bg-cyan-50 border border-slate-600 light:border-cyan-200 text-slate-100 light:text-slate-900'
+                              : 'text-slate-300 light:text-slate-700 hover:bg-slate-800/50 light:hover:bg-slate-100 border border-transparent'
+                          }`}
+                        >
+                          <span className="truncate">{providerLabel(item, t)}</span>
+                          <span className={`w-2 h-2 rounded-full ${selected ? 'bg-cyan-500' : 'bg-slate-600 light:bg-slate-400'}`} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex-1 p-4">
+                  {renderSystemProviderEditor()}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-700 light:border-slate-200 flex justify-end">
+              <Button variant="primary" onClick={handleSaveSystem} loading={systemSaving} disabled={systemLoading}>
+                <Save className="w-4 h-4 mr-1" />
+                {t('saveSettings')}
+              </Button>
+            </div>
+          </div>
+        )}
+                </div>
+
+        <div className="pt-3 border-t border-slate-700 light:border-slate-200 flex justify-end">
           <Button variant="primary" onClick={handleSave} loading={saving}>
             <Save className="w-4 h-4 mr-1" />
             {t('saveSettings')}
           </Button>
         </div>
+                </div>
+            </div>
+          </div>
       </div>
 
       <OcrTestModal
@@ -1049,185 +1309,65 @@ export function OcrSettings() {
         apiKey={apiKey}
         tCommon={tCommon}
       />
+    </>
+  );
+}
 
-      {isAdmin && (
-        <div className="bg-slate-800/30 light:bg-slate-100 rounded-lg p-4 border border-slate-700 light:border-slate-200 space-y-4">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
-              {t('systemOcrProviderConfigTitle')}
-            </h3>
-            <p className="text-xs text-slate-500 light:text-slate-600">
-              {t('systemOcrProviderConfigDesc')}
-            </p>
-          </div>
-
-          {systemLoading && (
-            <div className="flex items-center gap-2 text-sm text-slate-400 light:text-slate-600">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {t('loading')}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label={`PaddleOCR ${t('baseUrl')}`}
-              value={systemPaddleBaseUrl}
-              onChange={(e) => setSystemPaddleBaseUrl(e.target.value)}
-              placeholder={t('baseUrlPlaceholder')}
-            />
-            <div className="space-y-2">
-              <Input
-                label={`PaddleOCR ${t('apiKey')}`}
-                value={systemPaddleApiKey}
-                onChange={(e) => setSystemPaddleApiKey(e.target.value)}
-                placeholder={systemSettings?.paddle?.hasApiKey && systemSettings.paddle.apiKeyLast4 ? t('apiKeyLast4', { last4: systemSettings.paddle.apiKeyLast4 }) : t('apiKeyPlaceholder')}
-                type="password"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setClearSystemPaddleKey(true);
-                    setSystemPaddleApiKey('');
-                  }}
-                >
-                  {tCommon('clear')}
-                </Button>
-                {clearSystemPaddleKey && (
-                  <span className="text-xs text-slate-500 light:text-slate-600">{t('apiKeyWillBeCleared')}</span>
-                )}
-              </div>
-            </div>
-
-            <Input
-              label={`PaddleOCR-VL ${t('baseUrl')}`}
-              value={systemPaddleVlBaseUrl}
-              onChange={(e) => setSystemPaddleVlBaseUrl(e.target.value)}
-              placeholder={t('baseUrlPlaceholder')}
-            />
-            <div className="space-y-2">
-              <Input
-                label={`PaddleOCR-VL ${t('apiKey')}`}
-                value={systemPaddleVlApiKey}
-                onChange={(e) => setSystemPaddleVlApiKey(e.target.value)}
-                placeholder={systemSettings?.paddle_vl?.hasApiKey && systemSettings.paddle_vl.apiKeyLast4 ? t('apiKeyLast4', { last4: systemSettings.paddle_vl.apiKeyLast4 }) : t('apiKeyPlaceholder')}
-                type="password"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setClearSystemPaddleVlKey(true);
-                    setSystemPaddleVlApiKey('');
-                  }}
-                >
-                  {tCommon('clear')}
-                </Button>
-                {clearSystemPaddleVlKey && (
-                  <span className="text-xs text-slate-500 light:text-slate-600">{t('apiKeyWillBeCleared')}</span>
-                )}
-              </div>
-            </div>
-
-            <Input
-              label={`PaddleOCR-VL-1.5 ${t('baseUrl')}`}
-              value={systemPaddleVl15BaseUrl}
-              onChange={(e) => setSystemPaddleVl15BaseUrl(e.target.value)}
-              placeholder={t('baseUrlPlaceholder')}
-            />
-            <div className="space-y-2">
-              <Input
-                label={`PaddleOCR-VL-1.5 ${t('apiKey')}`}
-                value={systemPaddleVl15ApiKey}
-                onChange={(e) => setSystemPaddleVl15ApiKey(e.target.value)}
-                placeholder={systemSettings?.paddle_vl_1_5?.hasApiKey && systemSettings.paddle_vl_1_5.apiKeyLast4 ? t('apiKeyLast4', { last4: systemSettings.paddle_vl_1_5.apiKeyLast4 }) : t('apiKeyPlaceholder')}
-                type="password"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setClearSystemPaddleVl15Key(true);
-                    setSystemPaddleVl15ApiKey('');
-                  }}
-                >
-                  {tCommon('clear')}
-                </Button>
-                {clearSystemPaddleVl15Key && (
-                  <span className="text-xs text-slate-500 light:text-slate-600">{t('apiKeyWillBeCleared')}</span>
-                )}
-              </div>
-            </div>
-
-            <Input
-              label={`${t('datalabExperimental')} ${t('baseUrl')}`}
-              value={systemDatalabBaseUrl}
-              onChange={(e) => setSystemDatalabBaseUrl(e.target.value)}
-              placeholder={t('baseUrlPlaceholder')}
-            />
-            <div className="space-y-2">
-              <Input
-                label={`${t('datalabExperimental')} ${t('apiKey')}`}
-                value={systemDatalabApiKey}
-                onChange={(e) => setSystemDatalabApiKey(e.target.value)}
-                placeholder={systemSettings?.datalab?.hasApiKey && systemSettings.datalab.apiKeyLast4 ? t('apiKeyLast4', { last4: systemSettings.datalab.apiKeyLast4 }) : t('apiKeyPlaceholder')}
-                type="password"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setClearSystemDatalabKey(true);
-                    setSystemDatalabApiKey('');
-                  }}
-                >
-                  {tCommon('clear')}
-                </Button>
-                {clearSystemDatalabKey && (
-                  <span className="text-xs text-slate-500 light:text-slate-600">{t('apiKeyWillBeCleared')}</span>
-                )}
-              </div>
-            </div>
-
-            <Input
-              label={`MinerU ${t('baseUrl')}`}
-              value={systemMineruBaseUrl}
-              onChange={(e) => setSystemMineruBaseUrl(e.target.value)}
-              placeholder={t('baseUrlPlaceholder')}
-            />
-            <div className="space-y-2">
-              <Input
-                label={`MinerU ${t('apiKey')}`}
-                value={systemMineruApiKey}
-                onChange={(e) => setSystemMineruApiKey(e.target.value)}
-                placeholder={systemSettings?.mineru?.hasApiKey && systemSettings.mineru.apiKeyLast4 ? t('apiKeyLast4', { last4: systemSettings.mineru.apiKeyLast4 }) : t('apiKeyPlaceholder')}
-                type="password"
-              />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setClearSystemMineruKey(true);
-                    setSystemMineruApiKey('');
-                  }}
-                >
-                  {tCommon('clear')}
-                </Button>
-                {clearSystemMineruKey && (
-                  <span className="text-xs text-slate-500 light:text-slate-600">{t('apiKeyWillBeCleared')}</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <Button variant="primary" onClick={handleSaveSystem} loading={systemSaving} disabled={systemLoading}>
-              <Save className="w-4 h-4 mr-1" />
-              {t('saveSettings')}
-            </Button>
-          </div>
-        </div>
-      )}
+function SystemProviderCard({
+  title,
+  baseUrlLabel,
+  baseUrlPlaceholder,
+  baseUrl,
+  onBaseUrlChange,
+  apiKeyLabel,
+  apiKey,
+  onApiKeyChange,
+  apiKeyPlaceholder,
+  clearMarked,
+  onClear,
+  clearText,
+  clearHint,
+}: {
+  title: string;
+  baseUrlLabel: string;
+  baseUrlPlaceholder: string;
+  baseUrl: string;
+  onBaseUrlChange: (value: string) => void;
+  apiKeyLabel: string;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+  apiKeyPlaceholder: string;
+  clearMarked: boolean;
+  onClear: () => void;
+  clearText: string;
+  clearHint: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-3">
+      <h4 className="text-sm font-semibold text-slate-200 light:text-slate-800">{title}</h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Input
+          label={baseUrlLabel}
+          value={baseUrl}
+          onChange={(e) => onBaseUrlChange(e.target.value)}
+          placeholder={baseUrlPlaceholder}
+        />
+        <Input
+          label={apiKeyLabel}
+          value={apiKey}
+          onChange={(e) => onApiKeyChange(e.target.value)}
+          placeholder={apiKeyPlaceholder}
+          type="password"
+        />
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="secondary" onClick={onClear}>
+          {clearText}
+        </Button>
+        {clearMarked && (
+          <span className="text-xs text-slate-500 light:text-slate-600">{clearHint}</span>
+        )}
+      </div>
     </div>
   );
 }
