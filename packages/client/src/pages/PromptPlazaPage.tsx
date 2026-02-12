@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, FileText, Clock, User, Copy, Loader2 } from 'lucide-react';
+import { Search, FileText, Clock, User, Copy, Loader2, ChevronDown } from 'lucide-react';
 import { Button, Badge } from '../components/ui';
 import { ParameterPanel, PromptTestPanel, StructuredOutputEditor, VariableEditor } from '../components/Prompt';
 import { promptsApi } from '../api';
@@ -26,6 +26,22 @@ function safeParseMessageJson(raw: string): Array<{ role: string; content: strin
   } catch {
     return null;
   }
+}
+
+function compactVersionMessage(message: string, maxLength = 46): string {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  const compacted = normalized.replace(
+    /\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-([0-9a-f]{12})\b/gi,
+    (_, prefix: string, suffix: string) => `${prefix}…${suffix.slice(-4)}`
+  );
+
+  if (compacted.length <= maxLength) return compacted;
+  return `${compacted.slice(0, maxLength - 1)}…`;
+}
+
+function getVersionOptionLabel(version: PromptVersion): string {
+  if (!version.commitMessage) return `v${version.version}`;
+  return `v${version.version} · ${compactVersionMessage(version.commitMessage)}`;
 }
 
 type PromptRole = 'system' | 'user' | 'assistant';
@@ -68,6 +84,19 @@ export function PromptPlazaPage() {
   const [selectedModelId, setSelectedModelId] = useState('');
   const [testInput, setTestInput] = useState('');
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+
+  const selectedVersionDetail = useMemo(
+    () => versions.find((v) => v.version === selectedVersion) ?? null,
+    [versions, selectedVersion]
+  );
+
+  const selectedVersionLabel = useMemo(() => {
+    if (!selectedVersionDetail) return '';
+    const commitMessage = selectedVersionDetail.commitMessage?.trim();
+    return commitMessage
+      ? `v${selectedVersionDetail.version} · ${commitMessage}`
+      : `v${selectedVersionDetail.version}`;
+  }, [selectedVersionDetail]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -294,21 +323,36 @@ export function PromptPlazaPage() {
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem_minmax(0,1fr)] gap-0 overflow-hidden">
               {/* Preview */}
               <div className="min-w-0 border-r border-slate-700 light:border-slate-200 overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-700 light:border-slate-200 flex items-center justify-between">
-                  <div className="text-sm font-medium text-slate-200 light:text-slate-800">{t('preview')}</div>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={selectedVersion ?? ''}
-                      onChange={(e) => setSelectedVersion(e.target.value ? Number(e.target.value) : null)}
-                      className="text-xs bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded px-2 py-1 text-slate-200 light:text-slate-800"
-                    >
-                      {versions.map((v) => (
-                        <option key={v.id} value={v.version}>
-                          v{v.version} {v.commitMessage ? `- ${v.commitMessage}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                <div className="p-4 border-b border-slate-700 light:border-slate-200">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-slate-200 light:text-slate-800">{t('preview')}</div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-slate-500 light:text-slate-600 whitespace-nowrap">{tCommon('version')}</span>
+                      <div className="relative min-w-0 w-72 max-w-[min(42vw,22rem)]">
+                        <select
+                          value={selectedVersion ?? ''}
+                          onChange={(e) => setSelectedVersion(e.target.value ? Number(e.target.value) : null)}
+                          title={selectedVersionLabel}
+                          className="w-full appearance-none text-xs bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded px-2.5 py-1.5 pr-7 text-slate-200 light:text-slate-800 truncate"
+                        >
+                          {versions.map((v) => (
+                            <option key={v.id} value={v.version} title={`v${v.version}${v.commitMessage ? ` · ${v.commitMessage}` : ''}`}>
+                              {getVersionOptionLabel(v)}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 light:text-slate-400 pointer-events-none" />
+                      </div>
+                    </div>
                   </div>
+                  {selectedVersionDetail?.commitMessage && (
+                    <div
+                      className="mt-1.5 text-[11px] text-slate-500 light:text-slate-600 text-right truncate"
+                      title={selectedVersionDetail.commitMessage}
+                    >
+                      {selectedVersionDetail.commitMessage}
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
                   <pre className="whitespace-pre-wrap text-sm text-slate-200 light:text-slate-800">
@@ -395,3 +439,4 @@ export function PromptPlazaPage() {
     </div>
   );
 }
+

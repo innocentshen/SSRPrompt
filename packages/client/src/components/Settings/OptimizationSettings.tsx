@@ -55,6 +55,9 @@ export function OptimizationSettings() {
             {t('analysisPromptDescription')}
           </p>
         </div>
+        <p className="mb-4 text-xs text-amber-300/90 light:text-amber-700">
+          {t('analysisPromptScopeNote', { defaultValue: '仅作用于 Prompt 开发页的“智能优化分析”；保存到当前浏览器本地，不会写入数据库。' })}
+        </p>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">

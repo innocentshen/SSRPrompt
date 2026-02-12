@@ -24,6 +24,7 @@ export function SettingsPage() {
   const { fetchProvidersAndModels: refreshGlobalStore } = useGlobalStore();
   const { user } = useAuthStore();
   const isAdmin = user?.roles?.includes('admin') ?? false;
+  const showOptimizationTab = false;
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -239,19 +240,21 @@ export function SettingsPage() {
           }`}
         >
           <Bot className="w-4 h-4" />
-          {t('providers')}
+          {t('aiProvidersTab')}
         </button>
-        <button
-          onClick={() => setActiveTab('optimization')}
-          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'optimization'
-              ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
-              : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
-          }`}
-        >
-          <Sparkles className="w-4 h-4" />
-          {t('optimization')}
-        </button>
+        {showOptimizationTab && (
+          <button
+            onClick={() => setActiveTab('optimization')}
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'optimization'
+                ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
+                : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            {t('optimization')}
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('ocr')}
           className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -261,7 +264,7 @@ export function SettingsPage() {
           }`}
         >
           <FileText className="w-4 h-4" />
-          {t('fileOcr')}
+          {t('ocrProvidersTab')}
         </button>
         <button
           onClick={() => setActiveTab('shares')}
