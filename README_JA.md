@@ -2,7 +2,7 @@
 
 # SSRPrompt
 
-AI Prompt の開発・テスト・比較・管理を効率化する、モダンなプラットフォームです。
+本番運用を前提とした AI Prompt 開発・評価・公開プラットフォーム（v2.0）。
 
 [简体中文](./README.md) | [繁體中文](./README_ZH_TW.md) | [English](./README_EN.md) | 日本語 | [公式サイト](https://www.ssrprompt.com)
 
@@ -10,110 +10,74 @@ AI Prompt の開発・テスト・比較・管理を効率化する、モダン�
 
 </div>
 
-## v2.0 アーキテクチャ
+## プロジェクト概要
 
-SSRPrompt v2.0 はフロント/バック分離の新アーキテクチャで、セキュリティ・保守性・拡張性を強化しています。
+- このリポジトリは **v2.0 構成**（`packages/client` + `packages/server` + `packages/shared`）です。
+- 旧 `main` ブランチのデプロイ方式とは互換性がありません。
+- バックエンドは PostgreSQL + Prisma を使用し、API Key はフロントに露出しません。
 
-- **Monorepo** - pnpm workspace によるマルチパッケージ構成
-- **API Key の暗号化保管** - AES-256-GCM で機密情報を保護
-- **バックエンド AI プロキシ** - モデル呼び出しはバックエンド経由、フロントに Key を置かない
-- **SSE ストリーミング** - リアルタイム出力、停止/再試行に対応
-- **テナント分離** - ユーザー単位でデータを分離
-- **PostgreSQL** - 統一データベース
+## 現在の機能（コード準拠）
 
-## `main` ブランチとの差分
+### Prompt ライフサイクル
 
-> このブランチは v2.0 リファクタ版です。`main`（安定版）のデプロイ方法とは互換性がありません。
+- Prompt ワークスペース：マルチターン、変数、構造化出力、パラメータ調整、バージョン管理。
+- Prompt グループ：グループ化と並び替え。
+- Prompt Plaza：公開 Prompt の閲覧/コピー、バージョン確認。
+- Prompt API：API Key を作成し、公開エンドポイントで Prompt を呼び出し可能。
 
-| 観点 | `main`（安定版） | このブランチ（v2.0） |
-|---|---|---|
-| パッケージ管理 | npm | pnpm workspace |
-| 構成 | 単体フロント + 任意 `server/`（MySQL プロキシ） | Monorepo：`packages/client` + `packages/server` + `packages/shared` |
-| DB | Supabase（PostgreSQL）/ MySQL；Demo で手軽に試せる | PostgreSQL のみ；Prisma で Schema 管理 |
-| モデル呼び出し & Key | 主にフロントから呼び出し | バックエンドで一元管理；Key は暗号化 |
-| 認証 | フロントのアクセスパス（`VITE_APP_PASSWORD`） | JWT + Refresh Token；Demo は 7 日 |
-| 設定 | 主に UI | 主にバックエンド `.env` |
-| 起動 | フロントのみも可能 | バックエンド必須（推奨：`pnpm dev:all`） |
+### 評価と分析
 
-## 機能
+- 評価センター：評価セット、テストケース、評価基準、実行履歴。
+- 実行制御：実行、中断、結果のバッチ書き込み。
+- インポート/エクスポート：テンプレート取得、ZIP インポート、評価エクスポート。
+- 分析レポート：単体/複数実行レポートの保存。
 
-### コア
+### マルチモーダルと可観測性
 
-- **Prompt ワークスペース** - 変数、多ターン、構造化出力を含む Prompt の作成/管理
-- **操作の高速化** - ワンクリック複製、安全な削除（確認あり）
-- **Prompt ウィザード** - テンプレートから会話形式で Prompt を生成
-- **評価センター** - テストケースと評価基準（AI 採点）で比較評価
-- **履歴/トレース** - Token・遅延・添付・OCR など実行履歴を確認
-- **最適化** - AI による分析と改善提案
+- Chat SSE ストリーミング、reasoning/thinking 表示に対応。
+- ファイルアップロードと添付（S3 互換ストレージが必要）。
+- OCR プロバイダ：`paddle`、`paddle_vl`、`paddle_vl_1_5`、`datalab`、`mineru`。
+- Trace：入出力、レイテンシ、Token、添付、OCR 情報を追跡。
 
-### 高度な機能
+### セキュリティとプラットフォーム
 
-- **複数プロバイダー** - OpenAI / Anthropic / Google Gemini / OpenRouter / custom
-- **推論モデル** - Thinking（推論過程）の表示（例：Claude / DeepSeek R1）
-- **添付ファイル** - 画像/PDF/テキストをコンテキストとして利用（自動 vision/OCR）
-- **バージョン管理** - 履歴・差分
-- **ストリーミング** - SSE 出力、停止/再試行
+- JWT + Refresh Token 認証、Demo Token 対応。
+- API Key は AES-256-GCM で暗号化保存。
+- プライベート共有リンク（Prompt / Evaluation）+ パスワード検証 + アクセスログ。
+- OAuth（Google / Linux.do）、メール認証コード、パスワードリセット。
+- 管理者ユーザー管理（ロール、状態、アカウント操作）。
 
-### プラットフォーム
+## ページとルート
 
-- **Demo モード** - すぐ試せる（7 日）
-- **多言語** - zh-CN / zh-TW / en / ja
-- **テーマ** - ライト/ダーク
-- **JWT 認証**
+| ページ | ルート |
+|---|---|
+| ホーム | `/` |
+| Prompt Wizard | `/wizard` |
+| Prompt Plaza | `/plaza` |
+| Prompt Workspace | `/prompts` |
+| Evaluation | `/evaluation` |
+| Traces | `/traces` |
+| Settings | `/settings` |
+| ログイン / パスワード再設定 | `/login` / `/forgot-password` |
+| 共有ページ | `/share/p/:token` / `/share/e/:token` |
 
-## ハイライト
+## 技術スタック
 
-- **セキュア設計**：API Key はバックエンドのみに保存し、AES-256-GCM で暗号化。フロントは Key に触れません。
-- **可観測性**：Prompt 実行〜評価まで、トレースで入出力、Thinking、遅延/Token、添付、OCR 結果を確認できます。
-- **マルチモーダル**：画像/PDF/テキスト添付に対応し、モデル能力に応じて vision/OCR を自動選択できます。
-- **評価可能**：テストケース + 評価基準（AI 採点）で比較評価し、CSV でエクスポートできます。
+- フロントエンド：React 18 + TypeScript + Vite + Tailwind + Zustand + i18next
+- バックエンド：Express + TypeScript + Prisma + PostgreSQL + Graphile Worker
+- 共通：`@ssrprompt/shared`（型、Schema、エラーコード）
 
-## ページと機能分布
+---
 
-| ページ | ルート | 主な機能 |
-|---|---|---|
-| ホーム | `/` | ウィザード / ワークスペース / 広場への入口 |
-| Prompt ウィザード | `/wizard` | テンプレ選択 → 会話生成 → 保存 |
-| Prompt ワークスペース | `/prompts` | Prompt/グループ、変数、Schema、パラメータ、テスト、履歴/差分、公開、観測/最適化 |
-| Prompt 広場 | `/plaza` | 公開 Prompt を閲覧、バージョン表示、コピーして編集 |
-| 評価 | `/evaluation` | テストケース/評価基準、実行、比較、CSV 出力 |
-| トレース | `/traces` | 一覧/検索、入出力、Thinking、パラメータ、遅延/Token、添付/OCR |
-| 設定 | `/settings` | プロバイダー/モデル、最適化、OCR、ユーザー管理（管理者） |
-| 認証 | `/login` `/forgot-password` | メール/パスワード、OAuth、Demo |
+## クイックスタート（ローカル開発）
 
-## 使い方（0 → 1）
-
-1. ログイン：メール/パスワード、または OAuth（Google/Linux.do）。まず Demo でも OK。
-2. モデル設定：`設定 → Providers` でプロバイダーと API Key を追加し、モデルを追加/有効化。
-3. Prompt 作成：
-   - 初心者：ウィザードでテンプレから生成し保存。
-   - 上級者：ワークスペースで直接編集（多ターン/変数/構造化出力）。
-4. デバッグ：モデル選択、変数入力、パラメータ調整。ストリーミング出力、Thinking、添付と OCR に対応。
-5. 評価：テストケースと評価基準（AI 採点）で一括実行し、結果を比較。CSV 出力も可能。
-6. 共有：広場へ公開、または他者の Prompt をコピーして再利用。
-
-## 前提依存（必須 / 任意）
-
-必須：
-
-- PostgreSQL（バックエンドのデータ保存）
-
-任意（必要に応じて）：
-
-- S3 互換オブジェクトストレージ（添付のアップロード/プレビュー、OCR の結果・中間ファイル）
-- SMTP（メール認証/パスワードリセット）
-- OAuth（Google / Linux.do）
-- 評価 Worker（本番は `EVALUATION_QUEUE_DRIVER=pg` + worker 推奨。開発は `pnpm dev:all` / `pnpm dev:worker`）
-
-## クイックスタート（開発）
-
-### 要件
+### 1) 要件
 
 - Node.js >= 18
 - pnpm >= 8
 - PostgreSQL >= 14
 
-### インストール
+### 2) インストール
 
 ```bash
 git clone https://github.com/innocentshen/ssrprompt.git
@@ -121,55 +85,207 @@ cd ssrprompt
 pnpm install
 ```
 
-### 設定
+### 3) 環境変数設定
 
 ```bash
 cp packages/server/.env.example packages/server/.env
-# DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY を設定
 ```
 
-### DB 初期化
+最低限必要（`packages/server/.env`）：
+
+```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/ssrprompt?schema=public
+JWT_SECRET=your-jwt-secret-at-least-32-characters-long
+ENCRYPTION_KEY=your-64-character-hex-string-for-aes-256-encryption
+```
+
+`ENCRYPTION_KEY` の生成：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### 4) DB 初期化
 
 ```bash
 pnpm db:generate
-pnpm db:push
-pnpm db:studio
-pnpm --filter @ssrprompt/server prisma:seed
+pnpm db:deploy        # 推奨: migration ベース
+# pnpm db:push         # 開発時のみ任意
+pnpm --filter @ssrprompt/server prisma:seed   # 任意
 ```
 
-### 起動
+### 5) 起動
 
 ```bash
-pnpm dev:all        # client + server + worker
+pnpm dev:all          # client/server/worker を同時起動（推奨）
 
-# or separately
+# または個別起動
+pnpm dev              # frontend: http://localhost:5173
+pnpm dev:server       # api:      http://localhost:3001
+pnpm dev:worker       # worker
+```
+
+Swagger: `http://localhost:3001/api-docs`
+
+---
+
+## 本番ターゲットDBスキーマ更新
+
+任意の `DATABASE_URL` に対して実行可能な組み込みスクリプト：
+
+```bash
+# 通常: migrate deploy + status
+pnpm db:deploy:target -- --database-url "postgresql://user:password@host:port/dbname"
+
+# 旧DBで migration 履歴ドリフトがある場合: resolve + deploy
+pnpm db:deploy:target:resolve -- --database-url "postgresql://user:password@host:port/dbname"
+```
+
+Prisma の `column ... does not exist` などが出る場合は先に実行してください。
+
+---
+
+## 評価キューと Worker モード
+
+`EVALUATION_QUEUE_DRIVER` のモード：
+
+- `memory`（デフォルト）：プロセス内キュー、開発/軽量用途向け。
+- `pg`：Graphile Worker キュー、本番推奨。
+
+本番推奨手順：
+
+1. `EVALUATION_QUEUE_DRIVER=pg` を設定
+2. 初回のみ worker schema を初期化
+
+```bash
+pnpm --filter @ssrprompt/server worker:setup
+```
+
+3. API と Worker を分離起動
+
+```bash
+pnpm --filter @ssrprompt/server start
+pnpm --filter @ssrprompt/server start:worker
+```
+
+---
+
+## Docker デプロイ（2サービス）
+
+Dockerfile：
+
+- `Dockerfile.ssrprompt-api`
+- `Dockerfile.ssrprompt-worker`
+
+ビルド：
+
+```bash
+docker build -f Dockerfile.ssrprompt-api -t <dockerhub_user>/ssrprompt-api:latest .
+docker build -f Dockerfile.ssrprompt-worker -t <dockerhub_user>/ssrprompt-worker:latest .
+```
+
+実行：
+
+```bash
+# API
+docker run -d --name ssrprompt-api -p 3001:3001 --env-file packages/server/.env <dockerhub_user>/ssrprompt-api:latest
+
+# Worker
+docker run -d --name ssrprompt-worker --env-file packages/server/.env <dockerhub_user>/ssrprompt-worker:latest
+```
+
+Zeabur/GitHub ソースビルド時は起動コマンドを分けて設定：
+
+- API：`node packages/server/dist/index.js`
+- Worker：`node packages/server/dist/worker.js`
+
+---
+
+## バックエンド主要環境変数
+
+### 必須
+
+- `NODE_ENV`
+- `PORT`（デフォルト `3001`）
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `ENCRYPTION_KEY`
+- `CORS_ORIGIN`
+
+### よく使う任意設定
+
+- 登録/認証：`ALLOW_REGISTRATION`、`REQUIRE_EMAIL_VERIFICATION`
+- SMTP：`SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` `SMTP_FROM`
+- OAuth：`OAUTH_GOOGLE_*`、`OAUTH_LINUXDO_*`
+- S3：`S3_ENDPOINT` `S3_BUCKET` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY` `S3_REGION`
+- レート制限：`RATE_LIMIT_WINDOW_MS`、`RATE_LIMIT_MAX_REQUESTS`
+- 評価キュー：`EVALUATION_QUEUE_DRIVER` と `EVALUATION_*` 調整変数
+
+完全なテンプレート：`packages/server/.env.example`
+
+---
+
+## API 概要（v1）
+
+プレフィックス：`/api/v1`
+
+- 認証：`/auth/*`
+- ヘルスチェック：`/health`
+- Prompt：`/prompts`、`/prompt-groups`
+- モデル：`/providers`、`/models`
+- チャット：`/chat/completions`
+- 評価：`/evaluations`、`/runs`、`/test-cases`、`/criteria`
+- インポート/エクスポート：`/evaluation-imports`
+- ファイル/OCR：`/files`、`/ocr`
+- 共有：`/share-links`、`/share`
+- Prompt API：`/prompt-api-keys`、`/open/prompts/:promptId/invoke`
+- トレース/統計：`/traces`、`/stats/usage`
+- 管理者：`/users`
+
+正確な仕様は Swagger を参照：`/api-docs`
+
+---
+
+## よく使うコマンド
+
+```bash
+# 開発
 pnpm dev
 pnpm dev:server
 pnpm dev:worker
+pnpm dev:all
+
+# ビルド
+pnpm build
+pnpm build:server
+pnpm build:all
+
+# データベース
+pnpm db:generate
+pnpm db:migrate
+pnpm db:deploy
+pnpm db:deploy:target
+pnpm db:deploy:target:resolve
+pnpm db:studio
+
+# 品質
+pnpm lint
+pnpm typecheck
 ```
 
-## OAuth（ソーシャルログイン）
+---
 
-バックエンドに環境変数を設定し、各 OAuth アプリの「コールバック URL」も同じ値にしてください：
+## ライセンス
 
-```env
-OAUTH_GOOGLE_ENABLED=true
-OAUTH_GOOGLE_CLIENT_ID=...
-OAUTH_GOOGLE_CLIENT_SECRET=...
-OAUTH_GOOGLE_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/google/callback
+GPL
 
-OAUTH_LINUXDO_ENABLED=true
-OAUTH_LINUXDO_CLIENT_ID=...
-OAUTH_LINUXDO_CLIENT_SECRET=...
-OAUTH_LINUXDO_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/linuxdo/callback
-```
+## コントリビュート
 
-注意：
+Issue / PR を歓迎します。
 
-- `CORS_ORIGIN` にフロントの Origin（例：`https://www.your-domain.com`）を含めてください。
-- フロント/バック分離（Vercel + Zeabur 等）の場合、**コールバック URL は必ずバックエンド（Express）のドメイン**を指定してください。フロント側に設定すると SPA ルーティングに吸収され、「ホームへ戻るがログインできない」現象が起こります。
-- 誤設定の緩和として、フロント側に `/api/v1/auth/oauth/:provider/callback`（`google` / `linuxdo` のみ）の転送ルートがあり、`${VITE_API_URL}/auth/oauth/:provider/callback` にクエリをそのまま転送します。
+## 関連ドキュメント
 
-## API ドキュメント
-
-Swagger：`http://localhost:3001/api-docs`
+- [README.md](./README.md)
+- [README_EN.md](./README_EN.md)
+- [README_ZH_TW.md](./README_ZH_TW.md)
+- [CLAUDE.md](./CLAUDE.md)

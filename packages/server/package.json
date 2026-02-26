@@ -17,6 +17,8 @@
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:target": "tsx scripts/migrate-target-db.ts",
+    "prisma:migrate:target:resolve": "tsx scripts/migrate-target-db.ts --resolve-legacy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
     "cleanup:demo": "tsx scripts/cleanup-demo.ts"

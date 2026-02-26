@@ -18,6 +18,8 @@
     "db:push": "pnpm --filter @ssrprompt/server prisma:push",
     "db:migrate": "pnpm --filter @ssrprompt/server prisma:migrate",
     "db:deploy": "pnpm --filter @ssrprompt/server prisma:migrate:deploy",
+    "db:deploy:target": "pnpm --filter @ssrprompt/server prisma:migrate:target",
+    "db:deploy:target:resolve": "pnpm --filter @ssrprompt/server prisma:migrate:target:resolve",
     "db:studio": "pnpm --filter @ssrprompt/server prisma:studio"
   },
   "devDependencies": {

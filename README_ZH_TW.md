@@ -2,7 +2,7 @@
 
 # SSRPrompt
 
-一個現代化的 AI Prompt 開發與評測平台，幫助開發者更高效地開發、測試與管理 AI Prompts。
+一個面向生產環境的 AI Prompt 開發、評測與發布平台（v2.0）。
 
 [简体中文](./README.md) | 繁體中文 | [English](./README_EN.md) | [日本語](./README_JA.md) | [官網](https://www.ssrprompt.com)
 
@@ -10,110 +10,74 @@
 
 </div>
 
-## v2.0 架構升級
+## 專案說明
 
-SSRPrompt v2.0 採用全新的前後端分離架構，帶來更好的安全性、可維護性與擴展性：
+- 此倉庫為 **v2.0 重構架構**（`packages/client` + `packages/server` + `packages/shared`）。
+- 與 `main` 分支（舊部署模式）不相容。
+- 後端統一使用 PostgreSQL + Prisma，前端不直接接觸模型 API Key。
 
-- **Monorepo 架構** - 使用 pnpm workspace 管理多包專案
-- **API Key 加密儲存** - AES-256-GCM 加密保護敏感資訊
-- **後端 AI 代理** - 所有 AI 呼叫皆透過後端代理，前端不接觸 API Key
-- **SSE 串流回應** - 支援即時串流輸出，優化使用體驗
-- **多租戶隔離** - 強制使用者資料隔離，保障資料安全
-- **PostgreSQL** - 統一使用 PostgreSQL 資料庫
+## 目前版本能力（依程式碼現況）
 
-## 與 main 分支差異
+### Prompt 全流程
 
-> 目前分支為 v2.0 重構版本；與 `main` 分支（穩定版）的架構/部署方式不相容。
+- Prompt 工作區：多輪訊息、變數、結構化輸出、參數調整、版本管理。
+- Prompt 分組：支援分組與排序。
+- Prompt 廣場：瀏覽/複製公開 Prompt 與版本。
+- Prompt API：可建立 API Key 並透過開放介面呼叫指定 Prompt。
 
-| 維度 | `main`（穩定版） | 目前分支（v2.0） |
-|---|---|---|
-| 包管理 | npm | pnpm workspace |
-| 程式碼結構 | 單倉前端 + 可選 `server/`（MySQL 代理） | Monorepo：`packages/client` + `packages/server` + `packages/shared` |
-| 資料庫 | Supabase（PostgreSQL）/ MySQL；支援 Demo 免配置體驗 | 僅 PostgreSQL；Prisma 管理 Schema；提供舊版資料遷移腳本 |
-| AI 呼叫與 Key | 主要由前端發起呼叫 | 統一由後端代理；API Key AES-256-GCM 加密儲存；前端不接觸 Key |
-| 認證與會話 | 前端訪問密碼（`VITE_APP_PASSWORD`） | JWT 登入 + Refresh Token；Access Token 24h；Demo 有效期 7 天 |
-| 配置方式 | 以設定頁為主 | 以服務端 `.env` 為主（`DATABASE_URL/JWT_SECRET/ENCRYPTION_KEY` 等） |
-| 啟動方式 | 可僅啟動前端（Supabase/Demo） | 需要啟動後端（建議 `pnpm dev:all` 同時啟動 client/server/worker） |
+### 評測與分析
 
-## 功能特性
+- 評測中心：評測集、測試案例、評分標準、執行紀錄。
+- 執行控制：執行、中止、批次寫入結果。
+- 匯入匯出：模板下載、ZIP 匯入、評測匯出。
+- 分析報告：支援單次/多次執行分析報告保存。
 
-### 核心功能
+### 多模態與可觀測
 
-- **Prompt 開發** - 可視化介面開發與管理 AI Prompts，支援變數、多輪對話、結構化輸出
-- **Prompt 列表快捷操作** - 支援一鍵複製 Prompt、刪除（再次確認）
-- **Prompt 建立嚮導** - AI 驅動的對話式 Prompt 建立流程，支援模板快速開始
-- **評測中心** - 對 Prompts 進行系統化評測與對比，支援自定義評價標準與 AI 評分
-- **歷史記錄** - 追蹤與查看 Prompt 執行歷史，包含 Token 消耗與延遲統計
-- **智慧優化** - AI 驅動的 Prompt 分析與優化建議
+- Chat SSE 串流輸出，支援 reasoning/thinking 顯示。
+- 檔案上傳與附件（需 S3 相容物件儲存）。
+- OCR 供應商：`paddle`、`paddle_vl`、`paddle_vl_1_5`、`datalab`、`mineru`。
+- Trace 追蹤：輸入輸出、延遲、Token、附件、OCR 資訊。
 
-### 高級特性
+### 安全與平台
 
-- **多模型支援** - 支援 OpenAI、Anthropic、Google Gemini、OpenRouter 等多種 AI 服務商
-- **推理模型支援** - 支援 Claude、DeepSeek R1 等推理模型的 Thinking 輸出展示
-- **附件支援** - 支援圖片、PDF、文字等作為上下文（自動 vision/OCR）
-- **版本管理** - Prompt 版本歷史與對比功能
-- **即時串流輸出** - SSE 串流回應，支援中斷與重試
+- JWT + Refresh Token 驗證，支援 Demo Token。
+- API Key 以 AES-256-GCM 加密儲存。
+- 私有分享連結（Prompt / Evaluation）+ 密碼驗證 + 存取日誌。
+- OAuth（Google / Linux.do）、信箱驗證碼、忘記密碼。
+- 管理員使用者管理（角色、狀態、帳號操作）。
 
-### 平台特性
+## 頁面與路由
 
-- **Demo 模式** - 無需配置即可快速體驗系統（7 天有效期）
-- **多語言支援** - 支援簡體中文、繁體中文、英文、日文
-- **主題切換** - 支援明暗主題切換
-- **JWT 認證** - 安全的使用者認證機制
+| 頁面 | 路由 |
+|---|---|
+| 首頁 | `/` |
+| Prompt 嚮導 | `/wizard` |
+| Prompt 廣場 | `/plaza` |
+| Prompt 工作區 | `/prompts` |
+| 評測中心 | `/evaluation` |
+| 呼叫追蹤 | `/traces` |
+| 設定 | `/settings` |
+| 登入 / 忘記密碼 | `/login` / `/forgot-password` |
+| 分享頁 | `/share/p/:token` / `/share/e/:token` |
 
-## 亮點
+## 技術棧
 
-- **安全預設**：API Key 僅存於後端並使用 AES-256-GCM 加密；前端永遠不直接接觸 Key。
-- **可觀測**：從 Prompt 運行到評測，都能在 Trace 中看到輸入/輸出、Thinking、耗時/Token、附件與 OCR 結果，方便定位問題。
-- **多模態**：支援圖片/PDF/文字附件；可按模型能力自動選擇 vision 或 OCR 流程。
-- **可評測**：以測試用例 + 評價標準（支援 AI 打分）對 Prompt 做系統化對比，並可匯出結果用於復盤/報告。
+- 前端：React 18 + TypeScript + Vite + Tailwind + Zustand + i18next
+- 後端：Express + TypeScript + Prisma + PostgreSQL + Graphile Worker
+- 共享：`@ssrprompt/shared`（型別、Schema、錯誤碼）
 
-## 頁面與功能分布
+---
 
-| 頁面 | 路由 | 主要功能 |
-|---|---|---|
-| 首頁 | `/` | 快速入口：Prompt 嚮導 / 工作區 / 廣場 |
-| Prompt 嚮導 | `/wizard` | 選擇模板 → 對話生成 Prompt → 一鍵儲存到工作區 |
-| Prompt 工作區 | `/prompts` | Prompt/分組管理、變數、結構化輸出、參數面板、測試運行、版本歷史/對比、發布到廣場、觀察/優化 |
-| Prompt 廣場 | `/plaza` | 瀏覽公開 Prompt、查看版本、複製到我的工作區並二次編輯 |
-| 評測中心 | `/evaluation` | 建立評測、管理測試用例/評價標準、運行評測、結果對比、匯出 CSV |
-| 呼叫追蹤 | `/traces` | Trace 列表/篩選、查看輸入輸出、Thinking、參數、耗時/Token、附件與 OCR 結果 |
-| 設定 | `/settings` | 服務商/模型配置、優化設定、OCR 設定、使用者管理（管理員） |
-| 登入/找回密碼 | `/login` `/forgot-password` | 信箱密碼登入、第三方登入、Demo 模式 |
+## 快速開始（本機開發）
 
-## 使用指南（從 0 到 1）
-
-1. 登入：信箱/密碼或第三方登入（Google/Linux.do），也可以先進入 Demo 模式快速體驗。
-2. 先配置模型：進入「設定 → Providers」，新增服務商並填入 API Key；再新增/啟用模型（沒有可用模型將無法運行 Prompt）。
-3. 建立 Prompt：
-   - 新手：從「Prompt 嚮導」選擇模板，和 AI 對話生成 Prompt，再儲存到工作區。
-   - 進階：在「Prompt 工作區」直接建立/編輯多輪訊息、變數與結構化輸出。
-4. 調試 Prompt：在工作區使用測試面板選擇模型、填寫變數、調整參數；支援串流輸出、Thinking 展示、附件（圖片/PDF/文字）與 OCR。
-5. 評測對比：在「評測中心」新增測試用例與評價標準（可用 AI 打分），批量運行並對比結果，支援匯出 CSV。
-6. 分享復用：將你的 Prompt 發佈到「廣場」，或從廣場一鍵複製他人 Prompt 到自己的工作區繼續迭代。
-
-## 前置依賴（必需 / 可選）
-
-必需：
-
-- PostgreSQL（服務端資料儲存）
-
-可選（按需啟用）：
-
-- S3 相容物件儲存（附件上傳、檔案預覽、OCR 結果/中間檔案儲存）
-- SMTP（開啟信箱驗證碼註冊 / 找回密碼）
-- OAuth（Google / Linux.do 第三方登入）
-- 評測 Worker（生產建議設定 `EVALUATION_QUEUE_DRIVER=pg` 並運行 worker 行程；開發環境使用 `pnpm dev:all` 或 `pnpm dev:worker`）
-
-## 快速開始（開發）
-
-### 環境要求
+### 1) 環境需求
 
 - Node.js >= 18
 - pnpm >= 8
 - PostgreSQL >= 14
 
-### 安裝
+### 2) 安裝
 
 ```bash
 git clone https://github.com/innocentshen/ssrprompt.git
@@ -121,55 +85,207 @@ cd ssrprompt
 pnpm install
 ```
 
-### 配置
+### 3) 設定環境變數
 
 ```bash
 cp packages/server/.env.example packages/server/.env
-# 設定 DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY
 ```
 
-### 初始化資料庫
+最低必填（`packages/server/.env`）：
+
+```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/ssrprompt?schema=public
+JWT_SECRET=your-jwt-secret-at-least-32-characters-long
+ENCRYPTION_KEY=your-64-character-hex-string-for-aes-256-encryption
+```
+
+產生 `ENCRYPTION_KEY`：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### 4) 初始化資料庫
 
 ```bash
 pnpm db:generate
-pnpm db:push
-pnpm db:studio
-pnpm --filter @ssrprompt/server prisma:seed
+pnpm db:deploy        # 建議：以 migration 為準
+# pnpm db:push         # 僅開發場景可選
+pnpm --filter @ssrprompt/server prisma:seed   # 可選
 ```
 
-### 啟動
+### 5) 啟動
 
 ```bash
-pnpm dev:all        # client + server + worker
+pnpm dev:all          # 同時啟動 client/server/worker（建議）
 
-# 或分別啟動
+# 或分開啟動
+pnpm dev              # 前端: http://localhost:5173
+pnpm dev:server       # API:  http://localhost:3001
+pnpm dev:worker       # Worker
+```
+
+Swagger 文件：`http://localhost:3001/api-docs`
+
+---
+
+## 線上目標資料庫結構升級
+
+倉庫已內建目標庫遷移腳本（可傳任意 `DATABASE_URL`）：
+
+```bash
+# 一般：對目標庫執行 migrate deploy + status
+pnpm db:deploy:target -- --database-url "postgresql://user:password@host:port/dbname"
+
+# 歷史庫有 migration 紀錄漂移：先 resolve 再 deploy
+pnpm db:deploy:target:resolve -- --database-url "postgresql://user:password@host:port/dbname"
+```
+
+若出現 Prisma 類似 `column ... does not exist`，先執行上述命令。
+
+---
+
+## 評測佇列與 Worker 模式
+
+`EVALUATION_QUEUE_DRIVER` 支援：
+
+- `memory`（預設）：進程內佇列，適合開發/輕量場景。
+- `pg`：Graphile Worker 佇列，建議生產使用。
+
+生產建議：
+
+1. 設定 `EVALUATION_QUEUE_DRIVER=pg`
+2. 首次初始化 worker schema：
+
+```bash
+pnpm --filter @ssrprompt/server worker:setup
+```
+
+3. 分開跑 API 與 Worker：
+
+```bash
+pnpm --filter @ssrprompt/server start
+pnpm --filter @ssrprompt/server start:worker
+```
+
+---
+
+## Docker 部署（雙服務）
+
+Dockerfile：
+
+- `Dockerfile.ssrprompt-api`
+- `Dockerfile.ssrprompt-worker`
+
+建置：
+
+```bash
+docker build -f Dockerfile.ssrprompt-api -t <dockerhub_user>/ssrprompt-api:latest .
+docker build -f Dockerfile.ssrprompt-worker -t <dockerhub_user>/ssrprompt-worker:latest .
+```
+
+執行：
+
+```bash
+# API
+docker run -d --name ssrprompt-api -p 3001:3001 --env-file packages/server/.env <dockerhub_user>/ssrprompt-api:latest
+
+# Worker
+docker run -d --name ssrprompt-worker --env-file packages/server/.env <dockerhub_user>/ssrprompt-worker:latest
+```
+
+若在 Zeabur/GitHub 來源建置，API 與 Worker 啟動命令需分開：
+
+- API：`node packages/server/dist/index.js`
+- Worker：`node packages/server/dist/worker.js`
+
+---
+
+## 後端關鍵環境變數
+
+### 必填
+
+- `NODE_ENV`
+- `PORT`（預設 `3001`）
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `ENCRYPTION_KEY`
+- `CORS_ORIGIN`
+
+### 常用選填
+
+- 註冊與驗證：`ALLOW_REGISTRATION`、`REQUIRE_EMAIL_VERIFICATION`
+- SMTP：`SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` `SMTP_FROM`
+- OAuth：`OAUTH_GOOGLE_*`、`OAUTH_LINUXDO_*`
+- S3：`S3_ENDPOINT` `S3_BUCKET` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY` `S3_REGION`
+- 限流：`RATE_LIMIT_WINDOW_MS`、`RATE_LIMIT_MAX_REQUESTS`
+- 評測佇列：`EVALUATION_QUEUE_DRIVER` 與 `EVALUATION_*` 調參
+
+完整模板：`packages/server/.env.example`
+
+---
+
+## API 概覽（v1）
+
+前綴：`/api/v1`
+
+- 認證：`/auth/*`
+- 健康檢查：`/health`
+- Prompt：`/prompts`、`/prompt-groups`
+- 模型：`/providers`、`/models`
+- 對話：`/chat/completions`
+- 評測：`/evaluations`、`/runs`、`/test-cases`、`/criteria`
+- 匯入匯出：`/evaluation-imports`
+- 檔案/OCR：`/files`、`/ocr`
+- 分享：`/share-links`、`/share`
+- Prompt API：`/prompt-api-keys`、`/open/prompts/:promptId/invoke`
+- 追蹤與統計：`/traces`、`/stats/usage`
+- 管理員：`/users`
+
+以 Swagger 為準：`/api-docs`
+
+---
+
+## 常用命令
+
+```bash
+# 開發
 pnpm dev
 pnpm dev:server
 pnpm dev:worker
+pnpm dev:all
+
+# 建置
+pnpm build
+pnpm build:server
+pnpm build:all
+
+# 資料庫
+pnpm db:generate
+pnpm db:migrate
+pnpm db:deploy
+pnpm db:deploy:target
+pnpm db:deploy:target:resolve
+pnpm db:studio
+
+# 品質
+pnpm lint
+pnpm typecheck
 ```
 
-## OAuth（第三方登入）
+---
 
-在後端設定以下環境變數，並在對應平台的 OAuth 應用後台把「回呼地址」設定為同樣的 URL：
+## 授權
 
-```env
-OAUTH_GOOGLE_ENABLED=true
-OAUTH_GOOGLE_CLIENT_ID=...
-OAUTH_GOOGLE_CLIENT_SECRET=...
-OAUTH_GOOGLE_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/google/callback
+GPL
 
-OAUTH_LINUXDO_ENABLED=true
-OAUTH_LINUXDO_CLIENT_ID=...
-OAUTH_LINUXDO_CLIENT_SECRET=...
-OAUTH_LINUXDO_CALLBACK_URL=https://api.your-domain.com/api/v1/auth/oauth/linuxdo/callback
-```
+## 貢獻
 
-注意：
+歡迎提交 Issue / PR。
 
-- `CORS_ORIGIN` 需要包含前端網域（例如 `https://www.your-domain.com`），否則 `/auth/oauth/*?redirect=...` 會拒絕該重定向參數。
-- 若前後端分離部署（例如前端在 Vercel、後端在 Zeabur），**OAuth 回呼 URL 必須指向後端網域**（也就是運行 Express 的網域）。把回呼設定到前端網域（尤其啟用了 SPA rewrite）會被前端路由接管，表現為「登入後跳回首頁但未登入」。
-- 為兼容「回呼誤設到前端網域」的情況，前端內建 `/api/v1/auth/oauth/:provider/callback` 的兜底轉發（僅 `google` / `linuxdo`），會把回呼參數原樣轉發到 `${VITE_API_URL}/auth/oauth/:provider/callback`。
+## 相關文件
 
-## API 文件
-
-Swagger：`http://localhost:3001/api-docs`
+- [README.md](./README.md)
+- [README_EN.md](./README_EN.md)
+- [README_JA.md](./README_JA.md)
+- [CLAUDE.md](./CLAUDE.md)
