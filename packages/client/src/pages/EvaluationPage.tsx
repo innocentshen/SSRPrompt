@@ -218,6 +218,116 @@ function formatImportJobError(err: unknown): string {
   }
 }
 
+function clampScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function normalizeJudgeScore(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value <= 1) return clampScore(value);
+    if (value <= 10) return clampScore(value / 10);
+    if (value <= 100) return clampScore(value / 100);
+    return 1;
+  }
+
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed <= 1) return clampScore(parsed);
+  if (parsed <= 10) return clampScore(parsed / 10);
+  if (parsed <= 100) return clampScore(parsed / 100);
+  return 1;
+}
+
+function stringifyJudgeReason(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function collectJsonCandidates(content: string): string[] {
+  const trimmed = content.trim();
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  if (trimmed) {
+    pushCandidate(trimmed);
+  }
+
+  const fencedRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+  for (const match of trimmed.matchAll(fencedRegex)) {
+    const block = match[1];
+    if (block) pushCandidate(block);
+  }
+
+  const scoreObjectRegex = /\{[\s\S]*?"(?:score|评分|分数)"[\s\S]*?\}/g;
+  for (const match of trimmed.matchAll(scoreObjectRegex)) {
+    if (match[0]) pushCandidate(match[0]);
+  }
+
+  return candidates;
+}
+
+function parseJudgeEvaluationResponse(
+  content: string,
+  fallbackReason: string
+): { score: number; reason: string } {
+  const normalizedContent = (content || '').trim();
+  const candidates = collectJsonCandidates(normalizedContent);
+  const scoreKeys = ['score', '评分', '分数'];
+  const reasonKeys = ['reason', '理由', '说明', 'feedback', 'comment'];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+
+      let score: number | null = null;
+      for (const key of scoreKeys) {
+        score = normalizeJudgeScore(parsed[key]);
+        if (score !== null) break;
+      }
+      if (score === null) continue;
+
+      let reason = '';
+      for (const key of reasonKeys) {
+        reason = stringifyJudgeReason(parsed[key]);
+        if (reason) break;
+      }
+      if (!reason) reason = normalizedContent || fallbackReason;
+      return { score, reason };
+    } catch {
+      continue;
+    }
+  }
+
+  const textScore = normalizeJudgeScore(normalizedContent);
+  if (textScore !== null) {
+    return { score: textScore, reason: normalizedContent || fallbackReason };
+  }
+
+  return {
+    score: 0,
+    reason: normalizedContent || fallbackReason,
+  };
+}
+
 function getFileProcessingLabel(t: (key: string) => string, fileProcessing?: string | null): string {
   const value = fileProcessing || 'auto';
   switch (value) {
@@ -2676,12 +2786,10 @@ export function EvaluationPage() {
     enabledCriteria: EvaluationCriterion[],
     passThreshold: number
   ) => {
-    const names = Object.keys(scores);
-    if (names.length === 0) return true;
+    if (enabledCriteria.length === 0) return true;
     const weightSum = enabledCriteria.reduce((sum, c) => sum + (c.weight || 0), 0) || 1;
-    const weighted = names.reduce((sum, name) => {
-      const criterion = enabledCriteria.find((c) => c.name === name);
-      return sum + scores[name] * (criterion?.weight || 1);
+    const weighted = enabledCriteria.reduce((sum, criterion) => {
+      return sum + (scores[criterion.name] || 0) * (criterion.weight || 1);
     }, 0);
     return weighted / weightSum >= passThreshold;
   };
@@ -2937,13 +3045,9 @@ export function EvaluationPage() {
           isEvalCase: true,
         }, signal);
 
-        const jsonMatch = evalResponse.content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          const score = Math.min(1, Math.max(0, (parsed.score || 0) / 10));
-          scores[criterion.name] = score;
-          aiFeedback[criterion.name] = parsed.reason || '';
-        }
+        const parsed = parseJudgeEvaluationResponse(evalResponse.content, t('evaluationFailed'));
+        scores[criterion.name] = parsed.score;
+        aiFeedback[criterion.name] = parsed.reason;
       } catch (error) {
         if (isAbortError(error)) {
           throw error;
