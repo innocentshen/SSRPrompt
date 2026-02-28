@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronDown, ChevronRight, FileText, Folder, Search, Unlink } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FileText, Folder, RefreshCw, Search, Unlink } from 'lucide-react';
 import type { Prompt, PromptGroup } from '../../types';
 
 type GroupTreeNode = PromptGroup & { depth: number; children: GroupTreeNode[] };
@@ -15,6 +15,8 @@ interface PromptCascaderProps {
   groups: PromptGroup[];
   allowClear?: boolean;
   clearLabel?: string;
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
   placeholder?: string;
   className?: string;
 }
@@ -29,6 +31,8 @@ export function PromptCascader({
   groups,
   allowClear = false,
   clearLabel,
+  onRefresh,
+  refreshing = false,
   placeholder,
   className = '',
 }: PromptCascaderProps) {
@@ -293,19 +297,35 @@ export function PromptCascader({
             <div className="max-h-[320px] overflow-hidden">
               {/* Clear / none option */}
               {allowClear && (
-                <button
-                  type="button"
-                  onClick={() => handleSelectPrompt(null)}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left border-b border-slate-700 light:border-slate-200 hover:bg-slate-700 light:hover:bg-slate-100 transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="w-full flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-700 light:border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectPrompt(null)}
+                    className="flex-1 min-w-0 flex items-center gap-2 text-left hover:text-cyan-300 light:hover:text-cyan-700 transition-colors"
+                  >
                     <Unlink className="w-4 h-4 text-slate-500 flex-shrink-0" />
                     <span className="text-sm text-slate-200 light:text-slate-800 truncate">
                       {clearLabel || tCommon('none')}
                     </span>
+                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {!value && <Check className="w-4 h-4 text-cyan-400 flex-shrink-0" />}
+                    {onRefresh && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onRefresh();
+                        }}
+                        disabled={refreshing}
+                        className="p-1 rounded hover:bg-slate-700/70 light:hover:bg-slate-100 text-slate-400 light:text-slate-500 hover:text-cyan-400 light:hover:text-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={tCommon('refresh')}
+                        aria-label={tCommon('refresh')}
+                      >
+                        <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      </button>
+                    )}
                   </div>
-                  {!value && <Check className="w-4 h-4 text-cyan-400 flex-shrink-0" />}
-                </button>
+                </div>
               )}
 
               {searchQuery.trim() ? (

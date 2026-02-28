@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { Plus, Search, Play, Trash2, Copy, Loader2, Paperclip, X, Eye, Pencil, FileText, Image, Code, File } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Button, Modal } from '../ui';
+import { Button, Checkbox, Modal } from '../ui';
 import { TestCaseEditor } from './TestCaseEditor';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import type { TestCase, FileAttachment } from '../../types';
@@ -296,12 +296,10 @@ export function TestCaseList({
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       {!readOnly && onToggleSelect && (
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={isSelected}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => onToggleSelect(testCase.id, e.target.checked)}
-                          className="w-4 h-4 accent-cyan-500"
                           aria-label={t('selectTestCase')}
                         />
                       )}

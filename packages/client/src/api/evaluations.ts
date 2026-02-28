@@ -180,6 +180,11 @@ export const runsApi = {
   abort: (id: string) => apiClient.post<EvaluationRun>(`/runs/${id}/abort`),
 
   /**
+   * Retry run scores in background worker
+   */
+  retryScores: (id: string) => apiClient.post<EvaluationRun>(`/runs/${id}/retry-scores`),
+
+  /**
    * Get run results
    */
   getResults: (id: string) => apiClient.get<TestCaseResult[]>(`/runs/${id}/results`),

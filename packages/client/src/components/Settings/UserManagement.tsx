@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users, Shield, Trash2, Search } from 'lucide-react';
-import { Button, useToast } from '../ui';
+import { Button, Checkbox, useToast } from '../ui';
 import { usersApi, type UserListItem, type Role } from '../../api/users';
 import { formatDate } from '../../lib/date-utils';
 
@@ -172,11 +172,10 @@ export function UserManagement() {
                     <div className="flex flex-wrap gap-2">
                       {roles.map((role) => (
                         <label key={role.id} className="flex items-center gap-1 text-xs">
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={user.roles.includes(role.name)}
                             onChange={(e) => handleRoleChange(user.id, role.name, e.target.checked)}
-                            className="w-3 h-3 rounded"
+                            className="h-3 w-3"
                           />
                           <span className="text-slate-300 light:text-slate-600">{role.name}</span>
                         </label>

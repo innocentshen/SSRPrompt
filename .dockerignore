@@ -3,6 +3,7 @@
 .tmp
 tmp-*
 *.log
+**/*.tsbuildinfo
 
 .git
 .gitignore

@@ -22,6 +22,35 @@ function normalizeTopP(value: number | undefined): number | undefined {
   return value;
 }
 
+function normalizeBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function normalizeGeminiBaseUrl(baseUrl?: string | null): string {
+  const cleanBaseUrl = normalizeBaseUrl(baseUrl || 'https://generativelanguage.googleapis.com');
+  if (cleanBaseUrl.endsWith('/v1beta/openai')) {
+    return `${cleanBaseUrl.replace(/\/v1beta\/openai$/, '')}/v1beta`;
+  }
+  if (cleanBaseUrl.endsWith('/v1beta') || cleanBaseUrl.endsWith('/v1')) {
+    return cleanBaseUrl;
+  }
+  return `${cleanBaseUrl}/v1beta`;
+}
+
+function normalizeGeminiModelId(modelId: string): string {
+  const trimmed = modelId.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.startsWith('models/') ? trimmed.slice('models/'.length) : trimmed;
+}
+
+function buildGeminiApiUrl(provider: Provider, modelId: string, stream: boolean): string {
+  const baseUrl = normalizeGeminiBaseUrl(provider.baseUrl);
+  const normalizedModelId = normalizeGeminiModelId(modelId);
+  const action = stream ? 'streamGenerateContent' : 'generateContent';
+  const path = `/models/${encodeURIComponent(normalizedModelId)}:${action}`;
+  return stream ? `${baseUrl}${path}?alt=sse` : `${baseUrl}${path}`;
+}
+
 function shouldRetryWithoutTopP(
   status: number,
   message: string,
@@ -160,21 +189,32 @@ export async function getModelWithProvider(
 /**
  * Build provider-specific API URL
  */
-export function buildApiUrl(provider: Provider): string {
-  if (provider.baseUrl) {
-    return `${provider.baseUrl}/chat/completions`;
-  }
-
+export function buildApiUrl(provider: Provider, modelId?: string, stream?: boolean): string {
   switch (provider.type) {
     case 'openai':
+      if (provider.baseUrl) {
+        return `${provider.baseUrl}/chat/completions`;
+      }
       return 'https://api.openai.com/v1/chat/completions';
     case 'anthropic':
+      if (provider.baseUrl) {
+        return `${provider.baseUrl}/chat/completions`;
+      }
       return 'https://api.anthropic.com/v1/messages';
     case 'gemini':
-      return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+      if (!modelId) {
+        throw new AppError(500, 'PROVIDER_ERROR', 'Gemini URL requires model id');
+      }
+      return buildGeminiApiUrl(provider, modelId, stream ?? true);
     case 'openrouter':
+      if (provider.baseUrl) {
+        return `${provider.baseUrl}/chat/completions`;
+      }
       return 'https://openrouter.ai/api/v1/chat/completions';
     default:
+      if (provider.baseUrl) {
+        return `${provider.baseUrl}/chat/completions`;
+      }
       throw new AppError(400, 'PROVIDER_ERROR', `Unknown provider type: ${provider.type}`);
   }
 }
@@ -193,7 +233,7 @@ export function buildHeaders(provider: Provider, apiKey: string): Record<string,
       headers['anthropic-version'] = '2023-06-01';
       break;
     case 'gemini':
-      headers['Authorization'] = `Bearer ${apiKey}`;
+      headers['x-goog-api-key'] = apiKey;
       break;
     default:
       headers['Authorization'] = `Bearer ${apiKey}`;
@@ -221,6 +261,191 @@ function transformForAnthropic(messages: ChatMessage[]): {
       content: m.content,
     })),
   };
+}
+
+type GeminiPart =
+  | { text: string }
+  | { inline_data: { mime_type: string; data: string } };
+
+function parseDataUrl(value: string): { mimeType: string; data: string } | null {
+  const match = value.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/i);
+  if (!match) return null;
+  return {
+    mimeType: match[1],
+    data: match[2].replace(/\s/g, ''),
+  };
+}
+
+function extractTextContent(content: string | ContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part) => part.type === 'text' && typeof part.text === 'string' && part.text.length > 0)
+    .map((part) => part.text as string)
+    .join('\n');
+}
+
+function toGeminiParts(content: string | ContentPart[]): GeminiPart[] {
+  if (typeof content === 'string') {
+    return content.length > 0 ? [{ text: content }] : [];
+  }
+
+  const parts: GeminiPart[] = [];
+  for (const part of content) {
+    if (part.type === 'text' && part.text) {
+      parts.push({ text: part.text });
+      continue;
+    }
+
+    if (part.type === 'image_url' && part.image_url?.url) {
+      const parsed = parseDataUrl(part.image_url.url);
+      if (parsed) {
+        parts.push({
+          inline_data: {
+            mime_type: parsed.mimeType,
+            data: parsed.data,
+          },
+        });
+      } else {
+        parts.push({ text: part.image_url.url });
+      }
+      continue;
+    }
+
+    if (part.type === 'file' && part.file?.file_data) {
+      const parsed = parseDataUrl(part.file.file_data);
+      if (parsed) {
+        parts.push({
+          inline_data: {
+            mime_type: parsed.mimeType,
+            data: parsed.data,
+          },
+        });
+      } else if (part.file.filename) {
+        parts.push({ text: part.file.filename });
+      }
+    }
+  }
+
+  return parts;
+}
+
+function transformForGemini(messages: ChatMessage[]): {
+  systemInstruction?: { parts: GeminiPart[] };
+  contents: Array<{ role: 'user' | 'model'; parts: GeminiPart[] }>;
+} {
+  const systemMessages = messages.filter((m) => m.role === 'system');
+  const systemText = systemMessages
+    .map((m) => extractTextContent(m.content))
+    .filter(Boolean)
+    .join('\n\n');
+
+  const contents = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => {
+      const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      return {
+        role,
+        parts: toGeminiParts(m.content),
+      };
+    })
+    .filter((m) => m.parts.length > 0);
+
+  if (contents.length === 0) {
+    contents.push({
+      role: 'user',
+      parts: [{ text: '' }],
+    });
+  }
+
+  return {
+    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+    contents,
+  };
+}
+
+type JsonSchemaResponseFormat = {
+  type?: unknown;
+  json_schema?: { schema?: unknown };
+};
+
+function extractGeminiResponseSchema(responseFormat?: object): Record<string, unknown> | undefined {
+  if (!responseFormat || typeof responseFormat !== 'object') return undefined;
+  const format = responseFormat as JsonSchemaResponseFormat;
+  if (format.type !== 'json_schema') return undefined;
+  if (!format.json_schema?.schema || typeof format.json_schema.schema !== 'object') return undefined;
+  return format.json_schema.schema as Record<string, unknown>;
+}
+
+function buildGeminiGenerationConfig(
+  modelId: string,
+  options: ChatCompletionOptions,
+  topP: number | undefined
+): Record<string, unknown> {
+  const generationConfig: Record<string, unknown> = {};
+
+  if (typeof options.temperature === 'number') generationConfig.temperature = options.temperature;
+  if (typeof topP === 'number') generationConfig.topP = topP;
+  if (typeof options.max_tokens === 'number') generationConfig.maxOutputTokens = options.max_tokens;
+  if (typeof options.frequency_penalty === 'number') generationConfig.frequencyPenalty = options.frequency_penalty;
+  if (typeof options.presence_penalty === 'number') generationConfig.presencePenalty = options.presence_penalty;
+
+  const lowerModelId = modelId.toLowerCase();
+  const isGemini3 = lowerModelId.includes('gemini-3');
+  const isGemini3Flash = isGemini3 && lowerModelId.includes('flash');
+  const isGemini3Pro31 =
+    isGemini3 &&
+    (lowerModelId.includes('3.1-pro') || lowerModelId.includes('3-1-pro') || lowerModelId.includes('3_1_pro'));
+  const isGemini3Pro = isGemini3 && !isGemini3Pro31 && lowerModelId.includes('pro');
+
+  // Product decision:
+  // - Default effort => low (and include thoughts)
+  // - none => keep model output but do not return thought text
+  const requestedEffort = options.reasoning?.enabled === false
+    ? 'none'
+    : (options.reasoning?.effort ?? 'default');
+  const effectiveEffort = requestedEffort === 'default' ? 'low' : requestedEffort;
+  const includeThoughts = requestedEffort !== 'none';
+
+  if (isGemini3) {
+    let thinkingLevel: 'minimal' | 'low' | 'medium' | 'high';
+    if (effectiveEffort === 'none') {
+      thinkingLevel = isGemini3Flash ? 'minimal' : 'low';
+    } else if (effectiveEffort === 'medium' && isGemini3Pro) {
+      // Gemini 3 Pro does not support medium.
+      thinkingLevel = 'low';
+    } else if (effectiveEffort === 'low' || effectiveEffort === 'medium' || effectiveEffort === 'high') {
+      thinkingLevel = effectiveEffort;
+    } else {
+      thinkingLevel = 'low';
+    }
+
+    generationConfig.thinkingConfig = {
+      includeThoughts,
+      thinkingLevel,
+    };
+  } else {
+    const thinkingBudget =
+      effectiveEffort === 'none'
+        ? 0
+        : effectiveEffort === 'low'
+          ? 1024
+          : effectiveEffort === 'medium'
+            ? 4096
+            : 8192;
+
+    generationConfig.thinkingConfig = {
+      includeThoughts,
+      thinkingBudget,
+    };
+  }
+
+  const responseSchema = extractGeminiResponseSchema(options.responseFormat);
+  if (responseSchema) {
+    generationConfig.responseMimeType = 'application/json';
+    generationConfig.responseJsonSchema = responseSchema;
+  }
+
+  return generationConfig;
 }
 
 /**
@@ -288,7 +513,18 @@ export function buildRequestBody(
     };
   }
 
-  // OpenAI-compatible format (OpenAI, OpenRouter, Gemini, Custom)
+  if (provider.type === 'gemini') {
+    const { systemInstruction, contents } = transformForGemini(messages);
+    const generationConfig = buildGeminiGenerationConfig(model.modelId, options, topP);
+
+    return {
+      contents,
+      ...(systemInstruction ? { systemInstruction } : {}),
+      ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
+    };
+  }
+
+  // OpenAI-compatible format (OpenAI, OpenRouter, Custom)
   const body: Record<string, unknown> = {
     model: model.modelId,
     messages,
@@ -315,6 +551,84 @@ export function buildRequestBody(
   }
 
   return body;
+}
+
+type GeminiCandidate = {
+  content?: {
+    parts?: Array<{ text?: string; thought?: boolean }>;
+  };
+  finishReason?: string;
+  finish_reason?: string;
+};
+
+type GeminiGenerateContentResponse = {
+  responseId?: string;
+  modelVersion?: string;
+  candidates?: GeminiCandidate[];
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+  usage_metadata?: {
+    prompt_token_count?: number;
+    candidates_token_count?: number;
+    total_token_count?: number;
+  };
+};
+
+function mapGeminiFinishReason(reason?: string): string | null {
+  if (!reason) return null;
+  switch (reason) {
+    case 'STOP':
+      return 'stop';
+    case 'MAX_TOKENS':
+      return 'length';
+    case 'SAFETY':
+      return 'content_filter';
+    default:
+      return reason.toLowerCase();
+  }
+}
+
+function extractGeminiDelta(candidate?: GeminiCandidate): { content?: string; reasoning?: string } {
+  const parts = candidate?.content?.parts || [];
+  let content = '';
+  let reasoning = '';
+
+  for (const part of parts) {
+    if (!part.text) continue;
+    if (part.thought === true) {
+      reasoning += part.text;
+    } else {
+      content += part.text;
+    }
+  }
+
+  return {
+    ...(content ? { content } : {}),
+    ...(reasoning ? { reasoning } : {}),
+  };
+}
+
+function extractGeminiUsage(
+  parsed: GeminiGenerateContentResponse
+): { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined {
+  const usage = parsed.usageMetadata || parsed.usage_metadata;
+  if (!usage) return undefined;
+
+  const promptTokens =
+    (parsed.usageMetadata?.promptTokenCount ?? parsed.usage_metadata?.prompt_token_count ?? 0);
+  const completionTokens =
+    (parsed.usageMetadata?.candidatesTokenCount ?? parsed.usage_metadata?.candidates_token_count ?? 0);
+  const totalTokens =
+    (parsed.usageMetadata?.totalTokenCount ?? parsed.usage_metadata?.total_token_count ?? (promptTokens + completionTokens));
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
 }
 
 /**
@@ -385,6 +699,33 @@ export function parseSSEChunk(provider: Provider, data: string): StreamChunk | n
       return null;
     }
 
+    if (provider.type === 'gemini') {
+      const gemini = parsed as GeminiGenerateContentResponse;
+      const candidate = gemini.candidates?.[0];
+      const delta = extractGeminiDelta(candidate);
+      const finishReason = mapGeminiFinishReason(candidate?.finishReason || candidate?.finish_reason);
+      const usage = extractGeminiUsage(gemini);
+
+      if (!delta.content && !delta.reasoning && !finishReason && !usage) {
+        return null;
+      }
+
+      return {
+        id: gemini.responseId || '0',
+        object: 'chat.completion.chunk',
+        created: Date.now(),
+        model: gemini.modelVersion || '',
+        choices: [
+          {
+            index: 0,
+            delta,
+            finish_reason: finishReason,
+          },
+        ],
+        ...(usage ? { usage } : {}),
+      };
+    }
+
     // OpenAI-compatible format
     return parsed as StreamChunk;
   } catch {
@@ -403,7 +744,7 @@ export async function* streamChatCompletion(
   options: ChatCompletionOptions,
   signal?: AbortSignal
 ): AsyncGenerator<StreamChunk, void, unknown> {
-  const url = buildApiUrl(provider);
+  const url = buildApiUrl(provider, model.modelId, true);
   const headers = buildHeaders(provider, apiKey);
   const request = async (omitTopP = false) => {
     const requestOptions: ChatCompletionOptions = omitTopP
@@ -485,9 +826,10 @@ export async function chatCompletion(
   signal?: AbortSignal
 ): Promise<{
   content: string;
+  thinking?: string;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }> {
-  const url = buildApiUrl(provider);
+  const url = buildApiUrl(provider, model.modelId, false);
   const headers = buildHeaders(provider, apiKey);
   const request = async (omitTopP = false) => {
     const requestOptions: ChatCompletionOptions = omitTopP
@@ -532,6 +874,17 @@ export async function chatCompletion(
         completion_tokens: data.usage?.output_tokens || 0,
         total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
       },
+    };
+  }
+
+  if (provider.type === 'gemini') {
+    const parsed = data as GeminiGenerateContentResponse;
+    const delta = extractGeminiDelta(parsed.candidates?.[0]);
+    const usage = extractGeminiUsage(parsed) || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    return {
+      content: delta.content || '',
+      ...(delta.reasoning ? { thinking: delta.reasoning } : {}),
+      usage,
     };
   }
 

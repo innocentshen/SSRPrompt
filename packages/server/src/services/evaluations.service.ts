@@ -11,7 +11,7 @@ import { transformResponse, transformDecimal } from '../utils/transform.js';
 import { AppError } from '@ssrprompt/shared';
 import type { Prisma, StoredFile, TestCase, EvaluationCriterion, EvaluationRun, TestCaseResult } from '@prisma/client';
 import { filesService, type DownloadRange } from './files.service.js';
-import { abortEvaluationRun, enqueueEvaluationRun } from './evaluation-queue.service.js';
+import { abortEvaluationRun, enqueueEvaluationRetryScores, enqueueEvaluationRun } from './evaluation-queue.service.js';
 
 type LegacyBase64Attachment = { name: string; type: string; base64: string };
 type StoredAttachment = { fileId: string; name: string; type: string; size: number };
@@ -839,6 +839,76 @@ export class RunsService {
       console.error('Failed to enqueue evaluation run:', error);
     });
     return run;
+  }
+
+  /**
+   * Enqueue retrying AI scores for an existing run.
+   */
+  async retryScores(userId: string, runId: string): Promise<EvaluationRun> {
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id: runId },
+      include: {
+        evaluation: {
+          select: {
+            id: true,
+            userId: true,
+            judgeModelId: true,
+            criteria: {
+              where: { enabled: true },
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    if (!run || !run.evaluation) {
+      throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+    if (run.evaluation.userId !== userId) {
+      throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+    }
+    if (run.status === 'pending' || run.status === 'running') {
+      throw new AppError(409, 'CONFLICT', 'Run is already in progress');
+    }
+    if (!run.evaluation.judgeModelId) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Judge model not set for evaluation');
+    }
+    if (run.evaluation.criteria.length === 0) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'No enabled criteria configured');
+    }
+
+    const existingRunResults = (run.results || {}) as Record<string, unknown>;
+    const fallbackTotalCases = await prisma.testCaseResult.count({ where: { runId } });
+    const totalCases =
+      typeof existingRunResults.totalCases === 'number' && Number.isFinite(existingRunResults.totalCases)
+        ? existingRunResults.totalCases
+        : fallbackTotalCases;
+
+    const updated = await runsRepository.update(runId, {
+      status: 'pending',
+      errorMessage: null,
+      completedAt: null,
+      results: {
+        ...existingRunResults,
+        totalCases,
+        completedCases: 0,
+      } as Prisma.JsonObject,
+    });
+
+    try {
+      await prisma.evaluation.update({
+        where: { id: run.evaluation.id },
+        data: { status: 'pending', completedAt: null },
+      });
+    } catch (error) {
+      console.error('Failed to update evaluation status for retry scores:', error);
+    }
+
+    enqueueEvaluationRetryScores(userId, runId).catch((error) => {
+      console.error('Failed to enqueue retry-score run:', error);
+    });
+
+    return transformResponse(updated);
   }
 
   /**

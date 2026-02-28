@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Save, FlaskConical, Loader2, Search } from 'lucide-react';
-import { Button, Input, Modal, Toggle, useToast } from '../ui';
+import { Button, Checkbox, Input, Modal, Toggle, useToast } from '../ui';
 import { useOcrSettingsStore } from '../../store/useOcrSettingsStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { ocrApi } from '../../api/ocr';
@@ -1194,29 +1194,23 @@ export function OcrSettings() {
               </label>
               <div className="flex items-center gap-4 text-sm text-slate-300 light:text-slate-700">
                 <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={mineruExtraDocx}
                     onChange={(e) => setMineruExtraDocx(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-600 text-cyan-500 focus:ring-cyan-500/50"
                   />
                   docx
                 </label>
                 <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={mineruExtraHtml}
                     onChange={(e) => setMineruExtraHtml(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-600 text-cyan-500 focus:ring-cyan-500/50"
                   />
                   html
                 </label>
                 <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={mineruExtraLatex}
                     onChange={(e) => setMineruExtraLatex(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-600 text-cyan-500 focus:ring-cyan-500/50"
                   />
                   latex
                 </label>

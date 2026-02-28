@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Variable, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { PromptVariable, PromptVariableType } from '../../types/database';
-import { Button, Input, Select, Collapsible } from '../ui';
+import { Button, Checkbox, Input, Select, Collapsible } from '../ui';
 
 interface VariableEditorProps {
   variables: PromptVariable[];
@@ -180,13 +180,11 @@ export function VariableEditor({ variables, onChange, disabled = false, defaultO
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       id={`required-${index}`}
                       checked={variable.required ?? true}
                       onChange={(e) => handleUpdateVariable(index, { required: e.target.checked })}
                       disabled={disabled}
-                      className="w-4 h-4 rounded border-slate-600 light:border-slate-300 bg-slate-800 light:bg-white text-cyan-500 focus:ring-cyan-500"
                     />
                     <label
                       htmlFor={`required-${index}`}

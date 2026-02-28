@@ -256,13 +256,9 @@ export class ProvidersService {
           break;
         case 'gemini':
           testUrl = baseUrl
-            ? `${baseUrl}/models`
-            : `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-          if (!baseUrl) {
-            delete headers['Content-Type'];
-          } else {
-            headers['Authorization'] = `Bearer ${apiKey}`;
-          }
+            ? buildGeminiModelsUrl(baseUrl, apiKey)
+            : `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+          delete headers['Content-Type'];
           break;
         case 'openrouter':
           // /models is public and doesn't validate API keys; use /credits to verify auth without spending tokens.
@@ -301,7 +297,7 @@ export class ProvidersService {
         } else {
           response = await fetch(testUrl, {
             method: 'GET',
-            headers: type === 'gemini' && !baseUrl ? undefined : headers,
+            headers: type === 'gemini' ? undefined : headers,
             signal: controller.signal,
           });
         }

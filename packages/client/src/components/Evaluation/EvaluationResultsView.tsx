@@ -12,6 +12,7 @@ import {
   FileText,
   Image,
   Paperclip,
+  Pencil,
   RotateCcw,
   Scale,
   Search,
@@ -20,13 +21,14 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import { Badge, Button, Collapsible, MarkdownRenderer, OutputRenderer, OutputRendererControls } from '../ui';
+import { Badge, Button, Collapsible, MarkdownRenderer, Modal, OutputRenderer, OutputRendererControls } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
 import type { EvaluationCriterion, FileAttachment, OcrProvider, TestCase, TestCaseResult } from '../../types';
 import { getFileIconType } from '../../lib/file-utils';
 import { useOutputRenderPreferences } from '../../lib/output-renderer-prefs';
-import { calculateAiCost, formatUsdCost, formatUsdCostFormula } from '../../lib/cost';
+import { calculateAiCost, formatUsdCost } from '../../lib/cost';
+import { useToast } from '../../store/useUIStore';
 
 interface EvaluationResultsViewProps {
   testCases: TestCase[];
@@ -38,6 +40,7 @@ interface EvaluationResultsViewProps {
   canViewOcrResults?: boolean;
   onRetryOutput?: (testCaseId: string) => void;
   onRunAiEvaluation?: (testCaseId: string) => void;
+  onUpdateExpectedOutput?: (testCaseId: string, expectedOutput: string | null) => Promise<void>;
   onAbortRetryOutput?: (testCaseId: string) => void;
   onAbortAiEvaluation?: (testCaseId: string) => void;
   retryingOutputTestCaseId?: string | null;
@@ -62,6 +65,7 @@ export function EvaluationResultsView({
   canViewOcrResults = true,
   onRetryOutput,
   onRunAiEvaluation,
+  onUpdateExpectedOutput,
   onAbortRetryOutput,
   onAbortAiEvaluation,
   retryingOutputTestCaseId,
@@ -70,6 +74,7 @@ export function EvaluationResultsView({
 }: EvaluationResultsViewProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
+  const { showToast } = useToast();
   const [outputRenderPrefs, setOutputRenderPrefs] = useOutputRenderPreferences('ssrprompt_output_render_prefs');
 
   const [query, setQuery] = useState('');
@@ -77,6 +82,11 @@ export function EvaluationResultsView({
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [copiedField, setCopiedField] = useState<'expected' | 'model' | null>(null);
+  const [isEditingExpectedOutput, setIsEditingExpectedOutput] = useState(false);
+  const [expectedOutputDraft, setExpectedOutputDraft] = useState('');
+  const [savingExpectedOutput, setSavingExpectedOutput] = useState(false);
+  const [reEvaluateConfirmOpen, setReEvaluateConfirmOpen] = useState(false);
+  const [pendingReEvaluateTestCaseId, setPendingReEvaluateTestCaseId] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -161,6 +171,72 @@ export function EvaluationResultsView({
   const activeTestCaseIndex = activeResult ? (testCaseIndexMap.get(activeResult.testCaseId) ?? 0) : 0;
   const activeAttachments = activeTestCase?.attachments ?? [];
   const showOcrResults = !!activeResult && activeResult.ocrLatencyMs > 0 && activeAttachments.length > 0;
+  const canEditExpectedOutput = !!onUpdateExpectedOutput && !!activeTestCase;
+
+  useEffect(() => {
+    if (!activeTestCase) {
+      setIsEditingExpectedOutput(false);
+      setExpectedOutputDraft('');
+      return;
+    }
+    if (!isEditingExpectedOutput) {
+      setExpectedOutputDraft(activeTestCase.expectedOutput || '');
+    }
+  }, [activeTestCase, isEditingExpectedOutput]);
+
+  const handleStartEditExpectedOutput = () => {
+    if (!activeTestCase || !onUpdateExpectedOutput) return;
+    setExpectedOutputDraft(activeTestCase.expectedOutput || '');
+    setIsEditingExpectedOutput(true);
+  };
+
+  const handleCancelEditExpectedOutput = () => {
+    setExpectedOutputDraft(activeTestCase?.expectedOutput || '');
+    setIsEditingExpectedOutput(false);
+  };
+
+  const handleUseModelOutputAsExpected = () => {
+    if (!activeResult?.modelOutput) return;
+    setExpectedOutputDraft(activeResult.modelOutput);
+    if (!isEditingExpectedOutput && onUpdateExpectedOutput) {
+      setIsEditingExpectedOutput(true);
+    }
+  };
+
+  const handleSaveExpectedOutput = async () => {
+    if (!activeResult || !onUpdateExpectedOutput || savingExpectedOutput) return;
+    setSavingExpectedOutput(true);
+    try {
+      const nextExpectedOutput = expectedOutputDraft.trim().length > 0 ? expectedOutputDraft : null;
+      await onUpdateExpectedOutput(activeResult.testCaseId, nextExpectedOutput);
+      setIsEditingExpectedOutput(false);
+      showToast('success', t('saveSuccess', { defaultValue: '保存成功' }));
+
+      if (onRunAiEvaluation) {
+        setPendingReEvaluateTestCaseId(activeResult.testCaseId);
+        setReEvaluateConfirmOpen(true);
+      }
+    } catch (error) {
+      console.error('Failed to update expected output:', error);
+      showToast('error', t('updateFailed'));
+    } finally {
+      setSavingExpectedOutput(false);
+    }
+  };
+
+  const closeReEvaluateConfirm = () => {
+    setReEvaluateConfirmOpen(false);
+    setPendingReEvaluateTestCaseId(null);
+  };
+
+  const handleConfirmReEvaluate = () => {
+    if (!onRunAiEvaluation || !pendingReEvaluateTestCaseId) {
+      closeReEvaluateConfirm();
+      return;
+    }
+    onRunAiEvaluation(pendingReEvaluateTestCaseId);
+    closeReEvaluateConfirm();
+  };
 
   const enabledCriteria = criteria.filter((criterion) => criterion.enabled);
 
@@ -174,7 +250,6 @@ export function EvaluationResultsView({
     }
     return map;
   }, [pricing, results]);
-  const activeResultCost = activeResult ? resultCostMap.get(activeResult.id) ?? null : null;
 
   const getFileIcon = (attachment: { type: string; name?: string }) => {
     const iconType = getFileIconType(attachment);
@@ -324,12 +399,12 @@ export function EvaluationResultsView({
         <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm h-full min-h-0">
           {activeResult ? (
             <>
-              <div className="flex flex-wrap lg:flex-nowrap items-start justify-between gap-2 rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-3 py-2">
-                <div className="flex items-start gap-3 min-w-0">
+              <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-3 py-2">
+                <div className="flex items-center gap-3 min-w-0">
                   {activeResult.passed ? (
-                    <CheckCircle2 className="w-5 h-5 mt-0.5 text-emerald-500 light:text-emerald-600 flex-shrink-0" />
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500 light:text-emerald-600 flex-shrink-0" />
                   ) : (
-                    <XCircle className="w-5 h-5 mt-0.5 text-rose-500 light:text-rose-600 flex-shrink-0" />
+                    <XCircle className="w-5 h-5 text-rose-500 light:text-rose-600 flex-shrink-0" />
                   )}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
@@ -339,100 +414,68 @@ export function EvaluationResultsView({
                       </span>
                       {activeResult.errorMessage && <Badge variant="error">{tCommon('error')}</Badge>}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 light:text-slate-600">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" />
-                        {t('llmTime')}: {formatMsAsSeconds(activeResult.latencyMs)}
-                      </span>
-                      {activeResult.ocrLatencyMs > 0 && (
-                        <span className="flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5" />
-                          {t('ocrTime')}: {formatMsAsSeconds(activeResult.ocrLatencyMs)}
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <Zap className="w-3.5 h-3.5" />
-                        {(activeResult.tokensInput + activeResult.tokensOutput).toLocaleString()} tokens
-                      </span>
-                      <span
-                        className="flex items-center gap-1"
-                        title={activeResultCost && !activeResultCost.hasPricing ? t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' }) : undefined}
-                      >
-                        <Coins className="w-3.5 h-3.5" />
-                        {formatUsdCost(activeResultCost?.totalCost ?? null)}
-                      </span>
-                      {activeAttachments.length > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Paperclip className="w-3.5 h-3.5" />
-                          {activeAttachments.length}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-[11px] text-slate-500 light:text-slate-600">
-                      {formatUsdCostFormula(
-                        activeResultCost?.totalCost ?? null,
-                        activeResultCost?.inputCost ?? null,
-                        activeResultCost?.outputCost ?? null
-                      )}
-                    </div>
                   </div>
                 </div>
 
                 {(onRetryOutput || onRunAiEvaluation) && (
                   <div className="flex items-center gap-2 w-full lg:w-auto justify-end">
-                    {onRunAiEvaluation && (
-                      <>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onRunAiEvaluation(activeResult.testCaseId)}
-                          loading={retryingAiEvaluationTestCaseId === activeResult.testCaseId}
-                          disabled={retryingOutputTestCaseId === activeResult.testCaseId}
-                          title={t('runAiEvaluation')}
-                        >
-                          <Scale className="w-3.5 h-3.5" />
-                          <span>{t('runAiEvaluation')}</span>
-                        </Button>
-                        {retryingAiEvaluationTestCaseId === activeResult.testCaseId && onAbortAiEvaluation && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onAbortAiEvaluation(activeResult.testCaseId)}
-                            title={t('abort')}
-                            aria-label={t('abort')}
-                            className="px-2"
-                          >
-                            <Square className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </>
-                    )}
                     {onRetryOutput && (
-                      <>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onRetryOutput(activeResult.testCaseId)}
-                          loading={retryingOutputTestCaseId === activeResult.testCaseId}
-                          disabled={retryingAiEvaluationTestCaseId === activeResult.testCaseId}
-                          title={t('retryOutput')}
-                        >
+                      <Button
+                        variant={retryingOutputTestCaseId === activeResult.testCaseId ? 'danger' : 'secondary'}
+                        size="sm"
+                        onClick={() => {
+                          if (retryingOutputTestCaseId === activeResult.testCaseId) {
+                            onAbortRetryOutput?.(activeResult.testCaseId);
+                            return;
+                          }
+                          onRetryOutput(activeResult.testCaseId);
+                        }}
+                        disabled={
+                          retryingAiEvaluationTestCaseId === activeResult.testCaseId ||
+                          (retryingOutputTestCaseId === activeResult.testCaseId && !onAbortRetryOutput)
+                        }
+                        title={retryingOutputTestCaseId === activeResult.testCaseId ? t('abort') : t('retryOutput')}
+                      >
+                        {retryingOutputTestCaseId === activeResult.testCaseId ? (
+                          <Square className="w-3.5 h-3.5" />
+                        ) : (
                           <RotateCcw className="w-3.5 h-3.5" />
-                          <span>{t('retryOutput')}</span>
-                        </Button>
-                        {retryingOutputTestCaseId === activeResult.testCaseId && onAbortRetryOutput && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onAbortRetryOutput(activeResult.testCaseId)}
-                            title={t('abort')}
-                            aria-label={t('abort')}
-                            className="px-2"
-                          >
-                            <Square className="w-3.5 h-3.5" />
-                          </Button>
                         )}
-                      </>
+                        <span>
+                          {retryingOutputTestCaseId === activeResult.testCaseId
+                            ? `${t('abort')} ${t('retryOutput')}`
+                            : t('retryOutput')}
+                        </span>
+                      </Button>
+                    )}
+                    {onRunAiEvaluation && (
+                      <Button
+                        variant={retryingAiEvaluationTestCaseId === activeResult.testCaseId ? 'danger' : 'secondary'}
+                        size="sm"
+                        onClick={() => {
+                          if (retryingAiEvaluationTestCaseId === activeResult.testCaseId) {
+                            onAbortAiEvaluation?.(activeResult.testCaseId);
+                            return;
+                          }
+                          onRunAiEvaluation(activeResult.testCaseId);
+                        }}
+                        disabled={
+                          retryingOutputTestCaseId === activeResult.testCaseId ||
+                          (retryingAiEvaluationTestCaseId === activeResult.testCaseId && !onAbortAiEvaluation)
+                        }
+                        title={retryingAiEvaluationTestCaseId === activeResult.testCaseId ? t('abort') : t('runAiEvaluation')}
+                      >
+                        {retryingAiEvaluationTestCaseId === activeResult.testCaseId ? (
+                          <Square className="w-3.5 h-3.5" />
+                        ) : (
+                          <Scale className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {retryingAiEvaluationTestCaseId === activeResult.testCaseId
+                            ? `${t('abort')} ${t('runAiEvaluation')}`
+                            : t('runAiEvaluation')}
+                        </span>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -451,18 +494,87 @@ export function EvaluationResultsView({
                     <div className="border-b lg:border-b-0 lg:border-r border-slate-700 light:border-slate-200">
                       <div className="px-3 py-1.5 bg-slate-800 light:bg-emerald-50 border-b border-slate-700 light:border-slate-200 flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-emerald-400 light:text-emerald-600">{t('expectedOutput')}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(activeTestCase?.expectedOutput || '', 'expected')}
-                          disabled={!activeTestCase?.expectedOutput}
-                          className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={tCommon('copy')}
-                        >
-                          {copiedField === 'expected' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {canEditExpectedOutput && !isEditingExpectedOutput && (
+                            <button
+                              type="button"
+                              onClick={handleUseModelOutputAsExpected}
+                              disabled={!activeResult.modelOutput}
+                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={t('adoptModelOutputAsExpected', { defaultValue: '采纳模型输出为期望输出' })}
+                            >
+                              <Zap className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canEditExpectedOutput && !isEditingExpectedOutput && (
+                            <button
+                              type="button"
+                              onClick={handleStartEditExpectedOutput}
+                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600"
+                              title={tCommon('edit')}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!isEditingExpectedOutput && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(activeTestCase?.expectedOutput || '', 'expected')}
+                              disabled={!activeTestCase?.expectedOutput}
+                              className="p-1 rounded hover:bg-slate-700/60 light:hover:bg-emerald-100 text-slate-400 light:text-slate-500 hover:text-slate-200 light:hover:text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={tCommon('copy')}
+                            >
+                              {copiedField === 'expected' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="p-3 bg-slate-900 light:bg-white text-sm max-h-80 overflow-y-auto">
-                        {activeTestCase?.expectedOutput ? (
+                        {isEditingExpectedOutput ? (
+                          <div className="space-y-3">
+                            <textarea
+                              value={expectedOutputDraft}
+                              onChange={(event) => setExpectedOutputDraft(event.target.value)}
+                              rows={12}
+                              className="w-full px-3 py-2 bg-slate-800 light:bg-slate-50 border border-slate-700 light:border-slate-300 rounded text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                            />
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] text-slate-500 light:text-slate-600">
+                                {t('expectedOutputUpdatedNeedRerun', {
+                                  defaultValue: '保存后建议重新 AI 评测以刷新评分结果',
+                                })}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                {activeResult.modelOutput && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={handleUseModelOutputAsExpected}
+                                    disabled={savingExpectedOutput}
+                                  >
+                                    <Zap className="w-3.5 h-3.5" />
+                                    <span>{t('adoptModelOutput', { defaultValue: '采纳模型输出' })}</span>
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={handleCancelEditExpectedOutput}
+                                  disabled={savingExpectedOutput}
+                                >
+                                  <span>{tCommon('cancel')}</span>
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => void handleSaveExpectedOutput()}
+                                  loading={savingExpectedOutput}
+                                >
+                                  <span>{tCommon('save')}</span>
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : activeTestCase?.expectedOutput ? (
                           <OutputRenderer content={activeTestCase.expectedOutput} preferences={outputRenderPrefs} />
                         ) : (
                           <span className="text-slate-500 light:text-slate-400 text-xs">{t('noExpectedOutput')}</span>
@@ -615,6 +727,31 @@ export function EvaluationResultsView({
         onClose={() => setPreviewAttachment(null)}
         downloadBlob={downloadAttachmentBlob}
       />
+
+      <Modal
+        isOpen={reEvaluateConfirmOpen}
+        onClose={closeReEvaluateConfirm}
+        title={t('reEvaluateAfterExpectedOutputUpdatedTitle', {
+          defaultValue: '重新 AI 评测',
+        })}
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-300 light:text-slate-700">
+            {t('reEvaluateAfterExpectedOutputUpdated', {
+              defaultValue: '期望输出已更新，是否立即重新 AI 评测当前用例？',
+            })}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeReEvaluateConfirm}>
+              <span>{tCommon('cancel')}</span>
+            </Button>
+            <Button onClick={handleConfirmReEvaluate}>
+              <span>{t('runAiEvaluation')}</span>
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -12,7 +12,7 @@ import {
   Upload,
   Check,
 } from 'lucide-react';
-import { Button, Input, Modal } from '../ui';
+import { Button, Checkbox, Input, Modal } from '../ui';
 import { Collapsible } from '../ui/Collapsible';
 import type { OutputSchema, SchemaField, SchemaFieldType } from '../../types/database';
 import {
@@ -164,12 +164,11 @@ function SchemaFieldEditor({ field, onChange, onDelete, depth = 0, disabled = fa
               className="flex items-center gap-1 text-xs text-slate-300 light:text-slate-600 cursor-pointer flex-shrink-0"
               onClick={(e) => e.stopPropagation()}
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={field.required}
                 onChange={(e) => onChange({ ...field, required: e.target.checked })}
                 disabled={disabled}
-                className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                className="h-3.5 w-3.5"
               />
               {t('required')}
             </label>
@@ -456,12 +455,11 @@ export function StructuredOutputEditor({
               className="flex-1 text-sm"
             />
             <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer whitespace-nowrap">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={schema?.strict ?? false}
                 onChange={(e) => schema && onChange({ ...schema, strict: e.target.checked })}
                 disabled={disabled || !isEnabled}
-                className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500"
+                className="h-3.5 w-3.5"
               />
               {t('strict')}
             </label>

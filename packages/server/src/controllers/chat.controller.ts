@@ -746,6 +746,7 @@ export const chatController = {
         const normalizedOutput = isJsonSchemaResponseFormat(data.responseFormat)
           ? normalizeStructuredJsonOutput(result.content, data.responseFormat)
           : result.content;
+        const normalizedThinking = normalizeThinkingText(result.thinking || '');
 
         // Save trace if requested
         if (data.saveTrace) {
@@ -754,6 +755,7 @@ export const chatController = {
               source: traceSource,
               input: expanded.inputContent,
               output: normalizedOutput,
+              ...(normalizedThinking ? { thinkingContent: normalizedThinking } : {}),
               tokensInput: result.usage.prompt_tokens,
               tokensOutput: result.usage.completion_tokens,
               latencyMs,
@@ -791,6 +793,7 @@ export const chatController = {
         res.json({
           data: {
             content: normalizedOutput,
+            ...(normalizedThinking ? { thinking: normalizedThinking } : {}),
             usage: result.usage,
             latencyMs,
             ocrLatencyMs,

@@ -10,7 +10,10 @@ interface RunHistoryProps {
   runs: EvaluationRun[];
   models: Model[];
   selectedRunId: string | null;
+  selectedRunLiveMetrics?: RunHistoryLiveMetrics | null;
   onSelectRun: (run: EvaluationRun) => void;
+  onExportRun?: (run: EvaluationRun) => void;
+  exportingRunId?: string | null;
   onDeleteRun?: (runId: string) => void;
   onAbortRun?: (runId: string) => void;
   onBatchExport?: (runs: EvaluationRun[]) => void;
@@ -18,12 +21,27 @@ interface RunHistoryProps {
   onAnalyzeRuns?: (runs: EvaluationRun[]) => void;
   onAnalyzeSelectionLimitReached?: (max: number) => void;
   maxAnalyzeSelection?: number;
+  analyzeSelectionTrigger?: number;
 }
 
 type RunHistoryDateRange = {
   startDate: string;
   endDate: string;
 };
+
+interface RunHistoryLiveMetrics {
+  runId: string;
+  totalCases: number;
+  passedCases: number;
+  llmTimeMs: number;
+  ocrTimeMs: number;
+  tokensInput: number;
+  tokensOutput: number;
+  costInput: number | null;
+  costOutput: number | null;
+  costTotal: number | null;
+  hasPricing: boolean;
+}
 
 const statusConfig: Record<EvaluationStatus, { labelKey: string; variant: 'info' | 'warning' | 'success' | 'error'; icon: React.ReactNode }> = {
   pending: { labelKey: 'pending', variant: 'info', icon: <Clock className="w-4 h-4" /> },
@@ -48,9 +66,11 @@ function getDefaultRecentThreeDayRange(): RunHistoryDateRange {
 }
 
 let runHistoryDateRangeCache: RunHistoryDateRange | null = null;
+let runHistoryAnalyzeSelectionTriggerCache = 0;
 
 export function resetRunHistoryDateRangeCache(): void {
   runHistoryDateRangeCache = null;
+  runHistoryAnalyzeSelectionTriggerCache = 0;
 }
 
 function formatDuration(startedAt: string, completedAt: string | null): string {
@@ -88,7 +108,10 @@ export function RunHistory({
   runs,
   models,
   selectedRunId,
+  selectedRunLiveMetrics,
   onSelectRun,
+  onExportRun,
+  exportingRunId,
   onDeleteRun,
   onAbortRun,
   onBatchExport,
@@ -96,6 +119,7 @@ export function RunHistory({
   onAnalyzeRuns,
   onAnalyzeSelectionLimitReached,
   maxAnalyzeSelection = 20,
+  analyzeSelectionTrigger = 0,
 }: RunHistoryProps) {
   const { t } = useTranslation('evaluation');
   const { t: tCommon } = useTranslation('common');
@@ -124,6 +148,13 @@ export function RunHistory({
       return next.size === prev.size ? prev : next;
     });
   }, [runs]);
+
+  useEffect(() => {
+    if (!onAnalyzeRuns || analyzeSelectionTrigger <= runHistoryAnalyzeSelectionTriggerCache) return;
+    runHistoryAnalyzeSelectionTriggerCache = analyzeSelectionTrigger;
+    setIsAnalyzeSelectionMode(true);
+    setAnalyzeSelectedRunIds(new Set());
+  }, [analyzeSelectionTrigger, onAnalyzeRuns]);
 
   useEffect(() => {
     if (!isStatusMenuOpen) return;
@@ -416,25 +447,45 @@ export function RunHistory({
             const isSelectedForAnalyze = analyzeSelectedRunIds.has(run.id);
             const isSelected = isAnalyzeSelectionMode ? isSelectedForAnalyze : selectedRunId === run.id;
             const runConfig = run.runConfig as RunConfig | null;
-            const runCost = runCostMap.get(run.id) ?? calculateAiCost(run.totalTokensInput || 0, run.totalTokensOutput || 0, null);
+            const liveMetrics = selectedRunLiveMetrics?.runId === run.id ? selectedRunLiveMetrics : null;
+            const runCost = liveMetrics
+              ? {
+                  inputCost: liveMetrics.costInput,
+                  outputCost: liveMetrics.costOutput,
+                  totalCost: liveMetrics.costTotal,
+                  hasPricing: liveMetrics.hasPricing,
+                }
+              : runCostMap.get(run.id) ?? calculateAiCost(run.totalTokensInput || 0, run.totalTokensOutput || 0, null);
             const hasConfigSummary = !!runConfig;
             const fileProcessing = runConfig?.fileProcessing || 'auto';
             const resolvedOcrProvider = runConfig?.ocrProviderResolved ?? runConfig?.ocrProvider ?? null;
             const showOcrProvider = (
               fileProcessing === 'ocr' || fileProcessing === 'auto'
             ) && !!resolvedOcrProvider;
-            const totalCases = (run.results as { totalCases?: number }).totalCases;
-            const completedCases = (run.results as { completedCases?: number }).completedCases;
-            const passedCases = (run.results as { passedCases?: number }).passedCases;
-            const llmTimeMs = (run.results as { llmTimeMs?: number }).llmTimeMs;
-            const ocrTimeMs = (run.results as { ocrTimeMs?: number }).ocrTimeMs;
+            const totalCases = liveMetrics
+              ? liveMetrics.totalCases
+              : (run.results as { totalCases?: number }).totalCases;
+            const completedCases = liveMetrics
+              ? liveMetrics.totalCases
+              : (run.results as { completedCases?: number }).completedCases;
+            const passedCases = liveMetrics
+              ? liveMetrics.passedCases
+              : (run.results as { passedCases?: number }).passedCases;
+            const llmTimeMs = liveMetrics
+              ? liveMetrics.llmTimeMs
+              : (run.results as { llmTimeMs?: number }).llmTimeMs;
+            const ocrTimeMs = liveMetrics
+              ? liveMetrics.ocrTimeMs
+              : (run.results as { ocrTimeMs?: number }).ocrTimeMs;
+            const inputTokens = liveMetrics ? liveMetrics.tokensInput : (run.totalTokensInput || 0);
+            const outputTokens = liveMetrics ? liveMetrics.tokensOutput : (run.totalTokensOutput || 0);
             const passRate = totalCases
               ? (((passedCases || 0) / totalCases) * 100).toFixed(0)
               : null;
             const progressPct = totalCases
               ? Math.min(100, Math.max(0, Math.round((((completedCases || 0) as number) / totalCases) * 100)))
               : 0;
-            const totalTokens = (run.totalTokensInput || 0) + (run.totalTokensOutput || 0);
+            const totalTokens = inputTokens + outputTokens;
             const costFormula = formatUsdCostFormula(runCost.totalCost, runCost.inputCost, runCost.outputCost);
             const modelParameterParts: string[] = [];
             if (run.modelParameters?.temperature !== undefined) modelParameterParts.push(`temp:${run.modelParameters.temperature}`);
@@ -448,6 +499,7 @@ export function RunHistory({
             }
             const modelParametersSummary = modelParameterParts.join(' | ');
             const hasModelParametersSummary = modelParametersSummary.length > 0;
+            const isExportingThisRun = exportingRunId === run.id;
 
             return (
               <button
@@ -558,6 +610,25 @@ export function RunHistory({
                       <p className="text-[10px] uppercase tracking-[0.08em] text-slate-500 light:text-slate-600">{t('passRate')}</p>
                     </div>
                   )}
+                  {onExportRun && !isAnalyzeSelectionMode && run.status !== 'running' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (exportingRunId) return;
+                        onExportRun(run);
+                      }}
+                      disabled={!!exportingRunId}
+                      className={`p-1.5 rounded transition-colors light:hover:bg-slate-100 ${
+                        isExportingThisRun
+                          ? 'text-cyan-400 bg-slate-700/50 light:bg-slate-100 cursor-not-allowed'
+                          : 'text-slate-500 hover:text-cyan-400 hover:bg-slate-700/50'
+                      }`}
+                      title={tCommon('export')}
+                      aria-busy={isExportingThisRun}
+                    >
+                      {isExportingThisRun ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    </button>
+                  )}
                   {onDeleteRun && !isAnalyzeSelectionMode && run.status !== 'running' && (
                     <button
                       onClick={(e) => {
@@ -614,7 +685,7 @@ export function RunHistory({
                           {totalTokens.toLocaleString()}
                         </p>
                         <p className="font-mono text-[11px] text-slate-500 light:text-slate-600 truncate">
-                          {t('inputTokens')}: {(run.totalTokensInput || 0).toLocaleString()} | {t('outputTokens')}: {(run.totalTokensOutput || 0).toLocaleString()}
+                          {t('inputTokens')}: {inputTokens.toLocaleString()} | {t('outputTokens')}: {outputTokens.toLocaleString()}
                         </p>
                       </div>
                       <div className="min-w-0 xl:border-l xl:border-slate-700/40 light:border-slate-200 xl:pl-3">

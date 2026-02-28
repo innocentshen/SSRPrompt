@@ -4,7 +4,7 @@ import { run } from 'graphile-worker';
 import type { TaskList } from 'graphile-worker';
 import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
-import { executeEvaluationRun } from './services/evaluation-runner.service.js';
+import { executeEvaluationRun, executeRetryEvaluationRunScores } from './services/evaluation-runner.service.js';
 import { evaluationImportsService } from './services/evaluation-imports.service.js';
 
 const taskList: TaskList = {
@@ -15,6 +15,14 @@ const taskList: TaskList = {
       throw new Error('evaluation.run payload missing runId');
     }
     await executeEvaluationRun(runId);
+  },
+  'evaluation.retry_scores': async (payload) => {
+    const data = payload as { runId?: unknown } | null;
+    const runId = data && typeof data.runId === 'string' ? data.runId : null;
+    if (!runId) {
+      throw new Error('evaluation.retry_scores payload missing runId');
+    }
+    await executeRetryEvaluationRunScores(runId);
   },
   'evaluation.import': async (payload) => {
     const data = payload as { jobId?: unknown } | null;

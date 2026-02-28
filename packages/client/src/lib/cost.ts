@@ -13,7 +13,7 @@ export type AiCostBreakdown = {
 const TOKENS_PER_MILLION = 1_000_000;
 
 function normalizePrice(value: number | null | undefined): number | null {
-  if (typeof value !== 'number' || Number.isNaN(value) || value < 0) return null;
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return null;
   return value;
 }
 

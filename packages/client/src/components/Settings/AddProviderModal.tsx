@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, Sparkles, Cpu, Server, Globe } from 'lucide-react';
-import { Modal, Button, Input } from '../ui';
+import { Modal, Button, Checkbox, Input } from '../ui';
 import type { ProviderType } from '../../types';
 
 interface AddProviderModalProps {
@@ -103,11 +103,9 @@ export function AddProviderModal({ isOpen, onClose, onAdd, isAdmin }: AddProvide
 
         {isAdmin && (
           <label className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 light:border-slate-300 hover:bg-slate-800/50 light:hover:bg-slate-100 cursor-pointer">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={isSystem}
               onChange={(e) => setIsSystem(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-600 text-cyan-500 focus:ring-cyan-500"
             />
             <div>
               <p className="text-sm font-medium text-slate-200 light:text-slate-800">

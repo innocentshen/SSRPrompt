@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, Loader2, Eye, EyeOff, Maximize2, Play, ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
-import { Button, Modal, MarkdownRenderer } from '../ui';
+import { Button, Checkbox, Modal, MarkdownRenderer } from '../ui';
 import { useToast } from '../../store/useUIStore';
 import type { TestCase } from '../../types';
 
@@ -192,8 +192,7 @@ export function TestCaseEditor({
         >
           <div className="flex items-center gap-3">
             {onSelectChange && (
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={!!isSelected}
                 onClick={(e) => e.stopPropagation()}
                 onChange={(e) => {
@@ -201,7 +200,6 @@ export function TestCaseEditor({
                   onSelectChange(e.target.checked);
                 }}
                 disabled={readOnly}
-                className="w-4 h-4 accent-cyan-500"
                 aria-label={t('selectTestCase')}
               />
             )}

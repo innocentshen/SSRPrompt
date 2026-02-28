@@ -12,7 +12,7 @@ import {
   Settings2,
   Square,
 } from 'lucide-react';
-import { Button, Input, Modal, Select, useToast } from '../ui';
+import { Button, Checkbox, Input, Modal, Select, useToast } from '../ui';
 import { shareApi } from '../../api';
 import type { ShareAccessLogPage, ShareLink } from '../../types';
 import { formatDateTime } from '../../lib/date-utils';
@@ -337,11 +337,9 @@ export function ShareLinksManager() {
             ]}
           />
           <label className="inline-flex items-center gap-2 text-sm text-slate-300 light:text-slate-700">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={includeRevoked}
               onChange={(event) => setIncludeRevoked(event.target.checked)}
-              className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
             />
             {t('shareMgmtIncludeRevoked')}
           </label>
@@ -353,12 +351,10 @@ export function ShareLinksManager() {
 
       <div className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/40 light:bg-white px-3 py-2 flex flex-wrap items-center justify-between gap-3">
         <label className="inline-flex items-center gap-2 text-sm text-slate-200 light:text-slate-800">
-          <input
+          <Checkbox
             ref={selectAllRef}
-            type="checkbox"
             checked={allVisibleSelected}
             onChange={(event) => handleSelectAllVisible(event.target.checked)}
-            className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
           />
           {t('shareMgmtSelectAll')}
         </label>
@@ -406,11 +402,10 @@ export function ShareLinksManager() {
             {sortedLinks.map((link) => (
               <div key={link.id} className="p-4 bg-slate-900/50 light:bg-white">
                 <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selectedLinkIds.has(link.id)}
                     onChange={() => toggleSelectLink(link.id)}
-                    className="mt-1 w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                    className="mt-1"
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-4">
@@ -547,11 +542,9 @@ export function ShareLinksManager() {
             />
 
             <label className="flex items-center gap-2 text-sm text-slate-300 light:text-slate-700">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={allowCopy}
                 onChange={(event) => setAllowCopy(event.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
               />
               {t('shareMgmtAllowCopy')}
             </label>
@@ -565,11 +558,9 @@ export function ShareLinksManager() {
             />
 
             <label className="flex items-center gap-2 text-sm text-slate-300 light:text-slate-700">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={clearPassword}
                 onChange={(event) => setClearPassword(event.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
               />
               {t('shareMgmtClearPassword')}
             </label>

@@ -24,7 +24,9 @@ COPY packages/server packages/server
 ARG DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ssrprompt"
 ENV DATABASE_URL=$DATABASE_URL
 
-RUN pnpm --filter @ssrprompt/shared build \
+RUN pnpm install --frozen-lockfile \
+  && rm -f /repo/packages/shared/tsconfig.tsbuildinfo /repo/packages/server/tsconfig.tsbuildinfo \
+  && pnpm --filter @ssrprompt/shared build \
   && pnpm --filter @ssrprompt/server exec prisma generate \
   && pnpm --filter @ssrprompt/server build \
   && pnpm --filter @ssrprompt/server deploy --prod /out/server \

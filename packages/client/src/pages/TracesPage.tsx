@@ -42,6 +42,14 @@ interface PromptStats {
   avgLatency: number;
   errorCount: number;
 }
+
+interface MissingPriceModelEntry {
+  key: string;
+  modelId: string | null;
+  modelName: string;
+  model: Model | null;
+  traceCount: number;
+}
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const toDateInputValue = (date: Date) =>
@@ -90,6 +98,9 @@ export function TracesPage() {
   const [deleting, setDeleting] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [showMissingPriceModal, setShowMissingPriceModal] = useState(false);
+  const [savingMissingPrices, setSavingMissingPrices] = useState(false);
+  const [missingPriceDrafts, setMissingPriceDrafts] = useState<Record<string, { input: string; output: string }>>({});
 
   const sourceOptions = useMemo(
     () => [
@@ -568,6 +579,132 @@ export function TracesPage() {
 
   const currentStatsMissingPriceCount = Math.max(0, currentStats.count - currentStats.pricedCostCount);
 
+  const missingPriceModelEntries = useMemo<MissingPriceModelEntry[]>(() => {
+    const missingByModelId = new Map<string, { modelId: string | null; traceCount: number }>();
+    for (const trace of filteredTraces) {
+      const traceCost = getTraceCostBreakdown(trace);
+      if (traceCost.hasPricing) continue;
+
+      const key = trace.modelId ?? '__null_model__';
+      const current = missingByModelId.get(key);
+      if (current) {
+        current.traceCount += 1;
+      } else {
+        missingByModelId.set(key, {
+          modelId: trace.modelId,
+          traceCount: 1,
+        });
+      }
+    }
+
+    const entries: MissingPriceModelEntry[] = Array.from(missingByModelId.values()).map((item) => {
+      const model = item.modelId ? models.find((candidate) => candidate.id === item.modelId) ?? null : null;
+      return {
+        key: item.modelId ?? '__null_model__',
+        modelId: item.modelId,
+        modelName: model?.name || getModelName(item.modelId),
+        model,
+        traceCount: item.traceCount,
+      };
+    });
+
+    entries.sort((left, right) => right.traceCount - left.traceCount);
+    return entries;
+  }, [filteredTraces, getModelName, getTraceCostBreakdown, models]);
+
+  const editableMissingPriceModels = useMemo(
+    () => missingPriceModelEntries.filter((entry) => entry.model),
+    [missingPriceModelEntries]
+  );
+
+  const openMissingPriceModal = useCallback(() => {
+    if (missingPriceModelEntries.length === 0) return;
+    const nextDrafts: Record<string, { input: string; output: string }> = {};
+    for (const entry of missingPriceModelEntries) {
+      if (!entry.model) continue;
+      nextDrafts[entry.model.id] = {
+        input: String(entry.model.inputPricePerM ?? ''),
+        output: String(entry.model.outputPricePerM ?? ''),
+      };
+    }
+    setMissingPriceDrafts(nextDrafts);
+    setShowMissingPriceModal(true);
+  }, [missingPriceModelEntries]);
+
+  const handleMissingPriceDraftChange = useCallback(
+    (modelId: string, field: 'input' | 'output', value: string) => {
+      setMissingPriceDrafts((prev) => ({
+        ...prev,
+        [modelId]: {
+          input: field === 'input' ? value : (prev[modelId]?.input ?? ''),
+          output: field === 'output' ? value : (prev[modelId]?.output ?? ''),
+        },
+      }));
+    },
+    []
+  );
+
+  const handleSaveMissingPrices = useCallback(async () => {
+    if (editableMissingPriceModels.length === 0) {
+      showToast('info', t('noConfigurableModels', { defaultValue: '当前没有可维护价格的模型' }));
+      setShowMissingPriceModal(false);
+      return;
+    }
+
+    const updates: Array<{ modelId: string; inputPricePerM: number; outputPricePerM: number }> = [];
+    for (const entry of editableMissingPriceModels) {
+      const model = entry.model;
+      if (!model) continue;
+      const inputText = (missingPriceDrafts[model.id]?.input ?? '').trim();
+      const outputText = (missingPriceDrafts[model.id]?.output ?? '').trim();
+      const inputPrice = Number.parseFloat(inputText);
+      const outputPrice = Number.parseFloat(outputText);
+
+      if (!Number.isFinite(inputPrice) || inputPrice < 0) {
+        showToast('error', `${entry.modelName} ${t('inputPricePerM', { defaultValue: '输入价格' })}`);
+        return;
+      }
+      if (!Number.isFinite(outputPrice) || outputPrice < 0) {
+        showToast('error', `${entry.modelName} ${t('outputPricePerM', { defaultValue: '输出价格' })}`);
+        return;
+      }
+
+      updates.push({
+        modelId: model.id,
+        inputPricePerM: inputPrice,
+        outputPricePerM: outputPrice,
+      });
+    }
+
+    if (updates.length === 0) {
+      setShowMissingPriceModal(false);
+      return;
+    }
+
+    setSavingMissingPrices(true);
+    try {
+      const updatedModels = await Promise.all(
+        updates.map((item) =>
+          modelsApi.update(item.modelId, {
+            inputPricePerM: item.inputPricePerM,
+            outputPricePerM: item.outputPricePerM,
+          })
+        )
+      );
+
+      const updatedById = new Map(updatedModels.map((model) => [model.id, model]));
+      setModels((prev) => prev.map((model) => updatedById.get(model.id) ?? model));
+
+      showToast('success', t('saveSuccess', { defaultValue: '保存成功' }));
+      setShowMissingPriceModal(false);
+    } catch (error) {
+      console.error('Failed to update missing model prices:', error);
+      showToast('error', t('saveFailed', { defaultValue: '保存失败' }));
+    } finally {
+      setSavingMissingPrices(false);
+    }
+  }, [editableMissingPriceModels, missingPriceDrafts, showToast, t]);
+
   const errorRate = currentStats.count
     ? ((currentStats.errorCount / currentStats.count) * 100).toFixed(1)
     : '0';
@@ -749,9 +886,13 @@ export function TracesPage() {
                 {formatUsdCost(currentStats.pricedCostCount > 0 ? currentStats.totalCost : null)}
               </p>
               {currentStatsMissingPriceCount > 0 && (
-                <p className="text-xs text-amber-400 light:text-amber-700 mt-1">
+                <button
+                  type="button"
+                  onClick={openMissingPriceModal}
+                  className="mt-1 inline-flex items-center text-xs text-amber-400 light:text-amber-700 hover:text-amber-300 light:hover:text-amber-800 underline underline-offset-2 transition-colors"
+                >
                   {t('modelPriceNotConfigured', { defaultValue: 'Model price is not configured' })} ({currentStatsMissingPriceCount})
-                </p>
+                </button>
               )}
             </div>
             <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
@@ -856,6 +997,90 @@ export function TracesPage() {
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={showMissingPriceModal}
+        onClose={() => {
+          if (savingMissingPrices) return;
+          setShowMissingPriceModal(false);
+        }}
+        title={t('maintainMissingModelPrices', { defaultValue: '维护未配置模型价格' })}
+        size="xl"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-300 light:text-slate-700">
+            {t('missingModelPriceHint', { defaultValue: '以下模型在当前筛选结果中缺少价格配置，请补充 Input / Output 单价（每百万 Tokens）。' })}
+          </p>
+          <div className="max-h-[55vh] overflow-y-auto border border-slate-700 light:border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-slate-900 light:bg-slate-100 border-b border-slate-700 light:border-slate-200">
+                <tr>
+                  <th className="px-4 py-2 text-left text-slate-500 light:text-slate-600">{t('model', { defaultValue: '模型' })}</th>
+                  <th className="px-4 py-2 text-left text-slate-500 light:text-slate-600">{t('affectedRecords', { defaultValue: '影响记录数' })}</th>
+                  <th className="px-4 py-2 text-left text-slate-500 light:text-slate-600">{t('inputPricePerM', { defaultValue: '输入价 / 1M' })}</th>
+                  <th className="px-4 py-2 text-left text-slate-500 light:text-slate-600">{t('outputPricePerM', { defaultValue: '输出价 / 1M' })}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 light:divide-slate-200">
+                {missingPriceModelEntries.map((entry) => (
+                  <tr key={entry.key}>
+                    <td className="px-4 py-3 text-slate-200 light:text-slate-800">
+                      <div className="font-medium">{entry.modelName}</div>
+                      {entry.model?.modelId && (
+                        <div className="text-xs text-slate-500 light:text-slate-600 mt-1">{entry.model.modelId}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-300 light:text-slate-700">{entry.traceCount}</td>
+                    <td className="px-4 py-3">
+                      {entry.model ? (
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.000001"
+                          value={missingPriceDrafts[entry.model.id]?.input ?? ''}
+                          onChange={(event) => handleMissingPriceDraftChange(entry.model!.id, 'input', event.target.value)}
+                          className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500"
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-500 light:text-slate-600">{t('modelNotFound', { defaultValue: '模型不存在或不可编辑' })}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {entry.model ? (
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.000001"
+                          value={missingPriceDrafts[entry.model.id]?.output ?? ''}
+                          onChange={(event) => handleMissingPriceDraftChange(entry.model!.id, 'output', event.target.value)}
+                          className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500"
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-500 light:text-slate-600">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {missingPriceModelEntries.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-slate-500 light:text-slate-600">
+                      {t('noRecords', { defaultValue: '暂无记录' })}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-3 pt-1">
+            <Button variant="secondary" onClick={() => setShowMissingPriceModal(false)} disabled={savingMissingPrices}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={() => void handleSaveMissingPrices()} loading={savingMissingPrices}>
+              {tCommon('save', { defaultValue: '保存' })}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={!!selectedTrace}

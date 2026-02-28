@@ -286,6 +286,14 @@ export const runsController = {
   },
 
   /**
+   * POST /runs/:id/retry-scores - Retry AI scoring for an existing run
+   */
+  async retryScores(req: Request, res: Response): Promise<void> {
+    const run = await runsService.retryScores(req.user!.userId, req.params.id);
+    res.json({ data: run });
+  },
+
+  /**
    * PUT /runs/:id - Update run
    */
   async update(req: Request, res: Response): Promise<void> {

@@ -22,7 +22,7 @@ import {
   Link,
   Search,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, useToast, ModelSelector, MarkdownRenderer } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, Checkbox, useToast, ModelSelector, MarkdownRenderer, Collapsible } from '../components/ui';
 import { PromptCascader } from '../components/Common/PromptCascader';
 import { TestCaseList, CriteriaEditor, EvaluationResultsView, RunHistory, resetRunHistoryDateRangeCache } from '../components/Evaluation';
 import { ParameterPanel } from '../components/Prompt/ParameterPanel';
@@ -225,7 +225,8 @@ function clampScore(value: number): number {
 
 function normalizeJudgeScore(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    if (value <= 1) return clampScore(value);
+    if (value === 0) return 0;
+    if (value > 0 && value < 1) return clampScore(value);
     if (value <= 10) return clampScore(value / 10);
     if (value <= 100) return clampScore(value / 100);
     return 1;
@@ -238,10 +239,34 @@ function normalizeJudgeScore(value: unknown): number | null {
   if (!match) return null;
   const parsed = Number(match[0]);
   if (!Number.isFinite(parsed)) return null;
-  if (parsed <= 1) return clampScore(parsed);
+  if (parsed === 0) return 0;
+  if (parsed > 0 && parsed < 1) return clampScore(parsed);
   if (parsed <= 10) return clampScore(parsed / 10);
   if (parsed <= 100) return clampScore(parsed / 100);
   return 1;
+}
+
+function extractStructuredTextScore(content: string): number | null {
+  const text = content.trim();
+  if (!text) return null;
+
+  if (/^[+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?\s*(?:%|分)?$/i.test(text)) {
+    return normalizeJudgeScore(text);
+  }
+
+  const patterns = [
+    /\bscore\b\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
+    /(?:评分|分数|得分)\s*(?:[:：=]|为)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    const score = normalizeJudgeScore(match[1]);
+    if (score !== null) return score;
+  }
+
+  return null;
 }
 
 function stringifyJudgeReason(value: unknown): string {
@@ -299,14 +324,14 @@ function parseJudgeEvaluationResponse(
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
 
       let score: number | null = null;
-      for (const key of scoreKeys) {
+      for (const key of ['score', '评分', '分数', ...scoreKeys]) {
         score = normalizeJudgeScore(parsed[key]);
         if (score !== null) break;
       }
       if (score === null) continue;
 
       let reason = '';
-      for (const key of reasonKeys) {
+      for (const key of ['reason', '理由', '说明', 'feedback', 'comment', ...reasonKeys]) {
         reason = stringifyJudgeReason(parsed[key]);
         if (reason) break;
       }
@@ -317,7 +342,7 @@ function parseJudgeEvaluationResponse(
     }
   }
 
-  const textScore = normalizeJudgeScore(normalizedContent);
+  const textScore = extractStructuredTextScore(normalizedContent);
   if (textScore !== null) {
     return { score: textScore, reason: normalizedContent || fallbackReason };
   }
@@ -550,8 +575,7 @@ function getRiskLabel(
   return t('analysisRiskMedium');
 }
 
-type TabType = 'testcases' | 'criteria' | 'history' | 'results';
-type ResultsSubTabType = 'details' | 'analysis';
+type TabType = 'testcases' | 'criteria' | 'history' | 'results' | 'analysis';
 
 interface AnalysisPromptContext {
   promptId: string | null;
@@ -676,7 +700,7 @@ export function EvaluationPage() {
     const runId = params.get('runId');
     return {
       evaluationId: evaluationId && evaluationId.trim() ? evaluationId.trim() : null,
-      tab: tab === 'results' ? tab : null,
+      tab: tab === 'results' || tab === 'analysis' ? tab : null,
       subtab: subtab === 'analysis' ? subtab : null,
       analysisReportId: analysisReportId && analysisReportId.trim() ? analysisReportId.trim() : null,
       runId: runId && runId.trim() ? runId.trim() : null,
@@ -718,12 +742,12 @@ export function EvaluationPage() {
   const [newEvalModel, setNewEvalModel] = useState('');
   const [newEvalJudgeModel, setNewEvalJudgeModel] = useState('');
   const [listLoading, setListLoading] = useState(true);
+  const [refreshingPromptOptions, setRefreshingPromptOptions] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [evaluationQuery, setEvaluationQuery] = useState('');
   const [evaluationStatusFilter, setEvaluationStatusFilter] = useState<EvaluationStatus | 'all'>('all');
 
   const [activeTab, setActiveTab] = useState<TabType>('testcases');
-  const [resultsSubTab, setResultsSubTab] = useState<ResultsSubTabType>('details');
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<Set<string>>(() => new Set());
   const [criteria, setCriteria] = useState<EvaluationCriterion[]>([]);
@@ -735,8 +759,9 @@ export function EvaluationPage() {
   const [retryingOutputTestCaseId, setRetryingOutputTestCaseId] = useState<string | null>(null);
   const [retryOutputRefreshTick, setRetryOutputRefreshTick] = useState(0);
   const [retryingAiEvaluationTestCaseId, setRetryingAiEvaluationTestCaseId] = useState<string | null>(null);
-  const [retryingAllScores, setRetryingAllScores] = useState(false);
+  const [retryingAllScoresByRunId, setRetryingAllScoresByRunId] = useState<Record<string, boolean>>({});
   const [exporting, setExporting] = useState(false);
+  const [exportingRunId, setExportingRunId] = useState<string | null>(null);
   const [batchExporting, setBatchExporting] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingName, setEditingName] = useState('');
@@ -761,6 +786,7 @@ export function EvaluationPage() {
   const [analysisReportMutating, setAnalysisReportMutating] = useState(false);
   const [renameAnalysisModalOpen, setRenameAnalysisModalOpen] = useState(false);
   const [renameAnalysisTitle, setRenameAnalysisTitle] = useState('');
+  const [analysisEntryModalOpen, setAnalysisEntryModalOpen] = useState(false);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [analysisDraft, setAnalysisDraft] = useState<AnalysisDraftContext | null>(null);
   const [analysisModelId, setAnalysisModelId] = useState('');
@@ -776,6 +802,7 @@ export function EvaluationPage() {
   const [analysisPreparing, setAnalysisPreparing] = useState(false);
   const [analysisPreviewCopied, setAnalysisPreviewCopied] = useState(false);
   const [analysisCompareTab, setAnalysisCompareTab] = useState<AnalysisCompareTabKey>('models');
+  const [runHistoryAnalyzeSelectionTrigger, setRunHistoryAnalyzeSelectionTrigger] = useState(0);
   const analysisAbortControllerRef = useRef<AbortController | null>(null);
   const startGlobalAnalysisTask = useAnalysisTaskStore((state) => state.startTask);
   const setGlobalAnalysisPhase = useAnalysisTaskStore((state) => state.setPhase);
@@ -786,6 +813,7 @@ export function EvaluationPage() {
   const abortControllersRef = useRef<Map<string, RunAbortController>>(new Map());
   const retryOutputAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const retryAiEvaluationAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const retryAllScoresStatusRef = useRef<Map<string, EvaluationStatus>>(new Map());
   const isFinalizingEvaluationDragRef = useRef(false);
   const selectedEvaluationIdRef = useRef<string | null>(null);
   const listModeRef = useRef<'mine' | 'public'>('mine');
@@ -834,11 +862,10 @@ export function EvaluationPage() {
   }, [listMode]);
 
   useEffect(() => {
-    if (evaluationRouteState.tab === 'results') {
+    if (evaluationRouteState.tab === 'analysis' || (evaluationRouteState.tab === 'results' && evaluationRouteState.subtab === 'analysis')) {
+      setActiveTab('analysis');
+    } else if (evaluationRouteState.tab === 'results') {
       setActiveTab('results');
-      if (evaluationRouteState.subtab === 'analysis') {
-        setResultsSubTab('analysis');
-      }
     }
     if (evaluationRouteState.analysisReportId) {
       setSelectedAnalysisReportId(evaluationRouteState.analysisReportId);
@@ -1116,6 +1143,57 @@ export function EvaluationPage() {
     setRunningCount(activeRuns);
   }, [runs]);
 
+  useEffect(() => {
+    const retryingRunIds = Object.keys(retryingAllScoresByRunId);
+    if (retryingRunIds.length === 0) return;
+
+    const completedRetryRunIds: string[] = [];
+    for (const runId of retryingRunIds) {
+      const run = runs.find((item) => item.id === runId);
+      const currentStatus = run?.status;
+      const prevStatus = retryAllScoresStatusRef.current.get(runId);
+
+      if (currentStatus) {
+        retryAllScoresStatusRef.current.set(runId, currentStatus);
+      }
+
+      const hadStarted = prevStatus === 'pending' || prevStatus === 'running';
+      const isNowCompleted = currentStatus === 'completed' || currentStatus === 'failed';
+      if (hadStarted && isNowCompleted) {
+        completedRetryRunIds.push(runId);
+      }
+    }
+
+    if (completedRetryRunIds.length === 0) return;
+
+    if (selectedEvaluation && selectedRun && completedRetryRunIds.includes(selectedRun.id)) {
+      void runsApi.getResults(selectedRun.id)
+        .then((latestResults) => {
+          setResults((prev) => {
+            const next = mergeResultsByTestCase(prev, latestResults);
+            updateEvaluationCache(selectedEvaluation.id, { results: next, selectedRunId: selectedRun.id });
+            return next;
+          });
+        })
+        .catch((error) => {
+          console.error('Failed to refresh results after retry scores completion:', error);
+        });
+    }
+
+    setRetryingAllScoresByRunId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const runId of completedRetryRunIds) {
+        if (next[runId]) {
+          delete next[runId];
+          retryAllScoresStatusRef.current.delete(runId);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [retryingAllScoresByRunId, runs, selectedEvaluation, selectedRun]);
+
   const activeRun = useMemo(() => {
     if (selectedRun && (selectedRun.status === 'running' || selectedRun.status === 'pending')) {
       return selectedRun;
@@ -1296,14 +1374,6 @@ export function EvaluationPage() {
       setAnalysisReportsLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    if (evaluationRouteState.tab === 'results' && evaluationRouteState.subtab === 'analysis') {
-      setResultsSubTab('analysis');
-      return;
-    }
-    setResultsSubTab('details');
-  }, [selectedEvaluationId, evaluationRouteState.tab, evaluationRouteState.subtab]);
 
   useEffect(() => {
     if (!selectedEvaluationId || !isSelectedEvaluationOwner) {
@@ -1640,6 +1710,29 @@ export function EvaluationPage() {
   const updateListCache = (updates: Partial<ListCache>) => {
     if (listCache) {
       listCache = { ...listCache, ...updates };
+    }
+  };
+
+  const handleRefreshPromptOptions = async () => {
+    if (refreshingPromptOptions) return;
+    setRefreshingPromptOptions(true);
+    try {
+      const [promptsData, promptGroupsData] = await Promise.all([
+        promptsApi.list(),
+        promptGroupsApi.list(),
+      ]);
+
+      const latestPrompts = (promptsData || []) as Prompt[];
+      const latestPromptGroups = (promptGroupsData || []) as PromptGroup[];
+
+      setPrompts(latestPrompts);
+      setPromptGroups(latestPromptGroups);
+      updateListCache({ prompts: latestPrompts, promptGroups: latestPromptGroups });
+    } catch (error) {
+      console.error('Failed to refresh prompt options:', error);
+      showToast('error', t('updateFailed'));
+    } finally {
+      setRefreshingPromptOptions(false);
     }
   };
 
@@ -2251,30 +2344,33 @@ export function EvaluationPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportExecutionRecord = async () => {
-    if (!selectedEvaluation || !selectedRun) {
+  const handleExportExecutionRecord = async (targetRun?: EvaluationRun) => {
+    const runToExport = targetRun ?? selectedRun;
+    if (!selectedEvaluation || !runToExport) {
       showToast('error', t('exportNoResults'));
       return;
     }
+    if (exportingRunId) return;
 
+    setExportingRunId(runToExport.id);
     setExporting(true);
     try {
-      const runResults = await runsApi.getResults(selectedRun.id);
+      const runResults = await runsApi.getResults(runToExport.id);
       if (runResults.length === 0) {
         showToast('error', t('exportNoResults'));
         return;
       }
 
       const testCaseMap = buildTestCaseMap();
-      const rows = buildExecutionExportRows(selectedRun, runResults, testCaseMap);
+      const rows = buildExecutionExportRows(runToExport, runResults, testCaseMap);
       if (rows.length === 0) {
         showToast('error', t('exportNoResults'));
         return;
       }
 
-      const { modelName } = resolveRunExportMeta(selectedRun);
+      const { modelName } = resolveRunExportMeta(runToExport);
       const runTimestamp = formatTimestampForFilename(
-        selectedRun.startedAt ?? selectedRun.createdAt ?? selectedRun.completedAt
+        runToExport.startedAt ?? runToExport.createdAt ?? runToExport.completedAt
       );
       const safeModelName = sanitizeFilenamePart(modelName, 'model');
       downloadCsvFile(`${safeModelName}_${runTimestamp}.csv`, exportColumns, rows);
@@ -2283,6 +2379,7 @@ export function EvaluationPage() {
       showToast('error', t('exportFailed'));
     } finally {
       setExporting(false);
+      setExportingRunId((prev) => (prev === runToExport.id ? null : prev));
     }
   };
 
@@ -2570,17 +2667,42 @@ export function EvaluationPage() {
   };
 
   const handleOpenSingleRunAnalysis = async () => {
-    if (!selectedRun) {
+    const runForAnalysis = selectedRun ?? runs[0] ?? null;
+    if (!runForAnalysis) {
       showToast('error', t('noExecutionRecords'));
       return;
     }
-    await openAnalysisForRuns([selectedRun]);
+    await openAnalysisForRuns([runForAnalysis]);
   };
 
   const handleOpenMultiRunAnalysisFromHistory = async (selectedRuns: EvaluationRun[]) => {
     await openAnalysisForRuns(selectedRuns);
-    setActiveTab('results');
-    setResultsSubTab('analysis');
+    setActiveTab('analysis');
+  };
+
+  const handleOpenAnalysisEntry = () => {
+    if (analysisPreparing) return;
+    if (runs.length === 0) {
+      showToast('error', t('noExecutionRecords'));
+      return;
+    }
+    setAnalysisEntryModalOpen(true);
+  };
+
+  const handleStartSingleAnalysisFromEntry = async () => {
+    setAnalysisEntryModalOpen(false);
+    await handleOpenSingleRunAnalysis();
+  };
+
+  const handleStartMultiAnalysisFromEntry = () => {
+    setAnalysisEntryModalOpen(false);
+    setActiveTab('history');
+    setRunHistoryAnalyzeSelectionTrigger((prev) => prev + 1);
+  };
+
+  const handleViewExecutionHistoryFromEntry = () => {
+    setAnalysisEntryModalOpen(false);
+    setActiveTab('history');
   };
 
   const handleRunAiAnalysis = async () => {
@@ -2653,8 +2775,7 @@ export function EvaluationPage() {
       if (selectedEvaluationIdRef.current === targetEvaluationId) {
         setAnalysisReports((prev) => [report, ...prev]);
         setSelectedAnalysisReportId(report.id);
-        setActiveTab('results');
-        setResultsSubTab('analysis');
+        setActiveTab('analysis');
       }
 
       setAnalysisModalOpen(false);
@@ -3119,32 +3240,60 @@ export function EvaluationPage() {
 
   const handleRetryAllScores = async () => {
     if (!selectedEvaluation || !selectedRun) return;
-    if (retryingAllScores) return;
+    const evaluationId = selectedEvaluation.id;
+    const runId = selectedRun.id;
+    if (retryingAllScoresByRunId[runId]) {
+      showToast('info', t('retryScoresRunning', { defaultValue: '评分重试正在后台执行，请稍候' }));
+      return;
+    }
+    if (selectedRun.status === 'pending' || selectedRun.status === 'running') {
+      showToast('info', t('runStillRunning', { defaultValue: '当前执行记录仍在运行中' }));
+      return;
+    }
 
-    setRetryingAllScores(true);
+    setRetryingAllScoresByRunId((prev) => ({ ...prev, [runId]: true }));
+    retryAllScoresStatusRef.current.set(runId, selectedRun.status);
+    let enqueueSucceeded = false;
     try {
-      const updated: TestCaseResult[] = [];
-      for (const currentResult of results) {
-        const testCase = testCases.find((tc) => tc.id === currentResult.testCaseId);
-        if (!testCase || !currentResult.modelOutput) {
-          updated.push(currentResult);
-          continue;
-        }
+      const queuedRun = await runsApi.retryScores(runId);
+      retryAllScoresStatusRef.current.set(runId, queuedRun.status);
 
-        const { scores, aiFeedback, passed } = await runAiEvaluationForTestCase(testCase, currentResult.modelOutput);
-        const saved = await runsApi.addResult(selectedRun.id, { testCaseId: currentResult.testCaseId, scores, aiFeedback, passed });
-        updated.push(saved);
-      }
+      setRuns((prev) => {
+        const next = prev.map((run) => (run.id === runId ? queuedRun : run));
+        updateEvaluationCache(evaluationId, { runs: next, selectedRunId: runId });
+        return next;
+      });
+      setSelectedRun((prev) => (prev?.id === runId ? queuedRun : prev));
+      setSelectedEvaluation((prev) =>
+        prev?.id === evaluationId
+          ? { ...prev, status: queuedRun.status, completedAt: queuedRun.completedAt ?? null }
+          : prev
+      );
+      setEvaluations((prev) => {
+        const next = prev.map((evaluation) =>
+          evaluation.id === evaluationId
+            ? { ...evaluation, status: queuedRun.status, completedAt: queuedRun.completedAt ?? null }
+            : evaluation
+        );
+        updateListCache({ evaluations: next });
+        return next;
+      });
 
-      setResults(updated);
-      updateEvaluationCache(selectedEvaluation.id, { results: updated, selectedRunId: selectedRun.id });
-      await recomputeAndPersistRunResults(updated);
-      showToast('success', t('retryScoresSuccess'));
+      enqueueSucceeded = true;
+      showToast('success', t('retryScoresQueued', { defaultValue: '评分重试任务已提交，正在后台执行' }));
     } catch (e) {
       console.error('Retry scores failed:', e);
       showToast('error', t('retryScoresFailed'));
     } finally {
-      setRetryingAllScores(false);
+      if (!enqueueSucceeded) {
+        setRetryingAllScoresByRunId((prev) => {
+          if (!prev[runId]) return prev;
+          const next = { ...prev };
+          delete next[runId];
+          return next;
+        });
+        retryAllScoresStatusRef.current.delete(runId);
+      }
     }
   };
 
@@ -3288,6 +3437,30 @@ export function EvaluationPage() {
     } catch (e) {
       console.error('Failed to save evaluation:', e);
       showToast('error', t('updateFailed'));
+    }
+  };
+
+  const handleUpdateExpectedOutputFromResults = async (testCaseId: string, expectedOutput: string | null) => {
+    if (!selectedEvaluation) return;
+
+    const previousTestCases = testCases;
+    const nextTestCases = testCases.map((testCase) =>
+      testCase.id === testCaseId
+        ? { ...testCase, expectedOutput }
+        : testCase
+    );
+
+    setTestCases(nextTestCases);
+    updateEvaluationCache(selectedEvaluation.id, { testCases: nextTestCases });
+
+    try {
+      await testCasesApi.update(testCaseId, {
+        expectedOutput: expectedOutput ?? undefined,
+      });
+    } catch (error) {
+      setTestCases(previousTestCases);
+      updateEvaluationCache(selectedEvaluation.id, { testCases: previousTestCases });
+      throw error;
     }
   };
   const applyConfigPatch = (
@@ -3439,6 +3612,7 @@ export function EvaluationPage() {
   const selectedRunConfig = selectedRun?.runConfig as RunConfig | null;
   const selectedRunModelId = selectedRunConfig?.modelId ?? selectedEvaluation?.modelId ?? null;
   const selectedRunModel = selectedRunModelId ? (models.find((model) => model.id === selectedRunModelId) ?? null) : null;
+  const retryingSelectedRunScores = selectedRun ? !!retryingAllScoresByRunId[selectedRun.id] : false;
   const selectedRunPricing = selectedRunModel
     ? { inputPricePerM: selectedRunModel.inputPricePerM, outputPricePerM: selectedRunModel.outputPricePerM }
     : null;
@@ -3474,6 +3648,33 @@ export function EvaluationPage() {
       hasPricing: aiCost.hasPricing,
     };
   }, [results, selectedRunPricing]);
+  const selectedRunLiveMetrics = useMemo(() => {
+    if (!selectedRun || selectedRun.status !== 'completed') return null;
+    if (results.length === 0) return null;
+
+    const resultRunIds = new Set(
+      results
+        .map((result) => result.runId)
+        .filter((runId): runId is string => typeof runId === 'string' && runId.length > 0)
+    );
+
+    if (resultRunIds.size > 1) return null;
+    if (resultRunIds.size === 1 && !resultRunIds.has(selectedRun.id)) return null;
+
+    return {
+      runId: selectedRun.id,
+      totalCases: resultsMetrics.totalCount,
+      passedCases: resultsMetrics.passed,
+      llmTimeMs: resultsMetrics.llmMs,
+      ocrTimeMs: resultsMetrics.ocrMs,
+      tokensInput: resultsMetrics.tokensInput,
+      tokensOutput: resultsMetrics.tokensOutput,
+      costInput: resultsMetrics.costInput,
+      costOutput: resultsMetrics.costOutput,
+      costTotal: resultsMetrics.costTotal,
+      hasPricing: resultsMetrics.hasPricing,
+    };
+  }, [selectedRun, results, resultsMetrics]);
   const selectedAnalysisReport = useMemo(
     () => analysisReports.find((report) => report.id === selectedAnalysisReportId) ?? analysisReports[0] ?? null,
     [analysisReports, selectedAnalysisReportId]
@@ -4040,7 +4241,7 @@ export function EvaluationPage() {
         {selectedEvaluation ? (
           <>
             {/* Header - fixed */}
-            <div className="flex-shrink-0 p-6 pb-0 space-y-6">
+            <div className="flex-shrink-0 p-5 pb-0 space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   {isEditingName && isSelectedEvaluationOwner ? (
@@ -4189,126 +4390,161 @@ export function EvaluationPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-5 gap-4">
-                <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('linkedPrompt')}</p>
-                  <PromptCascader
-                    value={selectedEvaluation.promptId || null}
-                    onChange={(promptId) => void handlePromptChange(promptId)}
-                    prompts={prompts}
-                    groups={promptGroups}
-                    disabled={!isSelectedEvaluationOwner}
-                    allowClear
-                    clearLabel={t('noLinkedPrompt')}
-                  />
-                  {selectedPrompt && (
-                    <p className="text-xs text-cyan-400 light:text-cyan-600 mt-2">
-                      {t('currentVersion')}: v{selectedPrompt.currentVersion}
-                    </p>
-                  )}
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-slate-500 light:text-slate-600">{t('targetModel')}</p>
-                    <button
-                      onClick={() => setShowParamsModal(true)}
-                      className="p-1 text-slate-400 hover:text-cyan-400 light:text-slate-500 light:hover:text-cyan-600 transition-colors rounded hover:bg-slate-700/50 light:hover:bg-slate-100"
-                      title={t('modelParameters')}
-                    >
-                      <Settings2 className="w-4 h-4" />
-                    </button>
+              <Collapsible
+                title={t('evaluationConfig')}
+                defaultOpen={true}
+                className="!overflow-visible"
+                action={
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 light:text-slate-600">
+                    {selectedPrompt && (
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        {selectedPrompt.name} <span className="text-cyan-500 light:text-cyan-600">v{selectedPrompt.currentVersion}</span>
+                      </span>
+                    )}
+                    {selectedEvaluation.model && (
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        {selectedEvaluation.model.modelId}
+                      </span>
+                    )}
+                    {selectedEvaluation.judgeModel && (
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        {selectedEvaluation.judgeModel.modelId}
+                      </span>
+                    )}
+                    <span className="inline-flex items-center whitespace-nowrap">
+                      {t(`threshold${String((selectedEvaluation.config.pass_threshold || 0.6) * 10)}`)}
+                    </span>
                   </div>
-                  <ModelSelector
-                    models={models}
-                    providers={providers}
-                    selectedModelId={selectedEvaluation.modelId || ''}
-                    onSelect={(modelId) => handleUpdateEvaluation('modelId', modelId || null)}
-                    disabled={!isSelectedEvaluationOwner}
-                    placeholder={t('selectModel')}
-                  />
-                  {selectedEvaluation.model && (
-                    <p className="text-xs text-slate-500 light:text-slate-600 mt-2">
-                      {t('reproducibleModel')}: {selectedEvaluation.model.provider?.type ? `${selectedEvaluation.model.provider.type}/` : ''}{selectedEvaluation.model.modelId}
-                    </p>
-                  )}
-                  {selectedEvaluation.config?.model_parameters && (
-                    <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                      {t('modelParameters')}:&nbsp;
-                      {selectedEvaluation.config.model_parameters.temperature !== undefined ? `T:${selectedEvaluation.config.model_parameters.temperature} ` : ''}
-                      {selectedEvaluation.config.model_parameters.max_tokens !== undefined ? `Max:${selectedEvaluation.config.model_parameters.max_tokens} ` : ''}
-                      {selectedEvaluation.config.model_parameters.top_p !== undefined ? `P:${selectedEvaluation.config.model_parameters.top_p} ` : ''}
-                    </p>
-                  )}
-                  {!!selectedEvaluation.promptId && selectedEvaluation.config.inherited_from_prompt && (
-                    <p className="text-xs text-cyan-400 light:text-cyan-600 mt-1">
-                      {t('inheritedFromPrompt')}
-                    </p>
-                  )}
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('judgeModel')}</p>
-                  <ModelSelector
-                    models={models}
-                    providers={providers}
-                    selectedModelId={selectedEvaluation.judgeModelId || ''}
-                    onSelect={(modelId) => handleUpdateEvaluation('judgeModelId', modelId || null)}
-                    disabled={!isSelectedEvaluationOwner}
-                    placeholder={t('noJudgeModel')}
-                  />
-                  {selectedEvaluation.judgeModel && (
-                    <p className="text-xs text-slate-500 light:text-slate-600 mt-2">
-                      {t('reproducibleJudgeModel')}: {selectedEvaluation.judgeModel.provider?.type ? `${selectedEvaluation.judgeModel.provider.type}/` : ''}{selectedEvaluation.judgeModel.modelId}
-                    </p>
-                  )}
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('passThreshold')}</p>
-                  <Select
-                    value={String((selectedEvaluation.config.pass_threshold || 0.6) * 10)}
-                    onChange={(e) => handleUpdateConfig('pass_threshold', Number(e.target.value) / 10)}
-                    options={[
-                      { value: '10', label: t('threshold10') },
-                      { value: '9', label: t('threshold9') },
-                      { value: '8', label: t('threshold8') },
-                      { value: '7', label: t('threshold7') },
-                      { value: '6', label: t('threshold6') },
-                      { value: '5', label: t('threshold5') },
-                      { value: '4', label: t('threshold4') },
-                      { value: '3', label: t('threshold3') },
-                      { value: '0', label: t('threshold0') },
-                    ]}
-                  />
-                </div>
-                <div className="p-4 bg-slate-800/50 light:bg-white border border-slate-700 light:border-slate-200 rounded-lg light:shadow-sm">
-                  <p className="text-xs text-slate-500 light:text-slate-600 mb-2">{t('fileProcessing')}</p>
-                  <Select
-                    value={selectedEvaluation.config.file_processing || 'auto'}
-                    onChange={(e) => handleUpdateConfig('file_processing', e.target.value as EvaluationConfig['file_processing'])}
-                    options={[
-                      { value: 'auto', label: t('fileProcessingAuto') },
-                      ...(currentModelInfo.supportsVision ? [{ value: 'vision', label: t('fileProcessingVision') }] : []),
-                      { value: 'ocr', label: t('fileProcessingOcr') },
-                      { value: 'none', label: t('fileProcessingNone') },
-                    ]}
-                  />
-                  {(selectedEvaluation.config.file_processing === 'ocr' ||
-                    ((selectedEvaluation.config.file_processing || 'auto') === 'auto' && !currentModelInfo.supportsVision)) && (
-                    <div className="mt-2">
-                      <Select
-                        value={selectedEvaluation.config.ocr_provider || ''}
-                        onChange={(e) => handleUpdateConfig('ocr_provider', (e.target.value ? (e.target.value as EvaluationConfig['ocr_provider']) : undefined))}
-                        options={evaluationOcrProviderOptions}
-                      />
+                }
+                contentClassName="!p-0"
+              >
+                <div className="p-2.5">
+                  <div className="rounded-lg border border-slate-700/60 light:border-slate-200 bg-slate-800/20 light:bg-slate-50/60">
+                    <div className="grid grid-cols-1 xl:grid-cols-5 divide-y xl:divide-y-0 xl:divide-x divide-slate-700/50 light:divide-slate-200">
+                      <div className="p-3.5">
+                        <p className="text-xs text-slate-500 light:text-slate-600 mb-1.5">{t('linkedPrompt')}</p>
+                        <PromptCascader
+                          value={selectedEvaluation.promptId || null}
+                          onChange={(promptId) => void handlePromptChange(promptId)}
+                          prompts={prompts}
+                          groups={promptGroups}
+                          onRefresh={handleRefreshPromptOptions}
+                          refreshing={refreshingPromptOptions}
+                          disabled={!isSelectedEvaluationOwner}
+                          allowClear
+                          clearLabel={t('noLinkedPrompt')}
+                        />
+                        {selectedPrompt && (
+                          <p className="text-xs text-cyan-400 light:text-cyan-600 mt-1.5">
+                            {t('currentVersion')}: v{selectedPrompt.currentVersion}
+                          </p>
+                        )}
+                      </div>
+                      <div className="p-3.5">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-xs text-slate-500 light:text-slate-600">{t('targetModel')}</p>
+                          <button
+                            onClick={() => setShowParamsModal(true)}
+                            className="p-1 text-slate-400 hover:text-cyan-400 light:text-slate-500 light:hover:text-cyan-600 transition-colors rounded hover:bg-slate-700/50 light:hover:bg-slate-100"
+                            title={t('modelParameters')}
+                          >
+                            <Settings2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <ModelSelector
+                          models={models}
+                          providers={providers}
+                          selectedModelId={selectedEvaluation.modelId || ''}
+                          onSelect={(modelId) => handleUpdateEvaluation('modelId', modelId || null)}
+                          disabled={!isSelectedEvaluationOwner}
+                          placeholder={t('selectModel')}
+                        />
+                        {selectedEvaluation.model && (
+                          <p className="text-xs text-slate-500 light:text-slate-600 mt-1.5">
+                            {t('reproducibleModel')}: {selectedEvaluation.model.provider?.type ? `${selectedEvaluation.model.provider.type}/` : ''}{selectedEvaluation.model.modelId}
+                          </p>
+                        )}
+                        {selectedEvaluation.config?.model_parameters && (
+                          <p className="text-xs text-slate-500 light:text-slate-600 mt-1">
+                            {t('modelParameters')}:&nbsp;
+                            {selectedEvaluation.config.model_parameters.temperature !== undefined ? `T:${selectedEvaluation.config.model_parameters.temperature} ` : ''}
+                            {selectedEvaluation.config.model_parameters.max_tokens !== undefined ? `Max:${selectedEvaluation.config.model_parameters.max_tokens} ` : ''}
+                            {selectedEvaluation.config.model_parameters.top_p !== undefined ? `P:${selectedEvaluation.config.model_parameters.top_p} ` : ''}
+                          </p>
+                        )}
+                        {!!selectedEvaluation.promptId && selectedEvaluation.config.inherited_from_prompt && (
+                          <p className="text-xs text-cyan-400 light:text-cyan-600 mt-1">
+                            {t('inheritedFromPrompt')}
+                          </p>
+                        )}
+                      </div>
+                      <div className="p-3.5">
+                        <p className="text-xs text-slate-500 light:text-slate-600 mb-1.5">{t('judgeModel')}</p>
+                        <ModelSelector
+                          models={models}
+                          providers={providers}
+                          selectedModelId={selectedEvaluation.judgeModelId || ''}
+                          onSelect={(modelId) => handleUpdateEvaluation('judgeModelId', modelId || null)}
+                          disabled={!isSelectedEvaluationOwner}
+                          placeholder={t('noJudgeModel')}
+                        />
+                        {selectedEvaluation.judgeModel && (
+                          <p className="text-xs text-slate-500 light:text-slate-600 mt-1.5">
+                            {t('reproducibleJudgeModel')}: {selectedEvaluation.judgeModel.provider?.type ? `${selectedEvaluation.judgeModel.provider.type}/` : ''}{selectedEvaluation.judgeModel.modelId}
+                          </p>
+                        )}
+                      </div>
+                      <div className="p-3.5">
+                        <p className="text-xs text-slate-500 light:text-slate-600 mb-1.5">{t('passThreshold')}</p>
+                        <Select
+                          value={String((selectedEvaluation.config.pass_threshold || 0.6) * 10)}
+                          onChange={(e) => handleUpdateConfig('pass_threshold', Number(e.target.value) / 10)}
+                          options={[
+                            { value: '10', label: t('threshold10') },
+                            { value: '9', label: t('threshold9') },
+                            { value: '8', label: t('threshold8') },
+                            { value: '7', label: t('threshold7') },
+                            { value: '6', label: t('threshold6') },
+                            { value: '5', label: t('threshold5') },
+                            { value: '4', label: t('threshold4') },
+                            { value: '3', label: t('threshold3') },
+                            { value: '0', label: t('threshold0') },
+                          ]}
+                        />
+                      </div>
+                      <div className="p-3.5">
+                        <p className="text-xs text-slate-500 light:text-slate-600 mb-1.5">{t('fileProcessing')}</p>
+                        <Select
+                          value={selectedEvaluation.config.file_processing || 'auto'}
+                          onChange={(e) => handleUpdateConfig('file_processing', e.target.value as EvaluationConfig['file_processing'])}
+                          options={[
+                            { value: 'auto', label: t('fileProcessingAuto') },
+                            ...(currentModelInfo.supportsVision ? [{ value: 'vision', label: t('fileProcessingVision') }] : []),
+                            { value: 'ocr', label: t('fileProcessingOcr') },
+                            { value: 'none', label: t('fileProcessingNone') },
+                          ]}
+                        />
+                        {(selectedEvaluation.config.file_processing === 'ocr' ||
+                          ((selectedEvaluation.config.file_processing || 'auto') === 'auto' && !currentModelInfo.supportsVision)) && (
+                          <div className="mt-1.5">
+                            <Select
+                              value={selectedEvaluation.config.ocr_provider || ''}
+                              onChange={(e) => handleUpdateConfig('ocr_provider', (e.target.value ? (e.target.value as EvaluationConfig['ocr_provider']) : undefined))}
+                              options={evaluationOcrProviderOptions}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </div>
+              </Collapsible>
 
               <div className="border-b border-slate-700 light:border-slate-200">
                 <nav className="flex gap-4">
                   <button
                     onClick={() => setActiveTab('testcases')}
-                    className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
                       activeTab === 'testcases'
                         ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
                         : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
@@ -4319,7 +4555,7 @@ export function EvaluationPage() {
                   </button>
                   <button
                     onClick={() => setActiveTab('criteria')}
-                    className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
                       activeTab === 'criteria'
                         ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
                         : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
@@ -4330,7 +4566,7 @@ export function EvaluationPage() {
                   </button>
                   <button
                     onClick={() => setActiveTab('history')}
-                    className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
                       activeTab === 'history'
                         ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
                         : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
@@ -4341,7 +4577,7 @@ export function EvaluationPage() {
                   </button>
                   <button
                     onClick={() => setActiveTab('results')}
-                    className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                    className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
                       activeTab === 'results'
                         ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
                         : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
@@ -4350,12 +4586,23 @@ export function EvaluationPage() {
                     <BarChart3 className="w-4 h-4" />
                     {t('results')}
                   </button>
+                  <button
+                    onClick={() => setActiveTab('analysis')}
+                    className={`pb-2 px-1 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                      activeTab === 'analysis'
+                        ? 'border-cyan-500 text-cyan-400 light:text-cyan-600'
+                        : 'border-transparent text-slate-500 light:text-slate-600 hover:text-slate-300 light:hover:text-slate-800'
+                    }`}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                    {t('analysisReports')}
+                  </button>
                 </nav>
               </div>
             </div>
 
             {/* Content - scrollable */}
-            <div className="flex-1 overflow-y-auto p-6 pt-4 flex flex-col min-h-0">
+            <div className="flex-1 overflow-y-auto p-5 pt-2 flex flex-col min-h-0">
               {detailsLoading ? (
                 <div className="space-y-6">
                   {/* Loading indicator at top */}
@@ -4423,7 +4670,10 @@ export function EvaluationPage() {
                     runs={runs}
                     models={models}
                     selectedRunId={selectedRun?.id || null}
+                    selectedRunLiveMetrics={selectedRunLiveMetrics}
                     onSelectRun={handleSelectRun}
+                    onExportRun={isSelectedEvaluationOwner ? (run) => void handleExportExecutionRecord(run) : undefined}
+                    exportingRunId={exportingRunId}
                     onDeleteRun={isSelectedEvaluationOwner ? handleDeleteRun : undefined}
                     onAbortRun={isSelectedEvaluationOwner ? handleAbortRun : undefined}
                     onBatchExport={isSelectedEvaluationOwner ? handleBatchExportExecutionRecords : undefined}
@@ -4431,36 +4681,161 @@ export function EvaluationPage() {
                     onAnalyzeRuns={isSelectedEvaluationOwner ? (selectedRuns) => void handleOpenMultiRunAnalysisFromHistory(selectedRuns) : undefined}
                     onAnalyzeSelectionLimitReached={(max) => showToast('error', t('analysisSelectionLimitReached', { max }))}
                     maxAnalyzeSelection={20}
+                    analyzeSelectionTrigger={runHistoryAnalyzeSelectionTrigger}
                   />
                 )}
 
                 {activeTab === 'results' && (
                   <div className="flex-1 min-h-0 flex flex-col gap-3">
-                    <div className="inline-flex items-center gap-1 p-1 bg-slate-800/50 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg self-start">
-                      <button
-                        type="button"
-                        onClick={() => setResultsSubTab('details')}
-                        className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                          resultsSubTab === 'details'
-                            ? 'bg-cyan-500/20 text-cyan-300 light:text-cyan-700'
-                            : 'text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
-                        }`}
-                      >
-                        {t('detailedResults')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setResultsSubTab('analysis')}
-                        className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                          resultsSubTab === 'analysis'
-                            ? 'bg-cyan-500/20 text-cyan-300 light:text-cyan-700'
-                            : 'text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
-                        }`}
-                      >
-                        {t('analysisReports')}
-                      </button>
-                    </div>
+                    {results.length > 0 && selectedRun ? (
+                      <div className="flex-1 min-h-0 flex flex-col gap-3">
+                        <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-emerald-400 light:text-emerald-600">
+                                {resultsMetrics.passed}
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('passed')}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-rose-400 light:text-rose-600">
+                                {resultsMetrics.failed}
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('failed')}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-cyan-400 light:text-cyan-600">
+                                {resultsMetrics.passRate.toFixed(0)}%
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('passRate')}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-teal-400 light:text-teal-600">
+                                {resultsMetrics.tokensInput.toLocaleString()}
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('inputTokens')}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-base font-semibold text-sky-400 light:text-sky-600">
+                                {resultsMetrics.tokensOutput.toLocaleString()}
+                              </span>
+                              <span className="text-xs text-slate-500 light:text-slate-600">{t('outputTokens')}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-base font-semibold text-amber-300 light:text-amber-700">
+                                  {formatUsdCost(resultsMetrics.costTotal)}
+                                </span>
+                                <span className="text-xs text-slate-500 light:text-slate-600">{t('cost', { defaultValue: '费用' })}</span>
+                              </div>
+                              <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
+                                {formatUsdCostFormula(resultsMetrics.costTotal, resultsMetrics.costInput, resultsMetrics.costOutput)}
+                                {!resultsMetrics.hasPricing ? ` · ${t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' })}` : ''}
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-base font-semibold text-amber-400 light:text-amber-600">
+                                  {formatMsAsSeconds(resultsMetrics.totalMs)}
+                                </span>
+                                <span className="text-xs text-slate-500 light:text-slate-600">{t('totalTime')}</span>
+                              </div>
+                              <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
+                                {t('llmCumulative')}: {formatMsAsSeconds(resultsMetrics.llmMs)} | {t('ocrCumulative')}: {formatMsAsSeconds(resultsMetrics.ocrMs)}
+                              </div>
+                            </div>
+                            </div>
+                          </div>
 
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {isSelectedEvaluationOwner && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => void handleOpenSingleRunAnalysis()}
+                              loading={analysisPreparing}
+                            >
+                              <BarChart3 className="w-4 h-4" />
+                              <span>{t('analyzeCurrentRun')}</span>
+                            </Button>
+                            )}
+                            {isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={handleRetryAllScores}
+                                disabled={
+                                  retryingOutputTestCaseId !== null ||
+                                  retryingAiEvaluationTestCaseId !== null
+                                }
+                              >
+                                {retryingSelectedRunScores ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Scale className="w-4 h-4" />
+                                )}
+                                <span>
+                                  {retryingSelectedRunScores
+                                    ? t('retryScoresRunning', { defaultValue: '重试中' })
+                                    : t('retryScores')}
+                                </span>
+                              </Button>
+                            )}
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => void handleExportExecutionRecord()}
+                              loading={exporting}
+                            >
+                              <Download className="w-4 h-4" />
+                              <span>{tCommon('export')}</span>
+                            </Button>
+                            {runs.length > 1 && (
+                              <button
+                                onClick={() => setActiveTab('history')}
+                                className="text-xs text-cyan-400 light:text-cyan-600 hover:text-cyan-300 light:hover:text-cyan-700 flex items-center gap-1"
+                              >
+                                <History className="w-3 h-3" />
+                                {t('viewOtherRecords')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex-1 min-h-0">
+                          <EvaluationResultsView
+                            testCases={testCases}
+                            results={results}
+                            criteria={criteria}
+                            pricing={selectedRunPricing}
+                            ocrProvider={selectedRunOcrProvider}
+                            downloadAttachmentBlob={downloadAttachmentBlob}
+                            canViewOcrResults={isSelectedEvaluationOwner}
+                            onRetryOutput={isSelectedEvaluationOwner ? handleRetryOutput : undefined}
+                            onRunAiEvaluation={isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
+                            onUpdateExpectedOutput={isSelectedEvaluationOwner ? handleUpdateExpectedOutputFromResults : undefined}
+                            onAbortRetryOutput={isSelectedEvaluationOwner ? handleAbortRetryOutput : undefined}
+                            onAbortAiEvaluation={isSelectedEvaluationOwner ? handleAbortAiEvaluation : undefined}
+                            retryingOutputTestCaseId={retryingOutputTestCaseId}
+                            retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
+                            retryOutputRefreshTick={retryOutputRefreshTick}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center py-12 text-slate-500 light:text-slate-600">
+                        <div className="text-center">
+                          <AlertCircle className="w-12 h-12 mx-auto mb-3 text-slate-600 light:text-slate-400" />
+                          <p>{t('noResultsYet')}</p>
+                          <p className="text-xs mt-1">{t('addTestCasesAndRun')}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'analysis' && (
+                  <div className="flex-1 min-h-0 flex flex-col gap-3">
                     {analysisRunning && (
                       <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 light:bg-cyan-50/70">
                         <div className="min-w-0">
@@ -4503,558 +4878,432 @@ export function EvaluationPage() {
                       </div>
                     )}
 
-                    {resultsSubTab === 'details' ? (
-                      results.length > 0 && selectedRun ? (
-                        <div className="flex-1 min-h-0 flex flex-col gap-4">
-                          <div className="flex flex-wrap lg:flex-nowrap items-center gap-3 p-3 bg-slate-800/30 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg">
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <span className="text-sm text-slate-400 light:text-slate-600">{t('currentViewing')}</span>
-                              <Badge variant={statusConfig[selectedRun.status].variant}>
-                                {formatDateTime(selectedRun.startedAt)}
-                              </Badge>
-                              {selectedRun.modelParameters && (
-                                <div className="flex items-center gap-1.5 text-xs text-slate-500 light:text-slate-500">
-                                  <Settings2 className="w-3 h-3" />
-                                  <span>T:{selectedRun.modelParameters.temperature}</span>
-                                  <span>|</span>
-                                  <span>Max:{selectedRun.modelParameters.max_tokens}</span>
-                                  {selectedRun.modelParameters.top_p !== undefined && (
-                                    <>
-                                      <span>|</span>
-                                      <span>P:{selectedRun.modelParameters.top_p}</span>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                    <div className="flex-1 min-h-0 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+                      <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm min-h-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">
+                            {t('analysisReports')} ({analysisReports.length})
+                          </h3>
+                          {isSelectedEvaluationOwner && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={handleOpenAnalysisEntry}
+                              loading={analysisPreparing}
+                              disabled={runs.length === 0}
+                            >
+                              <BarChart3 className="w-4 h-4" />
+                              <span>{t('newAnalysisReport')}</span>
+                            </Button>
+                          )}
+                        </div>
 
-                            <div className="hidden lg:block w-px h-7 bg-slate-700/60 light:bg-slate-300/80" />
-
-                            <div className="flex-1 flex justify-center">
-                              <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-base font-semibold text-emerald-400 light:text-emerald-600">
-                                  {resultsMetrics.passed}
-                                </span>
-                                <span className="text-xs text-slate-500 light:text-slate-600">{t('passed')}</span>
-                              </div>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-base font-semibold text-rose-400 light:text-rose-600">
-                                  {resultsMetrics.failed}
-                                </span>
-                                <span className="text-xs text-slate-500 light:text-slate-600">{t('failed')}</span>
-                              </div>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-base font-semibold text-cyan-400 light:text-cyan-600">
-                                  {resultsMetrics.passRate.toFixed(0)}%
-                                </span>
-                                <span className="text-xs text-slate-500 light:text-slate-600">{t('passRate')}</span>
-                              </div>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-base font-semibold text-teal-400 light:text-teal-600">
-                                  {resultsMetrics.tokensInput.toLocaleString()}
-                                </span>
-                                <span className="text-xs text-slate-500 light:text-slate-600">{t('inputTokens')}</span>
-                              </div>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-base font-semibold text-sky-400 light:text-sky-600">
-                                  {resultsMetrics.tokensOutput.toLocaleString()}
-                                </span>
-                                <span className="text-xs text-slate-500 light:text-slate-600">{t('outputTokens')}</span>
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-base font-semibold text-amber-300 light:text-amber-700">
-                                    {formatUsdCost(resultsMetrics.costTotal)}
-                                  </span>
-                                  <span className="text-xs text-slate-500 light:text-slate-600">{t('cost', { defaultValue: '费用' })}</span>
-                                </div>
-                                <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
-                                  {formatUsdCostFormula(resultsMetrics.costTotal, resultsMetrics.costInput, resultsMetrics.costOutput)}
-                                  {!resultsMetrics.hasPricing ? ` · ${t('modelPriceNotConfigured', { defaultValue: '模型价格未配置' })}` : ''}
-                                </div>
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-base font-semibold text-amber-400 light:text-amber-600">
-                                    {formatMsAsSeconds(resultsMetrics.totalMs)}
-                                  </span>
-                                  <span className="text-xs text-slate-500 light:text-slate-600">{t('totalTime')}</span>
-                                </div>
-                                <div className="text-[10px] leading-tight text-slate-500 light:text-slate-600">
-                                  {t('llmCumulative')}: {formatMsAsSeconds(resultsMetrics.llmMs)} | {t('ocrCumulative')}: {formatMsAsSeconds(resultsMetrics.ocrMs)}
-                                </div>
-                              </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {isSelectedEvaluationOwner && (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => void handleOpenSingleRunAnalysis()}
-                                  loading={analysisPreparing}
-                                >
-                                  <Scale className="w-4 h-4" />
-                                  <span>{t('analyzeCurrentRun')}</span>
-                                </Button>
-                              )}
-                              {isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) && (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={handleRetryAllScores}
-                                  loading={retryingAllScores}
-                                  disabled={retryingOutputTestCaseId !== null || retryingAiEvaluationTestCaseId !== null}
-                                >
-                                  <Scale className="w-4 h-4" />
-                                  <span>{t('retryScores')}</span>
-                                </Button>
-                              )}
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={handleExportExecutionRecord}
-                                loading={exporting}
-                              >
-                                <Download className="w-4 h-4" />
-                                <span>{tCommon('export')}</span>
-                              </Button>
-                              {runs.length > 1 && (
+                        {analysisReportsLoading ? (
+                          <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm">
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            {tCommon('loading')}
+                          </div>
+                        ) : analysisReports.length === 0 ? (
+                          <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
+                            {t('noAnalysisReports')}
+                          </div>
+                        ) : (
+                          <div className="space-y-2 overflow-y-auto pr-1 min-h-0">
+                            {analysisReports.map((report) => {
+                              const isActive = selectedAnalysisReport?.id === report.id;
+                              return (
                                 <button
-                                  onClick={() => setActiveTab('history')}
-                                  className="text-xs text-cyan-400 light:text-cyan-600 hover:text-cyan-300 light:hover:text-cyan-700 flex items-center gap-1"
+                                  key={report.id}
+                                  type="button"
+                                  onClick={() => setSelectedAnalysisReportId(report.id)}
+                                  className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
+                                    isActive
+                                      ? 'border-cyan-500/50 bg-cyan-500/10'
+                                      : 'border-slate-700 light:border-slate-200 bg-slate-800/40 light:bg-white hover:bg-slate-800/60 light:hover:bg-slate-50'
+                                  }`}
                                 >
-                                  <History className="w-3 h-3" />
-                                  {t('viewOtherRecords')}
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs text-slate-300 light:text-slate-700 font-medium truncate">
+                                      {getAnalysisReportTitle(report)}
+                                    </span>
+                                    <Badge variant={report.scope === 'single' ? 'info' : 'warning'}>
+                                      {report.scope === 'single' ? t('singleRunAnalysis') : t('multiRunAnalysis')}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
+                                    {formatDateTime(report.createdAt)}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm min-h-0">
+                        {selectedAnalysisReport ? (
+                          <>
+                            <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-700/60 light:border-slate-200">
+                              <div>
+                                <div className="text-sm text-slate-200 light:text-slate-800 font-medium">
+                                  {getAnalysisReportTitle(selectedAnalysisReport)}
+                                </div>
+                                <div className="text-xs text-slate-500 light:text-slate-600 mt-1">
+                                  {t('analyzeModel')}: {selectedAnalysisReport.analysisModelName || selectedAnalysisReport.analysisModelId}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {isSelectedEvaluationOwner && (
+                                  <>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={openRenameAnalysisModal}
+                                      disabled={analysisReportMutating}
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                      <span>{t('analysisRename')}</span>
+                                    </Button>
+                                    <Button
+                                      variant="danger"
+                                      size="sm"
+                                      onClick={() => void handleDeleteAnalysisReport(selectedAnalysisReport)}
+                                      disabled={analysisReportMutating}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                      <span>{tCommon('delete')}</span>
+                                    </Button>
+                                  </>
+                                )}
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => handleExportAnalysisReport(selectedAnalysisReport)}
+                                >
+                                  <Download className="w-4 h-4" />
+                                  <span>{t('exportMarkdown')}</span>
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Data source bar */}
+                            <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/40 light:bg-slate-100 border border-slate-700 light:border-slate-200 rounded-lg text-xs flex-wrap">
+                              <span className="text-slate-500 light:text-slate-600 whitespace-nowrap">{t('analysisDataSource')}:</span>
+                              {selectedAnalysisReport.runIds.map((runId) => {
+                                const run = runs.find((r) => r.id === runId);
+                                return (
+                                  <span key={runId} className="font-mono text-slate-400 light:text-slate-600 px-1.5 py-0.5 bg-slate-900/50 light:bg-white border border-slate-700 light:border-slate-200 rounded">
+                                    {run ? formatDateTime(run.startedAt ?? run.createdAt) : runId.slice(0, 8)}
+                                  </span>
+                                );
+                              })}
+                              <span className="text-slate-500 light:text-slate-600">·</span>
+                              <span className="text-slate-400 light:text-slate-600">
+                                {selectedAnalysisReport.runIds.length === 1 ? t('singleRunAnalysis') : t('multiRunAnalysis')}
+                              </span>
+                              {selectedAnalysisReport.runIds.length === 1 && runs.some((r) => r.id === selectedAnalysisReport.runIds[0]) && (
+                                <button
+                                  onClick={() => {
+                                    const targetRun = runs.find((r) => r.id === selectedAnalysisReport.runIds[0]);
+                                    if (targetRun) {
+                                      setSelectedRun(targetRun);
+                                      setActiveTab('results');
+                                    }
+                                  }}
+                                  className="ml-auto text-cyan-400 light:text-cyan-600 hover:text-cyan-300 light:hover:text-cyan-700 flex items-center gap-1 whitespace-nowrap"
+                                >
+                                  <BarChart3 className="w-3 h-3" />
+                                  {t('viewRunResults')}
                                 </button>
                               )}
                             </div>
-                          </div>
-                          <div className="flex-1 min-h-0">
-                            <EvaluationResultsView
-                              testCases={testCases}
-                              results={results}
-                              criteria={criteria}
-                              pricing={selectedRunPricing}
-                              ocrProvider={selectedRunOcrProvider}
-                              downloadAttachmentBlob={downloadAttachmentBlob}
-                              canViewOcrResults={isSelectedEvaluationOwner}
-                              onRetryOutput={isSelectedEvaluationOwner ? handleRetryOutput : undefined}
-                              onRunAiEvaluation={isSelectedEvaluationOwner && selectedEvaluation.judgeModelId && criteria.some((c) => c.enabled) ? handleRunAiEvaluation : undefined}
-                              onAbortRetryOutput={isSelectedEvaluationOwner ? handleAbortRetryOutput : undefined}
-                              onAbortAiEvaluation={isSelectedEvaluationOwner ? handleAbortAiEvaluation : undefined}
-                              retryingOutputTestCaseId={retryingOutputTestCaseId}
-                              retryingAiEvaluationTestCaseId={retryingAiEvaluationTestCaseId}
-                              retryOutputRefreshTick={retryOutputRefreshTick}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center py-12 text-slate-500 light:text-slate-600">
-                          <div className="text-center">
-                            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-slate-600 light:text-slate-400" />
-                            <p>{t('noResultsYet')}</p>
-                            <p className="text-xs mt-1">{t('addTestCasesAndRun')}</p>
-                          </div>
-                        </div>
-                      )
-                    ) : (
-                      <div className="flex-1 min-h-0 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-                        <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm min-h-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-sm font-medium text-slate-300 light:text-slate-700">
-                              {t('analysisReports')} ({analysisReports.length})
-                            </h3>
-                            {isSelectedEvaluationOwner && (
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => void handleOpenSingleRunAnalysis()}
-                                loading={analysisPreparing}
-                                disabled={!selectedRun}
-                              >
-                                <Scale className="w-4 h-4" />
-                                <span>{t('newAnalysisReport')}</span>
-                              </Button>
-                            )}
-                          </div>
 
-                          {analysisReportsLoading ? (
-                            <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm">
-                              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                              {tCommon('loading')}
-                            </div>
-                          ) : analysisReports.length === 0 ? (
-                            <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
-                              {t('noAnalysisReports')}
-                            </div>
-                          ) : (
-                            <div className="space-y-2 overflow-y-auto pr-1 min-h-0">
-                              {analysisReports.map((report) => {
-                                const isActive = selectedAnalysisReport?.id === report.id;
-                                return (
-                                  <button
-                                    key={report.id}
-                                    type="button"
-                                    onClick={() => setSelectedAnalysisReportId(report.id)}
-                                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
-                                      isActive
-                                        ? 'border-cyan-500/50 bg-cyan-500/10'
-                                        : 'border-slate-700 light:border-slate-200 bg-slate-800/40 light:bg-white hover:bg-slate-800/60 light:hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-xs text-slate-300 light:text-slate-700 font-medium truncate">
-                                        {getAnalysisReportTitle(report)}
-                                      </span>
-                                      <Badge variant={report.scope === 'single' ? 'info' : 'warning'}>
-                                        {report.scope === 'single' ? t('singleRunAnalysis') : t('multiRunAnalysis')}
-                                      </Badge>
-                                    </div>
-                                    <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
-                                      {formatDateTime(report.createdAt)}
-                                    </p>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex flex-col gap-3 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/30 light:bg-white p-3 shadow-sm min-h-0">
-                          {selectedAnalysisReport ? (
-                            <>
-                              <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-700/60 light:border-slate-200">
-                                <div>
-                                  <div className="text-sm text-slate-200 light:text-slate-800 font-medium">
-                                    {getAnalysisReportTitle(selectedAnalysisReport)}
-                                  </div>
-                                  <div className="text-xs text-slate-500 light:text-slate-600 mt-1">
-                                    {t('analyzeModel')}: {selectedAnalysisReport.analysisModelName || selectedAnalysisReport.analysisModelId}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {isSelectedEvaluationOwner && (
-                                    <>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={openRenameAnalysisModal}
-                                        disabled={analysisReportMutating}
-                                      >
-                                        <Pencil className="w-4 h-4" />
-                                        <span>{t('analysisRename')}</span>
-                                      </Button>
-                                      <Button
-                                        variant="danger"
-                                        size="sm"
-                                        onClick={() => void handleDeleteAnalysisReport(selectedAnalysisReport)}
-                                        disabled={analysisReportMutating}
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                        <span>{tCommon('delete')}</span>
-                                      </Button>
-                                    </>
-                                  )}
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => handleExportAnalysisReport(selectedAnalysisReport)}
-                                  >
-                                    <Download className="w-4 h-4" />
-                                    <span>{t('exportMarkdown')}</span>
-                                  </Button>
-                                </div>
-                              </div>
-                              <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
-                                {selectedAnalysisData && (
-                                  <>
-                                    <section className="space-y-3">
-                                      <h4 className="text-xs font-semibold tracking-wide text-slate-400 light:text-slate-600 uppercase">
-                                        {t('analysisVisualOverview')}
-                                      </h4>
-                                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                                        {selectedAnalysisTopStats.map((stat) => (
-                                          <div
-                                            key={stat.key}
-                                            className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-800/40 light:bg-slate-50/70 px-3 py-2"
-                                          >
-                                            <div className="text-[11px] text-slate-500 light:text-slate-600">
-                                              {stat.label}
-                                            </div>
-                                            <div className="text-sm font-semibold text-slate-100 light:text-slate-900 mt-1">
-                                              {stat.value}
-                                            </div>
+                            <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
+                              {selectedAnalysisData && (
+                                <>
+                                  <section className="space-y-3">
+                                    <h4 className="text-xs font-semibold tracking-wide text-slate-400 light:text-slate-600 uppercase">
+                                      {t('analysisVisualOverview')}
+                                    </h4>
+                                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                      {selectedAnalysisTopStats.map((stat) => (
+                                        <div
+                                          key={stat.key}
+                                          className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-800/40 light:bg-slate-50/70 px-3 py-2"
+                                        >
+                                          <div className="text-[11px] text-slate-500 light:text-slate-600">
+                                            {stat.label}
                                           </div>
+                                          <div className="text-sm font-semibold text-slate-100 light:text-slate-900 mt-1">
+                                            {stat.value}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </section>
+
+                                  <section className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+                                    <div className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
+                                          {t('analysisComparisonTitle')}
+                                        </h4>
+                                        {selectedAnalysisComparisonMixed && (
+                                          <Badge variant="warning">{t('analysisComparisonMixedHint')}</Badge>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {comparisonTabs.map((tab) => (
+                                          <button
+                                            key={tab}
+                                            type="button"
+                                            onClick={() => setAnalysisCompareTab(tab)}
+                                            className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                                              analysisCompareTab === tab
+                                                ? 'border-cyan-500/70 bg-cyan-500/15 text-cyan-200 light:text-cyan-700'
+                                                : 'border-slate-700 light:border-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
+                                            }`}
+                                          >
+                                            {getCompareTabLabel(tab, t)}
+                                          </button>
                                         ))}
                                       </div>
-                                    </section>
-
-                                    <section className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-                                      <div className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
-                                        <div className="flex items-center justify-between gap-2">
-                                          <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
-                                            {t('analysisComparisonTitle')}
-                                          </h4>
-                                          {selectedAnalysisComparisonMixed && (
-                                            <Badge variant="warning">{t('analysisComparisonMixedHint')}</Badge>
-                                          )}
-                                        </div>
-                                        <div className="flex flex-wrap gap-2">
-                                          {comparisonTabs.map((tab) => (
-                                            <button
-                                              key={tab}
-                                              type="button"
-                                              onClick={() => setAnalysisCompareTab(tab)}
-                                              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
-                                                analysisCompareTab === tab
-                                                  ? 'border-cyan-500/70 bg-cyan-500/15 text-cyan-200 light:text-cyan-700'
-                                                  : 'border-slate-700 light:border-slate-200 text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
-                                              }`}
-                                            >
-                                              {getCompareTabLabel(tab, t)}
-                                            </button>
-                                          ))}
-                                        </div>
-                                        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                                          {selectedAnalysisComparisonItems.length === 0 ? (
-                                            <div className="text-xs text-slate-500 light:text-slate-600 border border-dashed border-slate-700 light:border-slate-300 rounded-md p-3">
-                                              {tCommon('noData')}
-                                            </div>
-                                          ) : (
-                                            selectedAnalysisComparisonItems.map((item) => (
-                                              <div
-                                                key={item.key}
-                                                className="rounded-md border border-slate-700/70 light:border-slate-200 bg-slate-800/40 light:bg-slate-50/60 p-2.5 space-y-2"
-                                              >
-                                                <div className="flex items-start justify-between gap-2">
-                                                  <div className="min-w-0">
-                                                    <div className="text-sm text-slate-100 light:text-slate-900 font-medium truncate">
-                                                      {item.label}
-                                                    </div>
-                                                    {item.secondaryLabel && (
-                                                      <div className="text-[11px] text-slate-500 light:text-slate-600 truncate mt-0.5">
-                                                        {item.secondaryLabel}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                  <Badge variant="info">{t('analysisRunCount', { count: item.runCount })}</Badge>
-                                                </div>
-                                                <div className="grid grid-cols-3 gap-2 text-[11px]">
-                                                  <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
-                                                    <div className="text-slate-500 light:text-slate-600">{t('passRate')}</div>
-                                                    <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
-                                                      {formatPercent(item.passRate)}
-                                                    </div>
-                                                  </div>
-                                                  <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
-                                                    <div className="text-slate-500 light:text-slate-600">{t('analysisAvgScoreNormalized')}</div>
-                                                    <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
-                                                      {item.avgScoreNormalized === null ? '-' : formatPercent(item.avgScoreNormalized)}
-                                                    </div>
-                                                  </div>
-                                                  <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
-                                                    <div className="text-slate-500 light:text-slate-600">{t('duration')}</div>
-                                                    <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
-                                                      {formatMsAsSeconds(item.avgTotalTimeMs)}
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                  <div className="flex items-center justify-between text-[10px] text-slate-500 light:text-slate-600">
-                                                    <span>{t('passRate')}</span>
-                                                    <span>{formatPercent(item.passRate)}</span>
-                                                  </div>
-                                                  <div className="h-1.5 rounded-full bg-slate-700/70 light:bg-slate-200 overflow-hidden">
-                                                    <div
-                                                      className="h-full rounded-full bg-cyan-500"
-                                                      style={{ width: `${clampPercent(item.passRate)}%` }}
-                                                    />
-                                                  </div>
-                                                  <div className="flex items-center justify-between text-[10px] text-slate-500 light:text-slate-600">
-                                                    <span>{t('analysisAvgScoreNormalized')}</span>
-                                                    <span>
-                                                      {item.avgScoreNormalized === null ? '-' : formatPercent(item.avgScoreNormalized)}
-                                                    </span>
-                                                  </div>
-                                                  <div className="h-1.5 rounded-full bg-slate-700/70 light:bg-slate-200 overflow-hidden">
-                                                    <div
-                                                      className="h-full rounded-full bg-emerald-500"
-                                                      style={{ width: `${clampPercent(item.avgScoreNormalized)}%` }}
-                                                    />
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            ))
-                                          )}
-                                        </div>
-                                        <div className="text-xs text-slate-500 light:text-slate-600 border-t border-slate-700/70 light:border-slate-200 pt-2">
-                                          {t('analysisRecommendedForTab', {
-                                            tab: getCompareTabLabel(analysisCompareTab, t),
-                                            value: getRecommendedValue(analysisCompareTab, selectedAnalysisRecommended, t),
-                                          })}
-                                        </div>
-                                      </div>
-
-                                      <div className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
-                                        <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
-                                          {t('analysisJudgeSummaryTitle')}
-                                        </h4>
-                                        {selectedAnalysisJudgeSummary ? (
-                                          <>
-                                            <div className="flex items-center gap-3">
-                                              <div className="relative w-24 h-24 rounded-full" style={selectedAnalysisScoreRingStyle}>
-                                                <div className="absolute inset-2 rounded-full bg-slate-900 light:bg-white border border-slate-700/60 light:border-slate-200 flex items-center justify-center text-center">
-                                                  <div>
-                                                    <div className="text-[10px] text-slate-500 light:text-slate-600">{t('score')}</div>
-                                                    <div className="text-sm font-semibold text-slate-100 light:text-slate-900">
-                                                      {selectedAnalysisJudgeSummary.averageScoreNormalized === null
-                                                        ? '-'
-                                                        : formatPercent(selectedAnalysisJudgeSummary.averageScoreNormalized)}
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                              </div>
-                                              <div className="flex-1 space-y-1.5">
-                                                {selectedAnalysisScoreBuckets.map((bucket) => (
-                                                  <div key={bucket.key} className="flex items-center justify-between text-xs">
-                                                    <span className="flex items-center gap-1.5 text-slate-400 light:text-slate-700">
-                                                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bucket.color }} />
-                                                      {bucket.label}
-                                                    </span>
-                                                    <span className="text-slate-200 light:text-slate-900 font-medium">
-                                                      {bucket.value}
-                                                    </span>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                              <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                                <div className="text-slate-500 light:text-slate-600">{t('analysisEvaluatedCases')}</div>
-                                                <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                                  {selectedAnalysisJudgeSummary.evaluatedCases}
-                                                </div>
-                                              </div>
-                                              <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                                <div className="text-slate-500 light:text-slate-600">{t('analysisUnevaluatedCases')}</div>
-                                                <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                                  {selectedAnalysisJudgeSummary.unevaluatedCases}
-                                                </div>
-                                              </div>
-                                              <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                                <div className="text-slate-500 light:text-slate-600">{t('analysisErrorCases')}</div>
-                                                <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                                  {selectedAnalysisJudgeSummary.errorCases}
-                                                </div>
-                                              </div>
-                                              <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                                <div className="text-slate-500 light:text-slate-600">{t('analysisFeedbackCoverage')}</div>
-                                                <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                                  {formatPercent(selectedAnalysisJudgeSummary.feedbackCoverage)}
-                                                </div>
-                                              </div>
-                                            </div>
-                                          </>
-                                        ) : (
+                                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                                        {selectedAnalysisComparisonItems.length === 0 ? (
                                           <div className="text-xs text-slate-500 light:text-slate-600 border border-dashed border-slate-700 light:border-slate-300 rounded-md p-3">
                                             {tCommon('noData')}
                                           </div>
+                                        ) : (
+                                          selectedAnalysisComparisonItems.map((item) => (
+                                            <div
+                                              key={item.key}
+                                              className="rounded-md border border-slate-700/70 light:border-slate-200 bg-slate-800/40 light:bg-slate-50/60 p-2.5 space-y-2"
+                                            >
+                                              <div className="flex items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                  <div className="text-sm text-slate-100 light:text-slate-900 font-medium truncate">
+                                                    {item.label}
+                                                  </div>
+                                                  {item.secondaryLabel && (
+                                                    <div className="text-[11px] text-slate-500 light:text-slate-600 truncate mt-0.5">
+                                                      {item.secondaryLabel}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                <Badge variant="info">{t('analysisRunCount', { count: item.runCount })}</Badge>
+                                              </div>
+                                              <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                                <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
+                                                  <div className="text-slate-500 light:text-slate-600">{t('passRate')}</div>
+                                                  <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
+                                                    {formatPercent(item.passRate)}
+                                                  </div>
+                                                </div>
+                                                <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
+                                                  <div className="text-slate-500 light:text-slate-600">{t('analysisAvgScoreNormalized')}</div>
+                                                  <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
+                                                    {item.avgScoreNormalized === null ? '-' : formatPercent(item.avgScoreNormalized)}
+                                                  </div>
+                                                </div>
+                                                <div className="rounded bg-slate-900/60 light:bg-white/80 px-2 py-1 border border-slate-700/60 light:border-slate-200">
+                                                  <div className="text-slate-500 light:text-slate-600">{t('duration')}</div>
+                                                  <div className="text-slate-200 light:text-slate-900 font-medium mt-0.5">
+                                                    {formatMsAsSeconds(item.avgTotalTimeMs)}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                              <div className="space-y-1.5">
+                                                <div className="flex items-center justify-between text-[10px] text-slate-500 light:text-slate-600">
+                                                  <span>{t('passRate')}</span>
+                                                  <span>{formatPercent(item.passRate)}</span>
+                                                </div>
+                                                <div className="h-1.5 rounded-full bg-slate-700/70 light:bg-slate-200 overflow-hidden">
+                                                  <div
+                                                    className="h-full rounded-full bg-cyan-500"
+                                                    style={{ width: `${clampPercent(item.passRate)}%` }}
+                                                  />
+                                                </div>
+                                                <div className="flex items-center justify-between text-[10px] text-slate-500 light:text-slate-600">
+                                                  <span>{t('analysisAvgScoreNormalized')}</span>
+                                                  <span>
+                                                    {item.avgScoreNormalized === null ? '-' : formatPercent(item.avgScoreNormalized)}
+                                                  </span>
+                                                </div>
+                                                <div className="h-1.5 rounded-full bg-slate-700/70 light:bg-slate-200 overflow-hidden">
+                                                  <div
+                                                    className="h-full rounded-full bg-emerald-500"
+                                                    style={{ width: `${clampPercent(item.avgScoreNormalized)}%` }}
+                                                  />
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ))
                                         )}
                                       </div>
-                                    </section>
+                                      <div className="text-xs text-slate-500 light:text-slate-600 border-t border-slate-700/70 light:border-slate-200 pt-2">
+                                        {t('analysisRecommendedForTab', {
+                                          tab: getCompareTabLabel(analysisCompareTab, t),
+                                          value: getRecommendedValue(analysisCompareTab, selectedAnalysisRecommended, t),
+                                        })}
+                                      </div>
+                                    </div>
 
-                                    <section className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
+                                    <div className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
                                       <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
-                                        {t('analysisRecommendedSetupTitle')}
+                                        {t('analysisJudgeSummaryTitle')}
                                       </h4>
-                                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 text-xs">
-                                        <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                          <div className="text-slate-500 light:text-slate-600">{t('targetModel')}</div>
-                                          <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                            {selectedAnalysisRecommended?.model?.modelName || selectedAnalysisRecommended?.model?.modelId || '-'}
+                                      {selectedAnalysisJudgeSummary ? (
+                                        <>
+                                          <div className="flex items-center gap-3">
+                                            <div className="relative w-24 h-24 rounded-full" style={selectedAnalysisScoreRingStyle}>
+                                              <div className="absolute inset-2 rounded-full bg-slate-900 light:bg-white border border-slate-700/60 light:border-slate-200 flex items-center justify-center text-center">
+                                                <div>
+                                                  <div className="text-[10px] text-slate-500 light:text-slate-600">{t('score')}</div>
+                                                  <div className="text-sm font-semibold text-slate-100 light:text-slate-900">
+                                                    {selectedAnalysisJudgeSummary.averageScoreNormalized === null
+                                                      ? '-'
+                                                      : formatPercent(selectedAnalysisJudgeSummary.averageScoreNormalized)}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <div className="flex-1 space-y-1.5">
+                                              {selectedAnalysisScoreBuckets.map((bucket) => (
+                                                <div key={bucket.key} className="flex items-center justify-between text-xs">
+                                                  <span className="flex items-center gap-1.5 text-slate-400 light:text-slate-700">
+                                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bucket.color }} />
+                                                    {bucket.label}
+                                                  </span>
+                                                  <span className="text-slate-200 light:text-slate-900 font-medium">
+                                                    {bucket.value}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </div>
                                           </div>
+                                          <div className="grid grid-cols-2 gap-2 text-xs">
+                                            <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                              <div className="text-slate-500 light:text-slate-600">{t('analysisEvaluatedCases')}</div>
+                                              <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                                {selectedAnalysisJudgeSummary.evaluatedCases}
+                                              </div>
+                                            </div>
+                                            <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                              <div className="text-slate-500 light:text-slate-600">{t('analysisUnevaluatedCases')}</div>
+                                              <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                                {selectedAnalysisJudgeSummary.unevaluatedCases}
+                                              </div>
+                                            </div>
+                                            <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                              <div className="text-slate-500 light:text-slate-600">{t('analysisErrorCases')}</div>
+                                              <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                                {selectedAnalysisJudgeSummary.errorCases}
+                                              </div>
+                                            </div>
+                                            <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                              <div className="text-slate-500 light:text-slate-600">{t('analysisFeedbackCoverage')}</div>
+                                              <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                                {formatPercent(selectedAnalysisJudgeSummary.feedbackCoverage)}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <div className="text-xs text-slate-500 light:text-slate-600 border border-dashed border-slate-700 light:border-slate-300 rounded-md p-3">
+                                          {tCommon('noData')}
                                         </div>
-                                        <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                          <div className="text-slate-500 light:text-slate-600">{t('linkedPrompt')}</div>
-                                          <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                            {selectedAnalysisRecommended?.prompt
-                                              ? `${selectedAnalysisRecommended.prompt.promptName || selectedAnalysisRecommended.prompt.promptId || '-'}${
-                                                typeof selectedAnalysisRecommended.prompt.promptVersion === 'number'
-                                                  ? ` v${selectedAnalysisRecommended.prompt.promptVersion}`
-                                                  : ''
-                                              }`
-                                              : '-'}
-                                          </div>
-                                        </div>
-                                        <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                          <div className="text-slate-500 light:text-slate-600">{t('exportOcrProvider')}</div>
-                                          <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                            {selectedAnalysisRecommended
-                                              ? getOcrProviderLabel(t, selectedAnalysisRecommended.ocrProvider?.ocrProvider ?? null)
-                                              : '-'}
-                                          </div>
-                                        </div>
-                                        <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
-                                          <div className="text-slate-500 light:text-slate-600">{t('judgeModel')}</div>
-                                          <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
-                                            {selectedAnalysisRecommended?.judgeModel?.judgeModelName ||
-                                              selectedAnalysisRecommended?.judgeModel?.judgeModelId ||
-                                              t('noJudgeModel')}
-                                          </div>
+                                      )}
+                                    </div>
+                                  </section>
+
+                                  <section className="rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/20 light:bg-white p-3 space-y-3">
+                                    <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
+                                      {t('analysisRecommendedSetupTitle')}
+                                    </h4>
+                                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 text-xs">
+                                      <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                        <div className="text-slate-500 light:text-slate-600">{t('targetModel')}</div>
+                                        <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                          {selectedAnalysisRecommended?.model?.modelName || selectedAnalysisRecommended?.model?.modelId || '-'}
                                         </div>
                                       </div>
-                                      {selectedAnalysisRecommended ? (
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <Badge variant={getRiskVariant(selectedAnalysisRecommended.strategy.riskLevel)}>
-                                            {t('analysisRecommendedRisk')} {getRiskLabel(selectedAnalysisRecommended.strategy.riskLevel, t)}
-                                          </Badge>
-                                          {selectedAnalysisRecommended.strategy.prioritizeStability && (
-                                            <Badge variant="warning">{t('analysisPrioritizeStability')}</Badge>
-                                          )}
-                                          {selectedAnalysisRecommended.strategy.prioritizeLatency && (
-                                            <Badge variant="info">{t('analysisPrioritizeLatency')}</Badge>
-                                          )}
+                                      <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                        <div className="text-slate-500 light:text-slate-600">{t('linkedPrompt')}</div>
+                                        <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                          {selectedAnalysisRecommended?.prompt
+                                            ? `${selectedAnalysisRecommended.prompt.promptName || selectedAnalysisRecommended.prompt.promptId || '-'}${
+                                              typeof selectedAnalysisRecommended.prompt.promptVersion === 'number'
+                                                ? ` v${selectedAnalysisRecommended.prompt.promptVersion}`
+                                                : ''
+                                            }`
+                                            : '-'}
                                         </div>
-                                      ) : (
-                                        <div className="text-xs text-slate-500 light:text-slate-600">
-                                          {t('analysisNoRecommendation')}
+                                      </div>
+                                      <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                        <div className="text-slate-500 light:text-slate-600">{t('exportOcrProvider')}</div>
+                                        <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                          {selectedAnalysisRecommended
+                                            ? getOcrProviderLabel(t, selectedAnalysisRecommended.ocrProvider?.ocrProvider ?? null)
+                                            : '-'}
                                         </div>
-                                      )}
+                                      </div>
+                                      <div className="rounded border border-slate-700/70 light:border-slate-200 p-2">
+                                        <div className="text-slate-500 light:text-slate-600">{t('judgeModel')}</div>
+                                        <div className="text-slate-100 light:text-slate-900 font-medium mt-1">
+                                          {selectedAnalysisRecommended?.judgeModel?.judgeModelName ||
+                                            selectedAnalysisRecommended?.judgeModel?.judgeModelId ||
+                                            t('noJudgeModel')}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {selectedAnalysisRecommended ? (
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant={getRiskVariant(selectedAnalysisRecommended.strategy.riskLevel)}>
+                                          {t('analysisRecommendedRisk')} {getRiskLabel(selectedAnalysisRecommended.strategy.riskLevel, t)}
+                                        </Badge>
+                                        {selectedAnalysisRecommended.strategy.prioritizeStability && (
+                                          <Badge variant="warning">{t('analysisPrioritizeStability')}</Badge>
+                                        )}
+                                        {selectedAnalysisRecommended.strategy.prioritizeLatency && (
+                                          <Badge variant="info">{t('analysisPrioritizeLatency')}</Badge>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs text-slate-500 light:text-slate-600">
+                                        {t('analysisNoRecommendation')}
+                                      </div>
+                                    )}
 
-                                      {selectedAnalysisComparabilityWarnings.length > 0 && (
-                                        <div className="space-y-2">
-                                          <div className="text-xs text-slate-400 light:text-slate-600">
-                                            {t('analysisComparabilityWarnings')}
-                                          </div>
-                                          <div className="flex flex-wrap gap-2">
-                                            {selectedAnalysisComparabilityWarnings.map((warning) => (
-                                              <Badge key={warning} variant="warning">
-                                                {warning}
-                                              </Badge>
-                                            ))}
-                                          </div>
+                                    {selectedAnalysisComparabilityWarnings.length > 0 && (
+                                      <div className="space-y-2">
+                                        <div className="text-xs text-slate-400 light:text-slate-600">
+                                          {t('analysisComparabilityWarnings')}
                                         </div>
-                                      )}
-                                    </section>
-                                  </>
-                                )}
+                                        <div className="flex flex-wrap gap-2">
+                                          {selectedAnalysisComparabilityWarnings.map((warning) => (
+                                            <Badge key={warning} variant="warning">
+                                              {warning}
+                                            </Badge>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </section>
+                                </>
+                              )}
 
-                                <div className={selectedAnalysisData ? 'border-t border-slate-700/60 light:border-slate-200 pt-3' : ''}>
-                                  <MarkdownRenderer content={selectedAnalysisSummaryMarkdown} />
-                                </div>
+                              <div className={selectedAnalysisData ? 'border-t border-slate-700/60 light:border-slate-200 pt-3' : ''}>
+                                <MarkdownRenderer content={selectedAnalysisSummaryMarkdown} />
                               </div>
-                            </>
-                          ) : (
-                            <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
-                              {t('selectAnalysisReport')}
                             </div>
-                          )}
-                        </div>
+                          </>
+                        ) : (
+                          <div className="flex-1 flex items-center justify-center text-slate-500 light:text-slate-600 text-sm border border-dashed border-slate-700 light:border-slate-300 rounded-lg">
+                            {t('selectAnalysisReport')}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -5070,6 +5319,40 @@ export function EvaluationPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        isOpen={analysisEntryModalOpen}
+        onClose={() => setAnalysisEntryModalOpen(false)}
+        title={t('newAnalysisReport')}
+        size="md"
+      >
+        <div className="space-y-3">
+          <Button
+            className="w-full justify-center"
+            variant="secondary"
+            onClick={() => void handleStartSingleAnalysisFromEntry()}
+            disabled={!selectedRun && runs.length === 0}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>{t('analyzeCurrentRun')}</span>
+          </Button>
+          <Button
+            className="w-full justify-center"
+            onClick={handleStartMultiAnalysisFromEntry}
+            disabled={runs.length < 2}
+          >
+            <History className="w-4 h-4" />
+            <span>{t('multiRunAnalysis')}</span>
+          </Button>
+          <button
+            type="button"
+            onClick={handleViewExecutionHistoryFromEntry}
+            className="text-xs text-cyan-400 light:text-cyan-600 hover:text-cyan-300 light:hover:text-cyan-700 text-center underline underline-offset-2"
+          >
+            {t('viewExecutionHistory')}
+          </button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={analysisModalOpen}
@@ -5096,11 +5379,10 @@ export function EvaluationPage() {
             </div>
 
             <label className="flex items-start gap-3 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-3 py-2 text-sm text-slate-300 light:text-slate-700">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={analysisDeepMode}
                 onChange={(event) => setAnalysisDeepMode(event.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                className="mt-0.5"
               />
               <span>
                 <span className="font-medium">{t('deepAnalysisMode')}</span>
@@ -5180,7 +5462,7 @@ export function EvaluationPage() {
                     {tCommon('cancel')}
                   </Button>
                   <Button onClick={() => void handleRunAiAnalysis()} loading={analysisRunning} disabled={analysisPreparing}>
-                    <Scale className="w-4 h-4" />
+                    <BarChart3 className="w-4 h-4" />
                     <span>{t('executeAnalysis')}</span>
                   </Button>
                 </>
@@ -5374,12 +5656,11 @@ export function EvaluationPage() {
                       publishModalHasAttachments ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
                     }`}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={publishModalHasAttachments ? publishShareAttachments : false}
                       disabled={!publishModalHasAttachments}
                       onChange={(e) => setPublishShareAttachments(e.target.checked)}
-                      className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                      className="mt-0.5"
                     />
                     <div className="space-y-1">
                       <p className="text-sm text-slate-200 light:text-slate-800">{t('publishEvaluationShareAttachments')}</p>
@@ -5606,6 +5887,8 @@ export function EvaluationPage() {
             onChange={(promptId) => setNewEvalPrompt(promptId || '')}
             prompts={prompts}
             groups={promptGroups}
+            onRefresh={handleRefreshPromptOptions}
+            refreshing={refreshingPromptOptions}
             allowClear
             clearLabel={t('noLinkedPrompt')}
           />
