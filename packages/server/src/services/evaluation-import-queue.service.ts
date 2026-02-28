@@ -1,16 +1,6 @@
-import { makeWorkerUtils, type WorkerUtils } from 'graphile-worker';
-import { env } from '../config/env.js';
 import { evaluationImportsService } from './evaluation-imports.service.js';
 import { getEvaluationQueueDriver } from './evaluation-queue.service.js';
-
-let workerUtilsPromise: Promise<WorkerUtils> | null = null;
-
-async function getWorkerUtils(): Promise<WorkerUtils> {
-  if (!workerUtilsPromise) {
-    workerUtilsPromise = makeWorkerUtils({ connectionString: env.DATABASE_URL });
-  }
-  return workerUtilsPromise;
-}
+import { enqueueGraphileJob } from './graphile-queue.service.js';
 
 type ImportJob = {
   jobId: string;
@@ -52,8 +42,7 @@ export const evaluationImportRunner = new EvaluationImportQueue();
 export async function enqueueEvaluationImport(jobId: string): Promise<void> {
   const driver = getEvaluationQueueDriver();
   if (driver === 'pg') {
-    const utils = await getWorkerUtils();
-    await utils.addJob(
+    await enqueueGraphileJob(
       'evaluation.import',
       { jobId },
       {

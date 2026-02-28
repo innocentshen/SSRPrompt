@@ -800,6 +800,7 @@ export class RunsService {
       fileProcessing: ((evaluation.config as Record<string, unknown>)?.file_processing as string | undefined) || 'auto',
       ocrProvider: (evaluation.config as Record<string, unknown>)?.ocr_provider,
       testCaseIds: selectedTestCaseIds,
+      queueTask: 'evaluation.run',
     };
 
     const nextStatus = options?.status ?? 'running';
@@ -888,6 +889,12 @@ export class RunsService {
       status: 'pending',
       errorMessage: null,
       completedAt: null,
+      runConfig: {
+        ...(run.runConfig && typeof run.runConfig === 'object' && !Array.isArray(run.runConfig)
+          ? (run.runConfig as Prisma.JsonObject)
+          : {}),
+        queueTask: 'evaluation.retry_scores',
+      } as Prisma.JsonObject,
       results: {
         ...existingRunResults,
         totalCases,

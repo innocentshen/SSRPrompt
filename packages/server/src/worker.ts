@@ -42,6 +42,7 @@ async function main() {
 
   const runner = await run({
     connectionString: env.DATABASE_URL,
+    schema: env.GRAPHILE_WORKER_SCHEMA,
     concurrency,
     pollInterval,
     taskList,

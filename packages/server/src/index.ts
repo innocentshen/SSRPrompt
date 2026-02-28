@@ -11,10 +11,12 @@ import { checkS3Connection } from './config/s3.js';
 import { corsMiddleware, errorHandler, notFoundHandler } from './middleware/index.js';
 import routes from './routes/index.js';
 import { swaggerSpec } from './config/swagger.js';
+import { startEvaluationQueueRecoveryDaemon, stopEvaluationQueueRecoveryDaemon } from './services/evaluation-queue-recovery.service.js';
 
 async function main() {
   // Connect to database
   await connectDatabase();
+  startEvaluationQueueRecoveryDaemon();
 
   // Validate S3/MinIO connectivity (non-fatal)
   await checkS3Connection();
@@ -116,6 +118,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`\n${signal} received. Shutting down gracefully...`);
+    await stopEvaluationQueueRecoveryDaemon();
     server.close(async () => {
       await disconnectDatabase();
       process.exit(0);
