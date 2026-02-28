@@ -1,22 +1,11 @@
-import { makeWorkerUtils, type WorkerUtils } from 'graphile-worker';
-import { env } from '../config/env.js';
 import { evaluationRetryScoresRunner, evaluationRunner } from './evaluation-runner.service.js';
+import { enqueueGraphileJob } from './graphile-queue.service.js';
 
 const QUEUE_DRIVER = (process.env.EVALUATION_QUEUE_DRIVER || 'memory').toLowerCase();
 
-let workerUtilsPromise: Promise<WorkerUtils> | null = null;
-
-async function getWorkerUtils(): Promise<WorkerUtils> {
-  if (!workerUtilsPromise) {
-    workerUtilsPromise = makeWorkerUtils({ connectionString: env.DATABASE_URL });
-  }
-  return workerUtilsPromise;
-}
-
 export async function enqueueEvaluationRun(userId: string, runId: string): Promise<void> {
   if (QUEUE_DRIVER === 'pg') {
-    const utils = await getWorkerUtils();
-    await utils.addJob(
+    await enqueueGraphileJob(
       'evaluation.run',
       { runId },
       {
@@ -33,8 +22,7 @@ export async function enqueueEvaluationRun(userId: string, runId: string): Promi
 
 export async function enqueueEvaluationRetryScores(userId: string, runId: string): Promise<void> {
   if (QUEUE_DRIVER === 'pg') {
-    const utils = await getWorkerUtils();
-    await utils.addJob(
+    await enqueueGraphileJob(
       'evaluation.retry_scores',
       { runId },
       {

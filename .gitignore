@@ -8,8 +8,6 @@ lerna-debug.log*
 *.tsbuildinfo
 
 node_modules
-dist
-dist-ssr
 *.local
 
 .vscode/*

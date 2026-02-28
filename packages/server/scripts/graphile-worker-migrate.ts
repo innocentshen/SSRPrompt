@@ -4,7 +4,7 @@ import { makeWorkerUtils } from 'graphile-worker';
 import { env } from '../src/config/env.js';
 
 async function main() {
-  const utils = await makeWorkerUtils({ connectionString: env.DATABASE_URL });
+  const utils = await makeWorkerUtils({ connectionString: env.DATABASE_URL, schema: env.GRAPHILE_WORKER_SCHEMA });
   await utils.migrate();
   await utils.release();
   console.log('Graphile Worker schema installed');
