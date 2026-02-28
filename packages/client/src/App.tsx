@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Analytics } from '@vercel/analytics/react';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/ui';
 import { ThemeProvider } from './contexts';
@@ -90,6 +91,7 @@ function AppContent() {
   return (
     <>
       {showDemoExpired && <DemoExpiredModal onClose={() => setShowDemoExpired(false)} />}
+      <Analytics />
       <Routes>
       {/* Public routes */}
       <Route
