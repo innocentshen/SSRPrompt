@@ -1,18 +1,9 @@
-import { makeWorkerUtils } from 'graphile-worker';
-import { env } from '../config/env.js';
-import { evaluationRunner } from './evaluation-runner.service.js';
+import { evaluationRetryScoresRunner, evaluationRunner } from './evaluation-runner.service.js';
+import { enqueueGraphileJob } from './graphile-queue.service.js';
 const QUEUE_DRIVER = (process.env.EVALUATION_QUEUE_DRIVER || 'memory').toLowerCase();
-let workerUtilsPromise = null;
-async function getWorkerUtils() {
-    if (!workerUtilsPromise) {
-        workerUtilsPromise = makeWorkerUtils({ connectionString: env.DATABASE_URL });
-    }
-    return workerUtilsPromise;
-}
 export async function enqueueEvaluationRun(userId, runId) {
     if (QUEUE_DRIVER === 'pg') {
-        const utils = await getWorkerUtils();
-        await utils.addJob('evaluation.run', { runId }, {
+        await enqueueGraphileJob('evaluation.run', { runId }, {
             maxAttempts: 1,
             jobKey: `evaluation.run:${runId}`,
             jobKeyMode: 'replace',
@@ -21,10 +12,26 @@ export async function enqueueEvaluationRun(userId, runId) {
     }
     await evaluationRunner.enqueue(userId, runId);
 }
+export async function enqueueEvaluationRetryScores(userId, runId) {
+    if (QUEUE_DRIVER === 'pg') {
+        await enqueueGraphileJob('evaluation.retry_scores', { runId }, {
+            maxAttempts: 1,
+            jobKey: `evaluation.retry_scores:${runId}`,
+            jobKeyMode: 'replace',
+        });
+        return;
+    }
+    await evaluationRetryScoresRunner.enqueue(userId, runId);
+}
 export function abortEvaluationRun(runId) {
     if (QUEUE_DRIVER === 'pg')
         return;
     evaluationRunner.abort(runId);
+}
+export function abortEvaluationRetryScores(runId) {
+    if (QUEUE_DRIVER === 'pg')
+        return;
+    evaluationRetryScoresRunner.abort(runId);
 }
 export function getEvaluationQueueDriver() {
     return QUEUE_DRIVER;

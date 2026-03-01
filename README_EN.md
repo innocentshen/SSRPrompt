@@ -114,6 +114,12 @@ pnpm db:deploy        # recommended: migration-based
 pnpm --filter @ssrprompt/server prisma:seed   # optional
 ```
 
+For production deployments, you can safely run this idempotent prepare command on every release:
+
+```bash
+pnpm db:prepare:prod
+```
+
 ### 5) Run
 
 ```bash
@@ -149,12 +155,12 @@ If Prisma reports errors like `column ... does not exist`, run these first.
 
 `EVALUATION_QUEUE_DRIVER`:
 
-- `memory` (default): in-process queue, good for dev/light usage.
-- `pg`: Graphile Worker backed queue, recommended for production.
+- `pg` (default): Graphile Worker backed queue, recommended for production.
+- `memory`: in-process queue, for dev/light usage only.
 
 Production recommendation:
 
-1. Set `EVALUATION_QUEUE_DRIVER=pg`
+1. Keep `EVALUATION_QUEUE_DRIVER=pg` (default)
 2. Initialize worker schema once:
 
 ```bash
@@ -222,6 +228,7 @@ For Zeabur/GitHub source builds, use different startup commands:
 - Evaluation queue: `EVALUATION_QUEUE_DRIVER` and `EVALUATION_*` tuning vars
 
 See full template: `packages/server/.env.example`
+Detailed explanations: `docs/env-vars.md`
 
 ---
 
@@ -267,6 +274,7 @@ pnpm db:deploy
 pnpm db:deploy:target
 pnpm db:deploy:target:resolve
 pnpm db:studio
+pnpm db:prepare:prod
 
 # quality
 pnpm lint

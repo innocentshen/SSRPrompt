@@ -169,6 +169,10 @@ export declare class RunsService {
         testCaseIds?: string[];
     }): Promise<EvaluationRun>;
     /**
+     * Enqueue retrying AI scores for an existing run.
+     */
+    retryScores(userId: string, runId: string): Promise<EvaluationRun>;
+    /**
      * Update a run
      */
     update(userId: string, id: string, data: {

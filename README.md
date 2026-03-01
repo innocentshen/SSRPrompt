@@ -114,6 +114,12 @@ pnpm db:deploy        # 推荐：按 migration 执行
 pnpm --filter @ssrprompt/server prisma:seed   # 可选：初始化角色与管理员
 ```
 
+生产部署建议在每次发布时执行一次以下幂等命令（会自动判断是否有待执行 migration）：
+
+```bash
+pnpm db:prepare:prod
+```
+
 ### 5) 启动
 
 ```bash
@@ -267,6 +273,7 @@ pnpm db:deploy
 pnpm db:deploy:target
 pnpm db:deploy:target:resolve
 pnpm db:studio
+pnpm db:prepare:prod
 
 # 质量
 pnpm lint

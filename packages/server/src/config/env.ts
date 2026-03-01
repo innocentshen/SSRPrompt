@@ -81,6 +81,13 @@ const envSchema = z
     .optional()
     .default('true')
     .transform((v) => v === 'true' || v === '1'),
+  AUTO_SEED_ON_STARTUP: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
+  ADMIN_EMAIL: z.string().min(1, 'ADMIN_EMAIL is required'),
+  ADMIN_PASSWORD: z.string().min(1, 'ADMIN_PASSWORD is required'),
 
   // Evaluation queue self-healing
   EVALUATION_QUEUE_RECOVERY_ENABLED: z

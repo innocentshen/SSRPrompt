@@ -745,6 +745,27 @@ export class CriteriaService {
 export class RunsService {
   private evaluationsService = new EvaluationsService();
 
+  private async getRunProgressStats(runId: string): Promise<{ completedCases: number; passedCases: number }> {
+    const grouped = await prisma.testCaseResult.groupBy({
+      by: ['passed'],
+      where: { runId },
+      _count: { _all: true },
+    });
+
+    let completedCases = 0;
+    let passedCases = 0;
+
+    for (const row of grouped) {
+      const count = row._count._all;
+      completedCases += count;
+      if (row.passed) {
+        passedCases += count;
+      }
+    }
+
+    return { completedCases, passedCases };
+  }
+
   /**
    * Create a new run
    */
@@ -932,7 +953,7 @@ export class RunsService {
       totalTokensOutput?: number;
     }
   ): Promise<EvaluationRun> {
-    const run = await runsRepository.findByIdWithResults(id);
+    const run = await runsRepository.findById(id);
     if (!run) {
       throw new AppError(404, 'NOT_FOUND', 'Run not found');
     }
@@ -1000,7 +1021,7 @@ export class RunsService {
    * Delete a run
    */
   async delete(userId: string, id: string): Promise<void> {
-    const run = await runsRepository.findByIdWithResults(id);
+    const run = await runsRepository.findById(id);
     if (!run) {
       throw new AppError(404, 'NOT_FOUND', 'Run not found');
     }
@@ -1057,15 +1078,16 @@ export class RunsService {
    * Get run results
    */
   async getResults(userId: string, id: string): Promise<TestCaseResult[]> {
-    const run = await runsRepository.findByIdWithResults(id);
+    const run = await runsRepository.findById(id);
     if (!run) {
       throw new AppError(404, 'NOT_FOUND', 'Run not found');
     }
 
     // Verify evaluation ownership
-    await this.evaluationsService.findById(userId, run.evaluationId);
+    await this.evaluationsService.assertOwner(userId, run.evaluationId);
 
-    return run.testCaseResults.map((r) => transformResponse(r));
+    const results = await testCaseResultsRepository.findByRunId(id);
+    return results.map((r) => transformResponse(r));
   }
 
   /**
@@ -1087,7 +1109,10 @@ export class RunsService {
       errorMessage?: string | null;
     }
   ): Promise<TestCaseResult> {
-    const run = await runsRepository.findByIdWithResults(runId);
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id: runId },
+      select: { id: true, evaluationId: true, results: true, runConfig: true },
+    });
     if (!run) {
       throw new AppError(404, 'NOT_FOUND', 'Run not found');
     }
@@ -1104,11 +1129,6 @@ export class RunsService {
       throw new AppError(400, 'VALIDATION_ERROR', 'Test case does not belong to this evaluation');
     }
 
-    const existing = await prisma.testCaseResult.findFirst({
-      where: { runId, testCaseId: data.testCaseId },
-      select: { id: true },
-    });
-
     const safeUpdate: Prisma.TestCaseResultUpdateInput = {};
     if (data.modelOutput !== undefined) safeUpdate.modelOutput = data.modelOutput;
     if (data.scores !== undefined) safeUpdate.scores = data.scores as Prisma.JsonObject;
@@ -1120,30 +1140,33 @@ export class RunsService {
     if (data.passed !== undefined) safeUpdate.passed = data.passed;
     if (data.errorMessage !== undefined) safeUpdate.errorMessage = data.errorMessage;
 
-    const result = existing
-      ? await prisma.testCaseResult.update({
-          where: { id: existing.id },
-          data: safeUpdate,
-        })
-      : await testCaseResultsRepository.create({
-          evaluation: { connect: { id: run.evaluationId } },
-          testCase: { connect: { id: data.testCaseId } },
-          run: { connect: { id: runId } },
-          modelOutput: data.modelOutput,
-          scores: (data.scores as Prisma.JsonObject) || {},
-          aiFeedback: (data.aiFeedback as Prisma.JsonObject) || {},
-          latencyMs: data.latencyMs || 0,
-          ocrLatencyMs: data.ocrLatencyMs || 0,
-          tokensInput: data.tokensInput || 0,
-          tokensOutput: data.tokensOutput || 0,
-          passed: data.passed || false,
-          errorMessage: data.errorMessage,
-        });
+    const result = await prisma.testCaseResult.upsert({
+      where: {
+        runId_testCaseId: {
+          runId,
+          testCaseId: data.testCaseId,
+        },
+      },
+      update: safeUpdate,
+      create: {
+        evaluation: { connect: { id: run.evaluationId } },
+        testCase: { connect: { id: data.testCaseId } },
+        run: { connect: { id: runId } },
+        modelOutput: data.modelOutput,
+        scores: (data.scores as Prisma.JsonObject) || {},
+        aiFeedback: (data.aiFeedback as Prisma.JsonObject) || {},
+        latencyMs: data.latencyMs || 0,
+        ocrLatencyMs: data.ocrLatencyMs || 0,
+        tokensInput: data.tokensInput || 0,
+        tokensOutput: data.tokensOutput || 0,
+        passed: data.passed || false,
+        errorMessage: data.errorMessage,
+      },
+    });
 
     // Maintain progress counters on the run record for accurate UI progress bars.
     try {
-      const completedCases = await prisma.testCaseResult.count({ where: { runId } });
-      const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+      const { completedCases, passedCases } = await this.getRunProgressStats(runId);
       const existingRunResults = (run.results || {}) as Record<string, unknown>;
       const config = run.runConfig as Record<string, unknown> | null;
       const configTestCaseIds = Array.isArray(config?.testCaseIds) ? (config!.testCaseIds as unknown[]) : [];
@@ -1284,8 +1307,7 @@ export class RunsService {
     });
 
     try {
-      const completedCases = await prisma.testCaseResult.count({ where: { runId } });
-      const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+      const { completedCases, passedCases } = await this.getRunProgressStats(runId);
       const existingRunResults = (run.results || {}) as Record<string, unknown>;
       const config = run.runConfig as Record<string, unknown> | null;
       const configTestCaseIds = Array.isArray(config?.testCaseIds) ? (config!.testCaseIds as unknown[]) : [];

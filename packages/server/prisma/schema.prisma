@@ -149,8 +149,10 @@ model Evaluation {
   analysisReports EvaluationAnalysisReport[]
 
   @@index([userId])
+  @@index([userId, orderIndex, createdAt(sort: Desc)])
   @@index([promptId])
   @@index([status])
+  @@index([isPublic, orderIndex, createdAt(sort: Desc)])
   @@map("evaluations")
 }
 
@@ -176,6 +178,7 @@ model EvaluationImportJob {
   @@index([userId])
   @@index([status])
   @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt])
   @@map("evaluation_import_jobs")
 }
 
@@ -254,7 +257,9 @@ model EvaluationRun {
   testCaseResults   TestCaseResult[]
 
   @@index([evaluationId])
+  @@index([evaluationId, createdAt(sort: Desc)])
   @@index([status])
+  @@index([status, createdAt])
   @@index([createdAt(sort: Desc)])
   @@map("evaluation_runs")
 }
@@ -281,6 +286,7 @@ model TestCaseResult {
   @@index([evaluationId])
   @@index([testCaseId])
   @@index([runId])
+  @@index([runId, passed])
   @@unique([runId, testCaseId])
   @@map("test_case_results")
 }

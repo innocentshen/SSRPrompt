@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @ssrprompt/client dev",
-    "dev:server": "pnpm db:generate && pnpm --filter @ssrprompt/server dev",
-    "dev:worker": "pnpm db:generate && pnpm --filter @ssrprompt/server worker",
-    "dev:all": "pnpm db:generate && concurrently \"pnpm run dev\" \"pnpm --filter @ssrprompt/server dev\" \"pnpm --filter @ssrprompt/server worker\"",
+    "dev:server": "pnpm --filter @ssrprompt/server dev",
+    "dev:worker": "pnpm --filter @ssrprompt/server worker",
+    "dev:all": "concurrently \"pnpm run dev\" \"pnpm --filter @ssrprompt/server dev\" \"pnpm --filter @ssrprompt/server worker\"",
     "build": "pnpm --filter @ssrprompt/client build",
     "build:shared": "pnpm --filter @ssrprompt/shared build",
     "build:server": "pnpm --filter @ssrprompt/server build",
@@ -20,7 +20,8 @@
     "db:deploy": "pnpm --filter @ssrprompt/server prisma:migrate:deploy",
     "db:deploy:target": "pnpm --filter @ssrprompt/server prisma:migrate:target",
     "db:deploy:target:resolve": "pnpm --filter @ssrprompt/server prisma:migrate:target:resolve",
-    "db:studio": "pnpm --filter @ssrprompt/server prisma:studio"
+    "db:studio": "pnpm --filter @ssrprompt/server prisma:studio",
+    "db:prepare:prod": "pnpm db:deploy && pnpm --filter @ssrprompt/server worker:setup"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

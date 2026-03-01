@@ -18,7 +18,9 @@ export declare class FilesService {
         contentLength?: number;
         contentRange?: string;
     }>;
-    downloadBuffer(userId: string, id: string): Promise<{
+    downloadBuffer(userId: string, id: string, options?: {
+        maxBytes?: number;
+    }): Promise<{
         meta: StoredFile;
         buffer: Buffer;
     }>;

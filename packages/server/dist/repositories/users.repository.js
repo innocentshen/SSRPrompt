@@ -228,6 +228,24 @@ export class SessionsRepository {
         }
     }
     /**
+     * Atomically consume (delete) refresh token session and return the previous row.
+     * Returns null when the token was already consumed/invalid.
+     */
+    async consumeByRefreshToken(refreshToken) {
+        const existing = await prisma.session.findUnique({
+            where: { refreshToken },
+        });
+        if (!existing)
+            return null;
+        const deleted = await prisma.session.deleteMany({
+            where: {
+                id: existing.id,
+                refreshToken,
+            },
+        });
+        return deleted.count === 1 ? existing : null;
+    }
+    /**
      * Delete all sessions for a user
      */
     async deleteAllByUserId(userId) {

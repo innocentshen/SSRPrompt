@@ -5,6 +5,35 @@ import { usersRepository } from '../repositories/users.repository.js';
 import { authService } from './auth.service.js';
 import { encrypt } from '../utils/crypto.js';
 import { AppError, ValidationError } from '@ssrprompt/shared';
+function providerDisplayName(provider) {
+    return provider === 'google' ? 'Google' : 'Linux.do';
+}
+function formatNetworkErrorCause(error) {
+    if (!(error instanceof Error))
+        return undefined;
+    const cause = error.cause;
+    if (cause instanceof Error) {
+        const maybeCode = cause.code;
+        const code = typeof maybeCode === 'string' ? maybeCode : undefined;
+        return code ? `${cause.message} (${code})` : cause.message;
+    }
+    if (typeof cause === 'string' && cause.trim().length > 0)
+        return cause.trim();
+    // Fall back to the error message when we don't have a richer underlying cause.
+    const message = error.message?.trim();
+    if (message && message !== 'fetch failed')
+        return message;
+    return undefined;
+}
+async function fetchOrThrow(provider, stage, input, init) {
+    try {
+        return await fetch(input, init);
+    }
+    catch (error) {
+        const detail = formatNetworkErrorCause(error) || (error instanceof Error ? error.message : String(error));
+        throw new AppError(502, 'PROVIDER_ERROR', `${providerDisplayName(provider)} OAuth request failed (${stage}). ${detail}`);
+    }
+}
 function providerToEnum(provider) {
     return provider;
 }
@@ -45,7 +74,7 @@ export class OAuthService {
     }
     async exchangeCodeForTokens(provider, code) {
         if (provider === 'google') {
-            const response = await fetch('https://oauth2.googleapis.com/token', {
+            const response = await fetchOrThrow(provider, 'token exchange', 'https://oauth2.googleapis.com/token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: new URLSearchParams({
@@ -70,7 +99,7 @@ export class OAuthService {
             };
         }
         const basic = Buffer.from(`${env.OAUTH_LINUXDO_CLIENT_ID}:${env.OAUTH_LINUXDO_CLIENT_SECRET}`).toString('base64');
-        const response = await fetch('https://connect.linux.do/oauth2/token', {
+        const response = await fetchOrThrow(provider, 'token exchange', 'https://connect.linux.do/oauth2/token', {
             method: 'POST',
             headers: {
                 Authorization: `Basic ${basic}`,
@@ -97,7 +126,7 @@ export class OAuthService {
     }
     async fetchUserProfile(provider, accessToken) {
         if (provider === 'google') {
-            const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+            const response = await fetchOrThrow(provider, 'fetch user profile', 'https://openidconnect.googleapis.com/v1/userinfo', {
                 headers: { Authorization: `Bearer ${accessToken}` },
             });
             if (!response.ok) {
@@ -114,7 +143,7 @@ export class OAuthService {
                 avatar: data.picture,
             };
         }
-        const response = await fetch('https://connect.linux.do/api/user', {
+        const response = await fetchOrThrow(provider, 'fetch user profile', 'https://connect.linux.do/api/user', {
             headers: { Authorization: `Bearer ${accessToken}` },
         });
         if (!response.ok) {

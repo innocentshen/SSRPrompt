@@ -409,6 +409,15 @@ export class CriteriaRepository {
  */
 export class RunsRepository {
   /**
+   * Find run by ID (lightweight)
+   */
+  async findById(id: string): Promise<EvaluationRun | null> {
+    return prisma.evaluationRun.findUnique({
+      where: { id },
+    });
+  }
+
+  /**
    * Create a run
    */
   async create(evaluationId: string, data?: Partial<Prisma.EvaluationRunCreateInput>): Promise<EvaluationRun> {
@@ -446,11 +455,7 @@ export class RunsRepository {
     return prisma.evaluationRun.findUnique({
       where: { id },
       include: {
-        testCaseResults: {
-          include: {
-            testCase: true,
-          },
-        },
+        testCaseResults: true,
       },
     });
   }
@@ -502,9 +507,6 @@ export class TestCaseResultsRepository {
   async findByRunId(runId: string): Promise<TestCaseResult[]> {
     return prisma.testCaseResult.findMany({
       where: { runId },
-      include: {
-        testCase: true,
-      },
     });
   }
 }

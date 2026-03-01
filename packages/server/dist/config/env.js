@@ -9,6 +9,9 @@ function isValidUrl(value) {
         return false;
     }
 }
+function isValidPgIdentifier(value) {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
 /**
  * Environment variable schema with validation
  * Server will crash on startup if required variables are missing
@@ -20,6 +23,13 @@ const envSchema = z
     PORT: z.string().transform(Number).default('3001'),
     // Database
     DATABASE_URL: z.string().url('DATABASE_URL must be a valid PostgreSQL URL'),
+    GRAPHILE_WORKER_SCHEMA: z
+        .string()
+        .optional()
+        .default('graphile_worker')
+        .refine((value) => isValidPgIdentifier(value), {
+        message: 'GRAPHILE_WORKER_SCHEMA must be a valid PostgreSQL identifier',
+    }),
     // Authentication
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
     REQUIRE_EMAIL_VERIFICATION: z
@@ -64,6 +74,23 @@ const envSchema = z
         .optional()
         .default('true')
         .transform((v) => v === 'true' || v === '1'),
+    AUTO_SEED_ON_STARTUP: z
+        .string()
+        .optional()
+        .default('true')
+        .transform((v) => v === 'true' || v === '1'),
+    ADMIN_EMAIL: z.string().min(1, 'ADMIN_EMAIL is required'),
+    ADMIN_PASSWORD: z.string().min(1, 'ADMIN_PASSWORD is required'),
+    // Evaluation queue self-healing
+    EVALUATION_QUEUE_RECOVERY_ENABLED: z
+        .string()
+        .optional()
+        .default('true')
+        .transform((v) => v === 'true' || v === '1'),
+    EVALUATION_QUEUE_RECOVERY_INTERVAL_MS: z.string().optional().default('15000').transform(Number),
+    EVALUATION_QUEUE_RECOVERY_MIN_PENDING_AGE_MS: z.string().optional().default('20000').transform(Number),
+    EVALUATION_QUEUE_RECOVERY_RUN_BATCH_SIZE: z.string().optional().default('50').transform(Number),
+    EVALUATION_QUEUE_RECOVERY_IMPORT_BATCH_SIZE: z.string().optional().default('20').transform(Number),
     // SMTP (optional; required when using email verification / password reset emails)
     SMTP_HOST: z.string().optional(),
     SMTP_PORT: z.string().optional().default('587').transform(Number),
@@ -100,6 +127,37 @@ const envSchema = z
         .refine((v) => v === undefined || isValidUrl(v), { message: 'OAUTH_LINUXDO_CALLBACK_URL must be a valid URL' }),
 })
     .superRefine((values, ctx) => {
+    if (!Number.isFinite(values.EVALUATION_QUEUE_RECOVERY_INTERVAL_MS) || values.EVALUATION_QUEUE_RECOVERY_INTERVAL_MS < 1000) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['EVALUATION_QUEUE_RECOVERY_INTERVAL_MS'],
+            message: 'EVALUATION_QUEUE_RECOVERY_INTERVAL_MS must be a number >= 1000',
+        });
+    }
+    if (!Number.isFinite(values.EVALUATION_QUEUE_RECOVERY_MIN_PENDING_AGE_MS) ||
+        values.EVALUATION_QUEUE_RECOVERY_MIN_PENDING_AGE_MS < 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['EVALUATION_QUEUE_RECOVERY_MIN_PENDING_AGE_MS'],
+            message: 'EVALUATION_QUEUE_RECOVERY_MIN_PENDING_AGE_MS must be a number >= 0',
+        });
+    }
+    if (!Number.isInteger(values.EVALUATION_QUEUE_RECOVERY_RUN_BATCH_SIZE) ||
+        values.EVALUATION_QUEUE_RECOVERY_RUN_BATCH_SIZE < 1) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['EVALUATION_QUEUE_RECOVERY_RUN_BATCH_SIZE'],
+            message: 'EVALUATION_QUEUE_RECOVERY_RUN_BATCH_SIZE must be an integer >= 1',
+        });
+    }
+    if (!Number.isInteger(values.EVALUATION_QUEUE_RECOVERY_IMPORT_BATCH_SIZE) ||
+        values.EVALUATION_QUEUE_RECOVERY_IMPORT_BATCH_SIZE < 1) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['EVALUATION_QUEUE_RECOVERY_IMPORT_BATCH_SIZE'],
+            message: 'EVALUATION_QUEUE_RECOVERY_IMPORT_BATCH_SIZE must be an integer >= 1',
+        });
+    }
     // Email verification requires SMTP configured
     if (values.REQUIRE_EMAIL_VERIFICATION) {
         const required = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'];

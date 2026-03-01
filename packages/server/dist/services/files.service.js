@@ -4,6 +4,7 @@ import { AppError, NotFoundError } from '@ssrprompt/shared';
 import { filesRepository } from '../repositories/files.repository.js';
 import { getS3Client } from '../config/s3.js';
 import { toNodeReadable } from '../utils/stream.js';
+const DEFAULT_BUFFER_DOWNLOAD_MAX_BYTES = Math.max(1, Number(process.env.FILES_BUFFER_DOWNLOAD_MAX_BYTES || String(20 * 1024 * 1024)));
 export class FilesService {
     async upload(userId, input) {
         const { client, bucket } = getS3Client();
@@ -53,15 +54,28 @@ export class FilesService {
             contentRange: res.ContentRange,
         };
     }
-    async downloadBuffer(userId, id) {
+    async downloadBuffer(userId, id, options) {
+        const maxBytes = options?.maxBytes && Number.isFinite(options.maxBytes) && options.maxBytes > 0
+            ? options.maxBytes
+            : DEFAULT_BUFFER_DOWNLOAD_MAX_BYTES;
         const { meta, body } = await this.download(userId, id, null);
+        if (meta.size > maxBytes) {
+            throw new AppError(413, 'VALIDATION_ERROR', `File exceeds size limit (${maxBytes} bytes)`);
+        }
         if (!body) {
             throw new AppError(500, 'INTERNAL_ERROR', 'Missing file body from storage');
         }
         const stream = toNodeReadable(body);
         const chunks = [];
+        let total = 0;
         for await (const chunk of stream) {
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            total += buf.length;
+            if (total > maxBytes) {
+                stream.destroy();
+                throw new AppError(413, 'VALIDATION_ERROR', `File exceeds size limit (${maxBytes} bytes)`);
+            }
+            chunks.push(buf);
         }
         return {
             meta,

@@ -114,6 +114,12 @@ pnpm db:deploy        # 推奨: migration ベース
 pnpm --filter @ssrprompt/server prisma:seed   # 任意
 ```
 
+本番デプロイでは、各リリース時に次の冪等コマンドを実行できます（適用対象の migration がある場合のみ実行）:
+
+```bash
+pnpm db:prepare:prod
+```
+
 ### 5) 起動
 
 ```bash
@@ -149,12 +155,12 @@ Prisma の `column ... does not exist` などが出る場合は先に実行し�
 
 `EVALUATION_QUEUE_DRIVER` のモード：
 
-- `memory`（デフォルト）：プロセス内キュー、開発/軽量用途向け。
-- `pg`：Graphile Worker キュー、本番推奨。
+- `pg`（デフォルト）：Graphile Worker キュー、本番推奨。
+- `memory`：プロセス内キュー、開発/軽量用途向け。
 
 本番推奨手順：
 
-1. `EVALUATION_QUEUE_DRIVER=pg` を設定
+1. `EVALUATION_QUEUE_DRIVER=pg`（デフォルト）のまま利用
 2. 初回のみ worker schema を初期化
 
 ```bash
@@ -222,6 +228,7 @@ Zeabur/GitHub ソースビルド時は起動コマンドを分けて設定：
 - 評価キュー：`EVALUATION_QUEUE_DRIVER` と `EVALUATION_*` 調整変数
 
 完全なテンプレート：`packages/server/.env.example`
+詳細説明：`docs/env-vars.md`
 
 ---
 
@@ -267,6 +274,7 @@ pnpm db:deploy
 pnpm db:deploy:target
 pnpm db:deploy:target:resolve
 pnpm db:studio
+pnpm db:prepare:prod
 
 # 品質
 pnpm lint

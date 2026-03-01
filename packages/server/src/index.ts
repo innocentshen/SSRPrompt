@@ -6,16 +6,25 @@ import { randomUUID } from 'crypto';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env.js';
-import { connectDatabase, disconnectDatabase } from './config/database.js';
+import { connectDatabase, disconnectDatabase, prisma } from './config/database.js';
 import { checkS3Connection } from './config/s3.js';
 import { corsMiddleware, errorHandler, notFoundHandler } from './middleware/index.js';
 import routes from './routes/index.js';
 import { swaggerSpec } from './config/swagger.js';
 import { startEvaluationQueueRecoveryDaemon, stopEvaluationQueueRecoveryDaemon } from './services/evaluation-queue-recovery.service.js';
+import { autoSeedBootstrapData } from './bootstrap/database-seed.js';
 
 async function main() {
   // Connect to database
   await connectDatabase();
+
+  if (env.AUTO_SEED_ON_STARTUP) {
+    await autoSeedBootstrapData(prisma, {
+      adminEmail: env.ADMIN_EMAIL,
+      adminPassword: env.ADMIN_PASSWORD,
+    });
+  }
+
   startEvaluationQueueRecoveryDaemon();
 
   // Validate S3/MinIO connectivity (non-fatal)

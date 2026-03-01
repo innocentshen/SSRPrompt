@@ -114,6 +114,12 @@ pnpm db:deploy        # 建議：以 migration 為準
 pnpm --filter @ssrprompt/server prisma:seed   # 可選
 ```
 
+生產部署建議在每次發版時執行以下冪等命令（僅在有待執行 migration 時才會實際更新）：
+
+```bash
+pnpm db:prepare:prod
+```
+
 ### 5) 啟動
 
 ```bash
@@ -149,12 +155,12 @@ pnpm db:deploy:target:resolve -- --database-url "postgresql://user:password@host
 
 `EVALUATION_QUEUE_DRIVER` 支援：
 
-- `memory`（預設）：進程內佇列，適合開發/輕量場景。
-- `pg`：Graphile Worker 佇列，建議生產使用。
+- `pg`（預設）：Graphile Worker 佇列，建議生產使用。
+- `memory`：進程內佇列，適合開發/輕量場景。
 
 生產建議：
 
-1. 設定 `EVALUATION_QUEUE_DRIVER=pg`
+1. 維持 `EVALUATION_QUEUE_DRIVER=pg`（預設）
 2. 首次初始化 worker schema：
 
 ```bash
@@ -222,6 +228,7 @@ docker run -d --name ssrprompt-worker --env-file packages/server/.env <dockerhub
 - 評測佇列：`EVALUATION_QUEUE_DRIVER` 與 `EVALUATION_*` 調參
 
 完整模板：`packages/server/.env.example`
+詳細說明：`docs/env-vars.md`
 
 ---
 
@@ -267,6 +274,7 @@ pnpm db:deploy
 pnpm db:deploy:target
 pnpm db:deploy:target:resolve
 pnpm db:studio
+pnpm db:prepare:prod
 
 # 品質
 pnpm lint

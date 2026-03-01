@@ -86,6 +86,10 @@ export declare const runsController: {
      */
     execute(req: Request, res: Response): Promise<void>;
     /**
+     * POST /runs/:id/retry-scores - Retry AI scoring for an existing run
+     */
+    retryScores(req: Request, res: Response): Promise<void>;
+    /**
      * PUT /runs/:id - Update run
      */
     update(req: Request, res: Response): Promise<void>;

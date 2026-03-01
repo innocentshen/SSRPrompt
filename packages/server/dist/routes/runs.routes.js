@@ -64,6 +64,23 @@ router.delete('/:id', asyncHandler(runsController.delete));
 router.post('/:id/abort', asyncHandler(runsController.abort));
 /**
  * @swagger
+ * /runs/{id}/retry-scores:
+ *   post:
+ *     tags: [Runs]
+ *     summary: Retry AI scoring for a run in background worker
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post('/:id/retry-scores', asyncHandler(runsController.retryScores));
+/**
+ * @swagger
  * /runs/{id}/results:
  *   get:
  *     tags: [Runs]

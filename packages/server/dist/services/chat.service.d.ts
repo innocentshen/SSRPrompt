@@ -57,7 +57,7 @@ export declare function getModelWithProvider(userId: string, modelId: string): P
 /**
  * Build provider-specific API URL
  */
-export declare function buildApiUrl(provider: Provider): string;
+export declare function buildApiUrl(provider: Provider, modelId?: string, stream?: boolean): string;
 /**
  * Build request headers for provider
  */
@@ -79,6 +79,7 @@ export declare function streamChatCompletion(provider: Provider, model: Model, a
  */
 export declare function chatCompletion(provider: Provider, model: Model, apiKey: string, messages: ChatMessage[], options: ChatCompletionOptions, signal?: AbortSignal): Promise<{
     content: string;
+    thinking?: string;
     usage: {
         prompt_tokens: number;
         completion_tokens: number;

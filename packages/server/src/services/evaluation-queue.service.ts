@@ -1,7 +1,7 @@
 import { evaluationRetryScoresRunner, evaluationRunner } from './evaluation-runner.service.js';
 import { enqueueGraphileJob } from './graphile-queue.service.js';
 
-const QUEUE_DRIVER = (process.env.EVALUATION_QUEUE_DRIVER || 'memory').toLowerCase();
+const QUEUE_DRIVER = (process.env.EVALUATION_QUEUE_DRIVER || 'pg').toLowerCase();
 
 export async function enqueueEvaluationRun(userId: string, runId: string): Promise<void> {
   if (QUEUE_DRIVER === 'pg') {

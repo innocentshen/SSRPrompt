@@ -100,6 +100,11 @@ export declare class SessionsRepository {
      */
     deleteByRefreshToken(refreshToken: string): Promise<Session | null>;
     /**
+     * Atomically consume (delete) refresh token session and return the previous row.
+     * Returns null when the token was already consumed/invalid.
+     */
+    consumeByRefreshToken(refreshToken: string): Promise<Session | null>;
+    /**
      * Delete all sessions for a user
      */
     deleteAllByUserId(userId: string): Promise<number>;

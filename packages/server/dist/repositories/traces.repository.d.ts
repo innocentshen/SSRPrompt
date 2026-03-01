@@ -13,6 +13,7 @@ export declare class TracesRepository extends TenantRepository<Trace, Prisma.Tra
         limit?: number;
         promptId?: string;
         status?: 'success' | 'error';
+        source?: 'feature' | 'api';
     }): Promise<{
         data: Partial<Trace>[];
         total: number;

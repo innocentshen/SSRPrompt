@@ -3,6 +3,7 @@ import { AppError } from '@ssrprompt/shared';
 import { chatCompletion, getModelWithProvider } from './chat.service.js';
 import { filesService } from './files.service.js';
 import { ocrService } from './ocr.service.js';
+import { upsertRunResults } from './evaluation-results-writer.js';
 const DEFAULT_PROMPT_CONFIG = {
     temperature: 1,
     top_p: 0.7,
@@ -13,6 +14,8 @@ const DEFAULT_PROMPT_CONFIG = {
 const RUN_CONCURRENCY = Number(process.env.EVALUATION_RUN_CONCURRENCY || '2');
 const CASE_CONCURRENCY = Number(process.env.EVALUATION_CASE_CONCURRENCY || '2');
 const RESULT_BATCH_SIZE = Number(process.env.EVALUATION_RESULT_BATCH_SIZE || '10');
+const EVALUATION_ATTACHMENT_MAX_BYTES = Math.max(1, Number(process.env.EVALUATION_ATTACHMENT_MAX_BYTES || String(20 * 1024 * 1024)));
+const OCR_PROVIDER_PRIORITY = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
 class RunAbortError extends Error {
     constructor(message = 'Run aborted') {
         super(message);
@@ -95,13 +98,151 @@ function buildJudgePrompt(criterionPrompt, testCase, modelOutput) {
     }
     return evalPrompt;
 }
+function clampScore(value) {
+    if (!Number.isFinite(value))
+        return 0;
+    return Math.min(1, Math.max(0, value));
+}
+function normalizeJudgeScore(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        if (value === 0)
+            return 0;
+        if (value > 0 && value < 1)
+            return clampScore(value);
+        if (value <= 10)
+            return clampScore(value / 10);
+        if (value <= 100)
+            return clampScore(value / 100);
+        return 1;
+    }
+    if (typeof value !== 'string')
+        return null;
+    const text = value.trim();
+    if (!text)
+        return null;
+    const match = text.match(/-?\d+(?:\.\d+)?/);
+    if (!match)
+        return null;
+    const parsed = Number(match[0]);
+    if (!Number.isFinite(parsed))
+        return null;
+    if (parsed === 0)
+        return 0;
+    if (parsed > 0 && parsed < 1)
+        return clampScore(parsed);
+    if (parsed <= 10)
+        return clampScore(parsed / 10);
+    if (parsed <= 100)
+        return clampScore(parsed / 100);
+    return 1;
+}
+function extractStructuredTextScore(content) {
+    const text = content.trim();
+    if (!text)
+        return null;
+    if (/^[+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?\s*(?:%|分)?$/i.test(text)) {
+        return normalizeJudgeScore(text);
+    }
+    const patterns = [
+        /\bscore\b\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
+        /(?:评分|分数|得分)\s*(?:[:：=]|为)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/,
+    ];
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (!match?.[1])
+            continue;
+        const score = normalizeJudgeScore(match[1]);
+        if (score !== null)
+            return score;
+    }
+    return null;
+}
+function stringifyJudgeReason(value) {
+    if (typeof value === 'string')
+        return value.trim();
+    if (value === null || value === undefined)
+        return '';
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        return String(value);
+    }
+}
+function collectJsonCandidates(content) {
+    const trimmed = content.trim();
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = (value) => {
+        const normalized = value.trim();
+        if (!normalized || seen.has(normalized))
+            return;
+        seen.add(normalized);
+        candidates.push(normalized);
+    };
+    if (trimmed) {
+        pushCandidate(trimmed);
+    }
+    const fencedRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+    for (const match of trimmed.matchAll(fencedRegex)) {
+        const block = match[1];
+        if (block)
+            pushCandidate(block);
+    }
+    const scoreObjectRegex = /\{[\s\S]*?"(?:score|评分|分数)"[\s\S]*?\}/g;
+    for (const match of trimmed.matchAll(scoreObjectRegex)) {
+        if (match[0])
+            pushCandidate(match[0]);
+    }
+    return candidates;
+}
+function parseJudgeEvaluationResponse(content) {
+    const normalizedContent = (content || '').trim();
+    const candidates = collectJsonCandidates(normalizedContent);
+    const scoreKeys = ['score', '评分', '分数'];
+    const reasonKeys = ['reason', '理由', '说明', 'feedback', 'comment'];
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+                continue;
+            let score = null;
+            for (const key of ['score', '评分', '分数', ...scoreKeys]) {
+                score = normalizeJudgeScore(parsed[key]);
+                if (score !== null)
+                    break;
+            }
+            if (score === null)
+                continue;
+            let reason = '';
+            for (const key of ['reason', '理由', '说明', 'feedback', 'comment', ...reasonKeys]) {
+                reason = stringifyJudgeReason(parsed[key]);
+                if (reason)
+                    break;
+            }
+            if (!reason)
+                reason = normalizedContent || 'Evaluation failed';
+            return { score, reason };
+        }
+        catch {
+            continue;
+        }
+    }
+    const textScore = extractStructuredTextScore(normalizedContent);
+    if (textScore !== null) {
+        return { score: textScore, reason: normalizedContent || 'Evaluation failed' };
+    }
+    return {
+        score: 0,
+        reason: normalizedContent || 'Evaluation failed',
+    };
+}
 function computeWeightedPass(scores, criteria, threshold) {
-    const scoreNames = Object.keys(scores);
-    if (scoreNames.length === 0)
+    if (criteria.length === 0)
         return true;
     const weightMap = new Map(criteria.map((c) => [c.name, c.weight]));
-    const totalWeight = scoreNames.reduce((sum, name) => sum + (weightMap.get(name) ?? 1), 0);
-    const weighted = scoreNames.reduce((sum, name) => sum + scores[name] * (weightMap.get(name) ?? 1), 0);
+    const totalWeight = criteria.reduce((sum, criterion) => sum + (weightMap.get(criterion.name) ?? 1), 0);
+    const weighted = criteria.reduce((sum, criterion) => sum + (scores[criterion.name] || 0) * (weightMap.get(criterion.name) ?? 1), 0);
     const avgScore = totalWeight > 0 ? weighted / totalWeight : 0;
     return avgScore >= threshold;
 }
@@ -176,7 +317,9 @@ async function expandMessages(userId, messages, mode, options) {
         for (const part of parts) {
             if (part.type === 'file_ref') {
                 const fileId = part.file_ref.fileId;
-                const { meta, buffer } = await filesService.downloadBuffer(userId, fileId);
+                const { meta, buffer } = await filesService.downloadBuffer(userId, fileId, {
+                    maxBytes: EVALUATION_ATTACHMENT_MAX_BYTES,
+                });
                 if (!seenFileIds.has(fileId)) {
                     seenFileIds.add(fileId);
                 }
@@ -227,6 +370,9 @@ async function expandMessages(userId, messages, mode, options) {
                 const dataUrl = parseDataUrl(part.image_url.url);
                 if (dataUrl) {
                     const buffer = Buffer.from(dataUrl.base64, 'base64');
+                    if (buffer.length > EVALUATION_ATTACHMENT_MAX_BYTES) {
+                        throw new AppError(413, 'VALIDATION_ERROR', `Attachment exceeds size limit (${EVALUATION_ATTACHMENT_MAX_BYTES} bytes)`);
+                    }
                     const stored = await filesService.upload(userId, {
                         originalName: `image_${seenFileIds.size + 1}.${extensionFromMimeType(dataUrl.mimeType)}`,
                         mimeType: dataUrl.mimeType,
@@ -244,6 +390,9 @@ async function expandMessages(userId, messages, mode, options) {
                 const dataUrl = parseDataUrl(part.file.file_data);
                 if (dataUrl) {
                     const buffer = Buffer.from(dataUrl.base64, 'base64');
+                    if (buffer.length > EVALUATION_ATTACHMENT_MAX_BYTES) {
+                        throw new AppError(413, 'VALIDATION_ERROR', `Attachment exceeds size limit (${EVALUATION_ATTACHMENT_MAX_BYTES} bytes)`);
+                    }
                     const stored = await filesService.upload(userId, {
                         originalName: part.file.filename,
                         mimeType: dataUrl.mimeType,
@@ -364,14 +513,21 @@ export async function executeEvaluationRun(runId, options = {}) {
         return model.supportsVision ? 'vision' : 'ocr';
     })();
     let resolvedOcrProvider = null;
+    let ocrSettings = null;
     if (hasBinaryAttachments && resolvedFileMode === 'ocr') {
+        ocrSettings = await ocrService.getSettings(userId);
+        const enabledByProvider = ocrSettings.providerEnabled ?? {};
         const preferred = ocrProvider ?? null;
         if (preferred) {
-            resolvedOcrProvider = preferred;
+            resolvedOcrProvider = enabledByProvider[preferred] ? preferred : null;
         }
         else {
-            const settings = await ocrService.getSettings(userId);
-            resolvedOcrProvider = settings.provider;
+            resolvedOcrProvider = enabledByProvider[ocrSettings.provider]
+                ? ocrSettings.provider
+                : (OCR_PROVIDER_PRIORITY.find((provider) => enabledByProvider[provider]) ?? null);
+        }
+        if (!resolvedOcrProvider) {
+            throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'File upload requires OCR to be enabled');
         }
         const currentResolved = runConfig.ocrProviderResolved ?? null;
         if (resolvedOcrProvider && currentResolved !== resolvedOcrProvider) {
@@ -386,6 +542,10 @@ export async function executeEvaluationRun(runId, options = {}) {
     const effectiveOcrProvider = ocrProvider ?? resolvedOcrProvider ?? undefined;
     const caseConcurrency = Number.isFinite(CASE_CONCURRENCY) && CASE_CONCURRENCY > 0 ? CASE_CONCURRENCY : 1;
     const passThreshold = evalConfig.pass_threshold ?? 0.6;
+    // Reset stale results so reruns/retries of the same run remain deterministic.
+    await prisma.testCaseResult.deleteMany({
+        where: { runId },
+    });
     await prisma.evaluationRun.update({
         where: { id: runId },
         data: { status: 'running', errorMessage: null, completedAt: null, results: { totalCases: testCases.length, completedCases: 0 } },
@@ -450,22 +610,7 @@ export async function executeEvaluationRun(runId, options = {}) {
         }
         const batch = resultsBatch.splice(0, resultsBatch.length);
         flushInFlight = (async () => {
-            await prisma.testCaseResult.createMany({
-                data: batch.map((item) => ({
-                    evaluationId: evaluation.id,
-                    runId,
-                    testCaseId: item.testCaseId,
-                    modelOutput: item.modelOutput,
-                    scores: item.scores || {},
-                    aiFeedback: (item.aiFeedback ?? {}),
-                    latencyMs: item.latencyMs || 0,
-                    ocrLatencyMs: item.ocrLatencyMs || 0,
-                    tokensInput: item.tokensInput || 0,
-                    tokensOutput: item.tokensOutput || 0,
-                    passed: item.passed || false,
-                    errorMessage: item.errorMessage || null,
-                })),
-            });
+            await upsertRunResults(prisma, evaluation.id, runId, batch);
         })();
         try {
             await flushInFlight;
@@ -533,8 +678,9 @@ export async function executeEvaluationRun(runId, options = {}) {
             else
                 mode = model.supportsVision ? 'vision' : 'ocr';
             if (mode === 'ocr') {
-                const settings = await ocrService.getSettings(userId);
-                if (!settings.enabled) {
+                const settings = ocrSettings ?? await ocrService.getSettings(userId);
+                const targetProvider = effectiveOcrProvider ?? settings.provider;
+                if (!settings.providerEnabled?.[targetProvider]) {
                     throw new AppError(400, 'FILE_UPLOAD_NOT_ALLOWED', 'File upload requires OCR to be enabled');
                 }
             }
@@ -568,16 +714,12 @@ export async function executeEvaluationRun(runId, options = {}) {
                     await ensureNotAborted();
                     const evalPrompt = buildJudgePrompt(criterion.prompt, testCase, response.content);
                     const evalResponse = await chatCompletion(judge.provider, judge.model, judge.apiKey, [{ role: 'user', content: evalPrompt }], {}, signal);
-                    const jsonMatch = evalResponse.content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
-                    if (jsonMatch) {
-                        const parsed = JSON.parse(jsonMatch[0]);
-                        const score = Math.min(1, Math.max(0, (parsed.score || 0) / 10));
-                        scores[criterion.name] = score;
-                        aiFeedback[criterion.name] = parsed.reason || '';
-                        if (!allScores[criterion.name])
-                            allScores[criterion.name] = [];
-                        allScores[criterion.name].push(score);
-                    }
+                    const parsed = parseJudgeEvaluationResponse(evalResponse.content);
+                    scores[criterion.name] = parsed.score;
+                    aiFeedback[criterion.name] = parsed.reason;
+                    if (!allScores[criterion.name])
+                        allScores[criterion.name] = [];
+                    allScores[criterion.name].push(parsed.score);
                 }
                 catch (error) {
                     if (error instanceof RunAbortError)
@@ -723,6 +865,355 @@ export async function executeEvaluationRun(runId, options = {}) {
         }
     }
 }
+export async function executeRetryEvaluationRunScores(runId, options = {}) {
+    const run = await prisma.evaluationRun.findUnique({
+        where: { id: runId },
+        include: {
+            evaluation: {
+                include: {
+                    testCases: { orderBy: { orderIndex: 'asc' } },
+                    criteria: { orderBy: { createdAt: 'asc' } },
+                },
+            },
+            testCaseResults: true,
+        },
+    });
+    if (!run || !run.evaluation) {
+        throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+    const resolvedUserId = options.userId ?? run.evaluation.userId;
+    if (run.evaluation.userId !== resolvedUserId) {
+        throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+    }
+    const evaluation = run.evaluation;
+    const userId = resolvedUserId;
+    const evalConfig = (evaluation.config || {});
+    const enabledCriteria = evaluation.criteria.filter((criterion) => criterion.enabled);
+    const passThreshold = evalConfig.pass_threshold ?? 0.6;
+    const signal = options.signal;
+    if (!evaluation.judgeModelId) {
+        throw new AppError(400, 'VALIDATION_ERROR', 'Judge model not set for evaluation');
+    }
+    if (enabledCriteria.length === 0) {
+        throw new AppError(400, 'VALIDATION_ERROR', 'No enabled criteria configured');
+    }
+    const judge = await getModelWithProvider(userId, evaluation.judgeModelId);
+    const testCaseById = new Map(evaluation.testCases.map((testCase) => [testCase.id, testCase]));
+    const runResults = run.testCaseResults;
+    if (runResults.length === 0) {
+        throw new AppError(400, 'VALIDATION_ERROR', 'No run results to retry');
+    }
+    const existingRunResults = (run.results || {});
+    const totalCasesFromRun = typeof existingRunResults.totalCases === 'number' && Number.isFinite(existingRunResults.totalCases)
+        ? existingRunResults.totalCases
+        : runResults.length;
+    await prisma.evaluationRun.update({
+        where: { id: runId },
+        data: {
+            status: 'running',
+            errorMessage: null,
+            completedAt: null,
+            results: {
+                ...existingRunResults,
+                totalCases: totalCasesFromRun,
+                completedCases: 0,
+            },
+        },
+    });
+    await prisma.evaluation.update({
+        where: { id: evaluation.id },
+        data: { status: 'running', completedAt: null },
+    });
+    const resultsBatch = [];
+    let completedCases = 0;
+    let flushInFlight = null;
+    const progressUpdateIntervalMs = Math.max(0, Number(process.env.EVALUATION_PROGRESS_UPDATE_INTERVAL_MS || '1000'));
+    const progressUpdateBatchSize = Math.max(1, Number(process.env.EVALUATION_PROGRESS_UPDATE_BATCH_SIZE || '1'));
+    let pendingProgressUpdates = 0;
+    let lastProgressUpdate = 0;
+    let progressUpdateInFlight = null;
+    const abortCheckIntervalMs = Math.max(0, Number(process.env.EVALUATION_ABORT_CHECK_INTERVAL_MS || '2000'));
+    let lastAbortCheck = 0;
+    const ensureNotAborted = async () => {
+        if (signal?.aborted) {
+            throw new RunAbortError();
+        }
+        if (abortCheckIntervalMs <= 0)
+            return;
+        const now = Date.now();
+        if (now - lastAbortCheck < abortCheckIntervalMs)
+            return;
+        lastAbortCheck = now;
+        const current = await prisma.evaluationRun.findUnique({
+            where: { id: runId },
+            select: { status: true },
+        });
+        if (!current || current.status === 'failed') {
+            throw new RunAbortError();
+        }
+    };
+    const updateProgress = async (force = false) => {
+        if (!force) {
+            const now = Date.now();
+            if (pendingProgressUpdates < progressUpdateBatchSize &&
+                now - lastProgressUpdate < progressUpdateIntervalMs) {
+                return;
+            }
+        }
+        if (progressUpdateInFlight)
+            return;
+        progressUpdateInFlight = (async () => {
+            await prisma.evaluationRun.update({
+                where: { id: runId },
+                data: {
+                    results: {
+                        ...existingRunResults,
+                        totalCases: totalCasesFromRun,
+                        completedCases,
+                    },
+                },
+            });
+        })();
+        try {
+            await progressUpdateInFlight;
+        }
+        catch (error) {
+            console.error('Failed to update retry-score progress:', error);
+        }
+        finally {
+            lastProgressUpdate = Date.now();
+            pendingProgressUpdates = 0;
+            progressUpdateInFlight = null;
+        }
+    };
+    const markCaseComplete = async () => {
+        completedCases += 1;
+        pendingProgressUpdates += 1;
+        await updateProgress();
+    };
+    const flushResults = async () => {
+        if (resultsBatch.length === 0)
+            return;
+        if (flushInFlight) {
+            await flushInFlight;
+            if (resultsBatch.length === 0)
+                return;
+        }
+        const batch = resultsBatch.splice(0, resultsBatch.length);
+        flushInFlight = (async () => {
+            await upsertRunResults(prisma, evaluation.id, runId, batch);
+        })();
+        try {
+            await flushInFlight;
+        }
+        finally {
+            flushInFlight = null;
+        }
+    };
+    const enqueueResult = async (payload) => {
+        resultsBatch.push(payload);
+        await markCaseComplete();
+        if (resultsBatch.length >= RESULT_BATCH_SIZE) {
+            await flushResults();
+        }
+    };
+    const executeResultRetry = async (result) => {
+        await ensureNotAborted();
+        const testCase = testCaseById.get(result.testCaseId);
+        const modelOutput = result.modelOutput || '';
+        const nextScores = {};
+        const nextFeedback = {};
+        if (!testCase || !modelOutput) {
+            await enqueueResult({
+                testCaseId: result.testCaseId,
+                modelOutput: result.modelOutput || '',
+                scores: result.scores || {},
+                aiFeedback: result.aiFeedback || {},
+                latencyMs: result.latencyMs || 0,
+                ocrLatencyMs: result.ocrLatencyMs || 0,
+                tokensInput: result.tokensInput || 0,
+                tokensOutput: result.tokensOutput || 0,
+                passed: result.passed || false,
+                errorMessage: result.errorMessage || null,
+            });
+            return;
+        }
+        for (const criterion of enabledCriteria) {
+            await ensureNotAborted();
+            try {
+                const evalPrompt = buildJudgePrompt(criterion.prompt, testCase, modelOutput);
+                const evalResponse = await chatCompletion(judge.provider, judge.model, judge.apiKey, [{ role: 'user', content: evalPrompt }], {}, signal);
+                const parsed = parseJudgeEvaluationResponse(evalResponse.content);
+                nextScores[criterion.name] = parsed.score;
+                nextFeedback[criterion.name] = parsed.reason;
+            }
+            catch (error) {
+                if (error instanceof RunAbortError)
+                    throw error;
+                nextScores[criterion.name] = 0;
+                nextFeedback[criterion.name] = 'Evaluation failed';
+            }
+        }
+        const criteriaWeights = enabledCriteria.map((criterion) => {
+            const weightValue = Number(criterion.weight);
+            return { name: criterion.name, weight: Number.isFinite(weightValue) ? weightValue : 1 };
+        });
+        const nextPassed = computeWeightedPass(nextScores, criteriaWeights, passThreshold);
+        await enqueueResult({
+            testCaseId: result.testCaseId,
+            modelOutput: modelOutput,
+            scores: nextScores,
+            aiFeedback: nextFeedback,
+            latencyMs: result.latencyMs || 0,
+            ocrLatencyMs: result.ocrLatencyMs || 0,
+            tokensInput: result.tokensInput || 0,
+            tokensOutput: result.tokensOutput || 0,
+            passed: nextPassed,
+            errorMessage: null,
+        });
+    };
+    try {
+        const caseConcurrency = Number.isFinite(CASE_CONCURRENCY) && CASE_CONCURRENCY > 0 ? CASE_CONCURRENCY : 1;
+        const workerCount = Math.max(1, Math.min(caseConcurrency, runResults.length));
+        if (workerCount > 1) {
+            const queue = [...runResults];
+            await Promise.all(Array.from({ length: workerCount }, async () => {
+                while (queue.length > 0) {
+                    await ensureNotAborted();
+                    const item = queue.shift();
+                    if (!item)
+                        return;
+                    try {
+                        await executeResultRetry(item);
+                    }
+                    catch (error) {
+                        if (error instanceof RunAbortError)
+                            throw error;
+                        await enqueueResult({
+                            testCaseId: item.testCaseId,
+                            modelOutput: item.modelOutput || '',
+                            scores: {},
+                            aiFeedback: {},
+                            latencyMs: item.latencyMs || 0,
+                            ocrLatencyMs: item.ocrLatencyMs || 0,
+                            tokensInput: item.tokensInput || 0,
+                            tokensOutput: item.tokensOutput || 0,
+                            passed: false,
+                            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                        });
+                    }
+                }
+            }));
+        }
+        else {
+            for (const result of runResults) {
+                await ensureNotAborted();
+                try {
+                    await executeResultRetry(result);
+                }
+                catch (error) {
+                    if (error instanceof RunAbortError)
+                        throw error;
+                    await enqueueResult({
+                        testCaseId: result.testCaseId,
+                        modelOutput: result.modelOutput || '',
+                        scores: {},
+                        aiFeedback: {},
+                        latencyMs: result.latencyMs || 0,
+                        ocrLatencyMs: result.ocrLatencyMs || 0,
+                        tokensInput: result.tokensInput || 0,
+                        tokensOutput: result.tokensOutput || 0,
+                        passed: false,
+                        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                    });
+                }
+            }
+        }
+        await flushResults();
+        await updateProgress(true);
+        const finalResults = await prisma.testCaseResult.findMany({
+            where: { runId },
+            select: {
+                scores: true,
+                passed: true,
+                tokensInput: true,
+                tokensOutput: true,
+                latencyMs: true,
+                ocrLatencyMs: true,
+            },
+        });
+        const completedResultCases = finalResults.length;
+        const passedCases = finalResults.filter((result) => result.passed).length;
+        const totalTokensInput = finalResults.reduce((sum, result) => sum + (result.tokensInput || 0), 0);
+        const totalTokensOutput = finalResults.reduce((sum, result) => sum + (result.tokensOutput || 0), 0);
+        const llmTimeMs = finalResults.reduce((sum, result) => sum + (result.latencyMs || 0), 0);
+        const ocrTimeMs = finalResults.reduce((sum, result) => sum + (result.ocrLatencyMs || 0), 0);
+        const overallScores = {};
+        if (enabledCriteria.length > 0 && completedResultCases > 0) {
+            for (const criterion of enabledCriteria) {
+                const scoreSum = finalResults.reduce((sum, result) => {
+                    const scoreValue = result.scores?.[criterion.name];
+                    return sum + (typeof scoreValue === 'number' ? scoreValue : 0);
+                }, 0);
+                overallScores[criterion.name] = scoreSum / completedResultCases;
+            }
+        }
+        const effectiveTotalCases = totalCasesFromRun > 0 ? totalCasesFromRun : completedResultCases;
+        const rate = effectiveTotalCases > 0 ? Math.round((passedCases / effectiveTotalCases) * 100) : 0;
+        const nextRunResults = {
+            ...existingRunResults,
+            scores: overallScores,
+            totalCases: effectiveTotalCases,
+            completedCases: completedResultCases,
+            passedCases,
+            llmTimeMs,
+            ocrTimeMs,
+            summary: `Total ${effectiveTotalCases}, Passed ${passedCases}, Rate ${rate}%`,
+        };
+        await prisma.evaluationRun.update({
+            where: { id: runId },
+            data: {
+                status: 'completed',
+                results: nextRunResults,
+                totalTokensInput,
+                totalTokensOutput,
+                completedAt: new Date(),
+            },
+        });
+        await prisma.evaluation.update({
+            where: { id: evaluation.id },
+            data: {
+                status: 'completed',
+                results: nextRunResults,
+                completedAt: new Date(),
+            },
+        });
+    }
+    catch (error) {
+        try {
+            await flushResults();
+        }
+        catch (flushError) {
+            console.error('Failed to flush retry-score results after run error:', flushError);
+        }
+        const message = error instanceof RunAbortError ? 'Run aborted' : error.message;
+        await prisma.evaluationRun.update({
+            where: { id: runId },
+            data: {
+                status: 'failed',
+                errorMessage: message,
+                completedAt: new Date(),
+            },
+        });
+        await prisma.evaluation.update({
+            where: { id: evaluation.id },
+            data: { status: 'failed', completedAt: new Date() },
+        });
+        if (!(error instanceof RunAbortError)) {
+            throw error;
+        }
+    }
+}
 class EvaluationRunQueue {
     constructor() {
         Object.defineProperty(this, "pending", {
@@ -780,5 +1271,63 @@ class EvaluationRunQueue {
         }
     }
 }
+class EvaluationRetryScoresQueue {
+    constructor() {
+        Object.defineProperty(this, "pending", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: []
+        });
+        Object.defineProperty(this, "active", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: new Map()
+        });
+        Object.defineProperty(this, "maxConcurrent", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: Number.isFinite(RUN_CONCURRENCY) && RUN_CONCURRENCY > 0 ? RUN_CONCURRENCY : 1
+        });
+    }
+    enqueue(userId, runId) {
+        return new Promise((resolve, reject) => {
+            this.pending.push({ userId, runId, resolve, reject });
+            this.process();
+        });
+    }
+    abort(runId) {
+        const controller = this.active.get(runId);
+        if (controller) {
+            controller.abort();
+            return true;
+        }
+        const pendingIndex = this.pending.findIndex((job) => job.runId === runId);
+        if (pendingIndex >= 0) {
+            this.pending.splice(pendingIndex, 1);
+            return true;
+        }
+        return false;
+    }
+    process() {
+        while (this.active.size < this.maxConcurrent && this.pending.length > 0) {
+            const job = this.pending.shift();
+            if (!job)
+                return;
+            const controller = new AbortController();
+            this.active.set(job.runId, controller);
+            executeRetryEvaluationRunScores(job.runId, { userId: job.userId, signal: controller.signal })
+                .then(() => job.resolve())
+                .catch((error) => job.reject(error))
+                .finally(() => {
+                this.active.delete(job.runId);
+                this.process();
+            });
+        }
+    }
+}
 export const evaluationRunner = new EvaluationRunQueue();
+export const evaluationRetryScoresRunner = new EvaluationRetryScoresQueue();
 //# sourceMappingURL=evaluation-runner.service.js.map

@@ -3,7 +3,7 @@ import { prisma } from '../config/database.js';
 import { transformResponse, transformDecimal } from '../utils/transform.js';
 import { AppError } from '@ssrprompt/shared';
 import { filesService } from './files.service.js';
-import { abortEvaluationRun, enqueueEvaluationRun } from './evaluation-queue.service.js';
+import { abortEvaluationRun, enqueueEvaluationRetryScores, enqueueEvaluationRun } from './evaluation-queue.service.js';
 function normalizeBase64(value) {
     const comma = value.indexOf(',');
     if (value.startsWith('data:') && comma !== -1) {
@@ -295,6 +295,20 @@ export class EvaluationsService {
         }
         // Guardrail: a public evaluation must not reference a private prompt.
         const nextPromptId = data.promptId !== undefined ? (data.promptId ?? null) : (existing.promptId ?? null);
+        // Invariant: cannot inherit model parameters from a prompt when no prompt is linked.
+        // If a prompt reference is dropped (e.g. copying public evaluations with private prompts),
+        // auto-clear `inherited_from_prompt` to avoid inconsistent state in UI and runner logic.
+        if (!nextPromptId) {
+            const effectiveConfig = data.config && typeof data.config === 'object' && !Array.isArray(data.config)
+                ? data.config
+                : existing.config && typeof existing.config === 'object' && !Array.isArray(existing.config)
+                    ? existing.config
+                    : {};
+            const inherited = effectiveConfig.inherited_from_prompt;
+            if (inherited === true) {
+                updateData.config = { ...effectiveConfig, inherited_from_prompt: false };
+            }
+        }
         const nextIsPublic = data.isPublic !== undefined ? data.isPublic : existing.isPublic;
         const nextShareAttachments = data.shareAttachments !== undefined ? data.shareAttachments : existing.shareAttachments;
         // Keep invariants: attachments can only be shared when the evaluation is public.
@@ -371,6 +385,12 @@ export class EvaluationsService {
             }
         })();
         const allowAttachmentCopy = original.userId === userId || original.shareAttachments;
+        const copiedConfigBase = original.config && typeof original.config === 'object' && !Array.isArray(original.config)
+            ? original.config
+            : {};
+        const copiedConfig = resolvedPromptId
+            ? copiedConfigBase
+            : { ...copiedConfigBase, inherited_from_prompt: false };
         const copiedTestCases = original.testCases
             ? await Promise.all(original.testCases.map(async (tc) => {
                 const rawAttachments = (tc.attachments ?? []);
@@ -402,7 +422,7 @@ export class EvaluationsService {
             prompt: resolvedPromptId ? { connect: { id: resolvedPromptId } } : undefined,
             model: resolvedModelId ? { connect: { id: resolvedModelId } } : undefined,
             judgeModel: resolvedJudgeModelId ? { connect: { id: resolvedJudgeModelId } } : undefined,
-            config: original.config || {},
+            config: copiedConfig,
             results: {},
             status: 'pending',
             isPublic: false,
@@ -601,6 +621,7 @@ export class RunsService {
             fileProcessing: evaluation.config?.file_processing || 'auto',
             ocrProvider: evaluation.config?.ocr_provider,
             testCaseIds: selectedTestCaseIds,
+            queueTask: 'evaluation.run',
         };
         const nextStatus = options?.status ?? 'running';
         const run = await runsRepository.create(evaluationId, {
@@ -630,6 +651,76 @@ export class RunsService {
             console.error('Failed to enqueue evaluation run:', error);
         });
         return run;
+    }
+    /**
+     * Enqueue retrying AI scores for an existing run.
+     */
+    async retryScores(userId, runId) {
+        const run = await prisma.evaluationRun.findUnique({
+            where: { id: runId },
+            include: {
+                evaluation: {
+                    select: {
+                        id: true,
+                        userId: true,
+                        judgeModelId: true,
+                        criteria: {
+                            where: { enabled: true },
+                            select: { id: true },
+                        },
+                    },
+                },
+            },
+        });
+        if (!run || !run.evaluation) {
+            throw new AppError(404, 'NOT_FOUND', 'Run not found');
+        }
+        if (run.evaluation.userId !== userId) {
+            throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+        }
+        if (run.status === 'pending' || run.status === 'running') {
+            throw new AppError(409, 'CONFLICT', 'Run is already in progress');
+        }
+        if (!run.evaluation.judgeModelId) {
+            throw new AppError(400, 'VALIDATION_ERROR', 'Judge model not set for evaluation');
+        }
+        if (run.evaluation.criteria.length === 0) {
+            throw new AppError(400, 'VALIDATION_ERROR', 'No enabled criteria configured');
+        }
+        const existingRunResults = (run.results || {});
+        const fallbackTotalCases = await prisma.testCaseResult.count({ where: { runId } });
+        const totalCases = typeof existingRunResults.totalCases === 'number' && Number.isFinite(existingRunResults.totalCases)
+            ? existingRunResults.totalCases
+            : fallbackTotalCases;
+        const updated = await runsRepository.update(runId, {
+            status: 'pending',
+            errorMessage: null,
+            completedAt: null,
+            runConfig: {
+                ...(run.runConfig && typeof run.runConfig === 'object' && !Array.isArray(run.runConfig)
+                    ? run.runConfig
+                    : {}),
+                queueTask: 'evaluation.retry_scores',
+            },
+            results: {
+                ...existingRunResults,
+                totalCases,
+                completedCases: 0,
+            },
+        });
+        try {
+            await prisma.evaluation.update({
+                where: { id: run.evaluation.id },
+                data: { status: 'pending', completedAt: null },
+            });
+        }
+        catch (error) {
+            console.error('Failed to update evaluation status for retry scores:', error);
+        }
+        enqueueEvaluationRetryScores(userId, runId).catch((error) => {
+            console.error('Failed to enqueue retry-score run:', error);
+        });
+        return transformResponse(updated);
     }
     /**
      * Update a run

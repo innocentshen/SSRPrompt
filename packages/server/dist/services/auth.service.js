@@ -114,24 +114,20 @@ export class AuthService {
      * Refresh access token
      */
     async refreshTokens(refreshToken, meta) {
-        // Find session
-        const session = await sessionsRepository.findByRefreshToken(refreshToken);
+        // Atomically consume session so one refresh token can only be used once.
+        const session = await sessionsRepository.consumeByRefreshToken(refreshToken);
         if (!session) {
             throw new UnauthorizedError('Invalid refresh token');
         }
         // Check if expired
         if (session.expiresAt < new Date()) {
-            await sessionsRepository.deleteByRefreshToken(refreshToken);
             throw new UnauthorizedError('Refresh token expired');
         }
         // Get user with roles
         const user = await usersRepository.findByIdWithRoles(session.userId);
         if (!user || user.status !== 'active') {
-            await sessionsRepository.deleteByRefreshToken(refreshToken);
             throw new UnauthorizedError('User not found or inactive');
         }
-        // Delete old session
-        await sessionsRepository.deleteByRefreshToken(refreshToken);
         // Generate new token pair
         return this.generateTokenPair(user, meta);
     }

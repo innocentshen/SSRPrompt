@@ -2,7 +2,8 @@ import './config/env.js';
 import { run } from 'graphile-worker';
 import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
-import { executeEvaluationRun } from './services/evaluation-runner.service.js';
+import { executeEvaluationRun, executeRetryEvaluationRunScores } from './services/evaluation-runner.service.js';
+import { evaluationImportsService } from './services/evaluation-imports.service.js';
 const taskList = {
     'evaluation.run': async (payload) => {
         const data = payload;
@@ -12,6 +13,22 @@ const taskList = {
         }
         await executeEvaluationRun(runId);
     },
+    'evaluation.retry_scores': async (payload) => {
+        const data = payload;
+        const runId = data && typeof data.runId === 'string' ? data.runId : null;
+        if (!runId) {
+            throw new Error('evaluation.retry_scores payload missing runId');
+        }
+        await executeRetryEvaluationRunScores(runId);
+    },
+    'evaluation.import': async (payload) => {
+        const data = payload;
+        const jobId = data && typeof data.jobId === 'string' ? data.jobId : null;
+        if (!jobId) {
+            throw new Error('evaluation.import payload missing jobId');
+        }
+        await evaluationImportsService.execute(jobId);
+    },
 };
 async function main() {
     await connectDatabase();
@@ -19,6 +36,7 @@ async function main() {
     const pollInterval = Math.max(500, Number(process.env.EVALUATION_WORKER_POLL_INTERVAL_MS || '1000'));
     const runner = await run({
         connectionString: env.DATABASE_URL,
+        schema: env.GRAPHILE_WORKER_SCHEMA,
         concurrency,
         pollInterval,
         taskList,
