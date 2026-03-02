@@ -14,3 +14,4 @@ export { Slider } from './Slider';
 export { Tabs } from './Tabs';
 export { Collapsible } from './Collapsible';
 export { ModelSelector } from './ModelSelector';
+export { StopIndicator } from './StopIndicator';

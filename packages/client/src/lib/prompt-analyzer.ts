@@ -191,7 +191,8 @@ function buildAutoOptimizeContext(context: NonNullable<PromptAnalysisRequest['au
 
 export async function analyzePrompt(
   modelId: string,
-  request: PromptAnalysisRequest
+  request: PromptAnalysisRequest,
+  signal?: AbortSignal
 ): Promise<PromptAnalysisResult> {
   // Get the configurable analysis prompt from settings
   const settings = getOptimizationSettings();
@@ -251,7 +252,7 @@ export async function analyzePrompt(
     ],
     saveTrace: false,
     responseFormat,
-  });
+  }, signal);
 
   // Parse the result based on structured output mode
   if (structuredSupport === 'json_schema') {

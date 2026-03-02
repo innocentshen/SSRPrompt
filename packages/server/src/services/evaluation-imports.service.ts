@@ -228,7 +228,6 @@ function buildImportWorkbookBuffer(input: {
       'modelId',
       'judgeModelId',
       'pass_threshold',
-      'execution_mode',
       'file_processing',
       'ocr_provider',
       'model_parameters_json',
@@ -273,7 +272,6 @@ function buildTemplateReadmeText(locale: EvaluationImportLocale): string {
       '- evaluationName：create 模式必填',
       '- promptId/modelId/judgeModelId：可选 UUID',
       '- pass_threshold：0~1，也支持 6(0.6)/60(0.6)',
-      '- execution_mode：sequential | parallel',
       '- file_processing：auto | vision | ocr | none',
       '- ocr_provider：可选 OCR 供应商编码',
       '- model_parameters_json：JSON 对象字符串',
@@ -313,7 +311,6 @@ function buildTemplateReadmeText(locale: EvaluationImportLocale): string {
       '- evaluationName：create 模式必填',
       '- promptId/modelId/judgeModelId：可選 UUID',
       '- pass_threshold：0~1，也支援 6(0.6)/60(0.6)',
-      '- execution_mode：sequential | parallel',
       '- file_processing：auto | vision | ocr | none',
       '- ocr_provider：可選 OCR 供應商代碼',
       '- model_parameters_json：JSON 物件字串',
@@ -353,7 +350,6 @@ function buildTemplateReadmeText(locale: EvaluationImportLocale): string {
       '- evaluationName: create モードで必須',
       '- promptId/modelId/judgeModelId: 任意 UUID',
       '- pass_threshold: 0~1（6=0.6、60=0.6 も可）',
-      '- execution_mode: sequential | parallel',
       '- file_processing: auto | vision | ocr | none',
       '- ocr_provider: 任意の OCR プロバイダコード',
       '- model_parameters_json: JSON オブジェクト文字列',
@@ -392,7 +388,6 @@ function buildTemplateReadmeText(locale: EvaluationImportLocale): string {
     '- evaluationName: required in create mode',
     '- promptId/modelId/judgeModelId: optional UUID',
     '- pass_threshold: 0~1, also accepts 6(0.6)/60(0.6)',
-    '- execution_mode: sequential | parallel',
     '- file_processing: auto | vision | ocr | none',
     '- ocr_provider: optional provider code',
     '- model_parameters_json: JSON object string',
@@ -479,7 +474,6 @@ function buildTemplateWorkbookBuffer(locale: EvaluationImportLocale): Buffer {
       modelId: '',
       judgeModelId: '',
       pass_threshold: 0.6,
-      execution_mode: 'sequential',
       file_processing: 'auto',
       ocr_provider: '',
       model_parameters_json: '{"temperature":0.3,"max_tokens":1024}',
@@ -625,9 +619,6 @@ function parseMetaRow(row: Record<string, unknown>, errors: ImportError[]): Pars
 
   const passThreshold = normalizePassThreshold(row.pass_threshold);
   if (passThreshold !== undefined) configPatch.pass_threshold = passThreshold;
-
-  const executionMode = getOptionalString(row.execution_mode);
-  if (executionMode) configPatch.execution_mode = executionMode;
 
   const fileProcessing = getOptionalString(row.file_processing);
   if (fileProcessing) configPatch.file_processing = fileProcessing;
@@ -951,7 +942,6 @@ export class EvaluationImportsService {
       modelId: evaluation.modelId ?? '',
       judgeModelId: evaluation.judgeModelId ?? '',
       pass_threshold: config.pass_threshold ?? '',
-      execution_mode: config.execution_mode ?? '',
       file_processing: config.file_processing ?? '',
       ocr_provider: config.ocr_provider ?? '',
       model_parameters_json: safeJsonString(config.model_parameters ?? {}),

@@ -22,7 +22,7 @@ import {
   Link,
   Search,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, Checkbox, useToast, ModelSelector, MarkdownRenderer, Collapsible } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, Checkbox, useToast, ModelSelector, MarkdownRenderer, Collapsible, StopIndicator } from '../components/ui';
 import { PromptCascader } from '../components/Common/PromptCascader';
 import { TestCaseList, CriteriaEditor, EvaluationResultsView, RunHistory, resetRunHistoryDateRangeCache } from '../components/Evaluation';
 import { ParameterPanel } from '../components/Prompt/ParameterPanel';
@@ -4948,7 +4948,7 @@ export function EvaluationPage() {
                             disabled={analysisRunPhase === 'saving' || !analysisAbortControllerRef.current}
                             title={analysisRunPhase === 'saving' ? t('analysisAbortDisabledWhileSaving') : undefined}
                           >
-                            <span>{t('abort')}</span>
+                            <StopIndicator label={t('abort')} />
                           </Button>
                         </div>
                       </div>
@@ -5529,7 +5529,7 @@ export function EvaluationPage() {
                     disabled={analysisRunPhase === 'saving' || !analysisAbortControllerRef.current}
                     title={analysisRunPhase === 'saving' ? t('analysisAbortDisabledWhileSaving') : undefined}
                   >
-                    {t('abort')}
+                    <StopIndicator label={t('abort')} />
                   </Button>
                 </>
               ) : (

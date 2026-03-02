@@ -16,12 +16,11 @@ import {
   RotateCcw,
   Scale,
   Search,
-  Square,
   Coins,
   XCircle,
   Zap,
 } from 'lucide-react';
-import { Badge, Button, Collapsible, MarkdownRenderer, Modal, OutputRenderer, OutputRendererControls } from '../ui';
+import { Badge, Button, Collapsible, MarkdownRenderer, Modal, OutputRenderer, OutputRendererControls, StopIndicator } from '../ui';
 import { AttachmentModal } from '../Prompt/AttachmentModal';
 import { OcrResultsPanel } from '../Prompt/OcrResultsPanel';
 import type { EvaluationCriterion, FileAttachment, OcrProvider, TestCase, TestCaseResult } from '../../types';
@@ -437,7 +436,7 @@ export function EvaluationResultsView({
                         title={retryingOutputTestCaseId === activeResult.testCaseId ? t('abort') : t('retryOutput')}
                       >
                         {retryingOutputTestCaseId === activeResult.testCaseId ? (
-                          <Square className="w-3.5 h-3.5" />
+                          <StopIndicator iconSizeClassName="w-3.5 h-3.5" />
                         ) : (
                           <RotateCcw className="w-3.5 h-3.5" />
                         )}
@@ -466,7 +465,7 @@ export function EvaluationResultsView({
                         title={retryingAiEvaluationTestCaseId === activeResult.testCaseId ? t('abort') : t('runAiEvaluation')}
                       >
                         {retryingAiEvaluationTestCaseId === activeResult.testCaseId ? (
-                          <Square className="w-3.5 h-3.5" />
+                          <StopIndicator iconSizeClassName="w-3.5 h-3.5" />
                         ) : (
                           <Scale className="w-3.5 h-3.5" />
                         )}

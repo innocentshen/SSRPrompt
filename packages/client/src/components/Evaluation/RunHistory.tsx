@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, ChevronDown, Zap, Trash2, FileText, Bot, Scale, ScanText, Square, Download, Check, CircleDollarSign } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, ChevronDown, Zap, Trash2, FileText, Bot, Scale, ScanText, Download, Check, CircleDollarSign } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Input } from '../ui';
+import { Badge, Button, Input, StopIndicator } from '../ui';
 import type { EvaluationRun, EvaluationStatus, Model, RunConfig } from '../../types';
 import { formatDateTime } from '../../lib/date-utils';
 import { calculateAiCost, formatUsdCost, formatUsdCostFormula } from '../../lib/cost';
@@ -650,7 +650,7 @@ export function RunHistory({
                       className="p-1.5 text-rose-400 hover:text-rose-300 transition-colors rounded hover:bg-rose-500/10"
                       title={t('abort')}
                     >
-                      <Square className="w-4 h-4" />
+                      <StopIndicator iconSizeClassName="w-4 h-4" />
                     </button>
                   )}
                   {!isAnalyzeSelectionMode && (

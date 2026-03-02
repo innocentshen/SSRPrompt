@@ -47,6 +47,37 @@ function isStoredAttachments(value: unknown): value is StoredAttachment[] {
   });
 }
 
+function normalizeCaseConcurrency(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function getDefaultCaseConcurrencyFromEnv(): number {
+  const configured = normalizeCaseConcurrency(process.env.EVALUATION_CASE_CONCURRENCY);
+  return configured ?? 1;
+}
+
+function withEvaluationExecutionDefaults<T extends { config?: unknown }>(evaluation: T): T {
+  const defaultCaseConcurrency = getDefaultCaseConcurrencyFromEnv();
+  const nextConfig =
+    evaluation.config && typeof evaluation.config === 'object' && !Array.isArray(evaluation.config)
+      ? { ...(evaluation.config as Record<string, unknown>) }
+      : {};
+
+  nextConfig.case_concurrency = defaultCaseConcurrency;
+  delete nextConfig.execution_mode;
+
+  (evaluation as { config?: unknown }).config = nextConfig;
+  return evaluation;
+}
+
 async function materializeAttachmentsForUser(
   fromUserId: string,
   toUserId: string,
@@ -184,7 +215,7 @@ export class EvaluationsService {
           }
         }
       }
-      return transformResponse(evaluation);
+      return withEvaluationExecutionDefaults(transformResponse(evaluation));
     }
 
     // Lazy-migrate legacy base64 attachments to stored files for owner views.
@@ -221,7 +252,7 @@ export class EvaluationsService {
       }
     }
 
-    return transformResponse(evaluation);
+    return withEvaluationExecutionDefaults(transformResponse(evaluation));
   }
 
   async downloadAttachment(
@@ -1118,10 +1149,6 @@ export class RunsService {
 
     const totalCases = selectedTestCaseIds.length;
 
-    const caseConcurrency = Number(process.env.EVALUATION_CASE_CONCURRENCY || '1');
-    const executionMode =
-      Number.isFinite(caseConcurrency) && caseConcurrency > 1 ? 'parallel' : 'sequential';
-
     // Build runConfig snapshot
     const runConfig: Record<string, unknown> = {
       promptId: evaluation.promptId,
@@ -1132,7 +1159,6 @@ export class RunsService {
       judgeModelId: evaluation.judgeModelId,
       judgeModelName: evaluation.judgeModel?.name || null,
       passThreshold: (evaluation.config as Record<string, unknown>)?.pass_threshold,
-      executionMode,
       fileProcessing: ((evaluation.config as Record<string, unknown>)?.file_processing as string | undefined) || 'auto',
       ocrProvider: (evaluation.config as Record<string, unknown>)?.ocr_provider,
       testCaseIds: selectedTestCaseIds,

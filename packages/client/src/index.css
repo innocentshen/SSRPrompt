@@ -176,4 +176,41 @@
       opacity: 0;
     }
   }
+
+  .animate-stop-soft-glow {
+    animation: stopSoftGlow 1.6s ease-in-out infinite;
+  }
+
+  @keyframes stopSoftGlow {
+    0%,
+    100% {
+      transform: scale(0.9);
+      opacity: 0.12;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 0.34;
+    }
+  }
+
+  .animate-stop-soft-breathe {
+    animation: stopSoftBreathe 1.6s ease-in-out infinite;
+  }
+
+  @keyframes stopSoftBreathe {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.05);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-stop-soft-glow,
+    .animate-stop-soft-breathe {
+      animation: none;
+    }
+  }
 }

@@ -28,13 +28,12 @@ import {
   Sparkles,
   Check,
   Copy,
-  Square,
   AlertCircle,
   Settings2,
   Globe,
   Play,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, Toggle, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, Toggle, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector, StopIndicator } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel, ChatTranscript, SuggestionDiffPreview } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { AutoOptimizeContext, DebugRun } from '../components/Prompt';
@@ -99,6 +98,13 @@ const toApiMessages = (messages: PromptMessage[]): Array<{ role: 'system' | 'use
   messages.map((m) => ({ role: m.role, content: m.content }));
 
 const createPromptMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (error instanceof Error && error.name === 'AbortError')
+  );
+}
 
 type PromptTestCache = {
   testInput: string;
@@ -222,6 +228,8 @@ export function PromptsPage() {
     messageIndex: number;
   } | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
+  const promptMessagesRef = useRef<PromptMessage[]>(promptMessages);
+  const promptContentRef = useRef(promptContent);
   const compareFileInputRef = useRef<HTMLInputElement>(null);
   const editingGroupInputRef = useRef<HTMLInputElement>(null);
   const ignoreGroupNameBlurRef = useRef(false);
@@ -245,6 +253,14 @@ export function PromptsPage() {
     input.focus();
     input.select();
   }, [editingGroupId]);
+
+  useEffect(() => {
+    promptMessagesRef.current = promptMessages;
+  }, [promptMessages]);
+
+  useEffect(() => {
+    promptContentRef.current = promptContent;
+  }, [promptContent]);
 
   // Set default model when models are loaded
   useEffect(() => {
@@ -1299,11 +1315,25 @@ export function PromptsPage() {
     void ensureOptimizationEvaluationContext();
   }, [activeTab, ensureOptimizationEvaluationContext, selectedPrompt]);
 
-  const handleOptimize = async (autoOptimizeContext?: AutoOptimizeContext) => {
+  const getOptimizePromptSnapshot = useCallback(() => {
+    return {
+      messages: promptMessagesRef.current,
+      content: promptContentRef.current,
+    };
+  }, []);
+
+  const handleOptimize = async (
+    autoOptimizeContext?: AutoOptimizeContext,
+    options?: { signal?: AbortSignal }
+  ) => {
     setIsOptimizing(true);
     setAnalysisResult(null);
 
     try {
+      if (options?.signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
       const model = models.find((m) => m.id === optimizeModelId);
 
       if (!model) {
@@ -1312,10 +1342,11 @@ export function PromptsPage() {
       }
 
       const currentEvalSummary = await ensureOptimizationEvaluationContext();
+      const promptSnapshot = getOptimizePromptSnapshot();
 
       const result = await analyzePrompt(model.id, {
-        messages: promptMessages,
-        content: promptContent,
+        messages: promptSnapshot.messages,
+        content: promptSnapshot.content,
         variables: promptVariables,
         autoOptimizeContext,
         evaluationSummary: currentEvalSummary && currentEvalSummary.totalRuns > 0 ? {
@@ -1330,7 +1361,7 @@ export function PromptsPage() {
           recentDelta: currentEvalSummary.recentDelta,
           criteriaNames: currentEvalSummary.criteriaNames,
         } : undefined,
-      });
+      }, options?.signal);
 
       setAnalysisResult(result);
 
@@ -1344,6 +1375,9 @@ export function PromptsPage() {
 
       return result.suggestions;
     } catch (err) {
+      if (isAbortError(err) || options?.signal?.aborted) {
+        throw err;
+      }
       const errorMessage = err instanceof Error ? err.message : t('analyzeFailed');
       showToast('error', errorMessage);
       return [];
@@ -2555,6 +2589,8 @@ export function PromptsPage() {
               {activeTab === 'optimize' && (
                 <div className="flex-1 p-6">
                   <PromptOptimizer
+                    key={selectedPrompt?.id || 'prompt-optimize'}
+                    cacheKey={selectedPrompt?.id}
                     messages={promptMessages}
                     content={promptContent}
                     models={models}
@@ -2562,91 +2598,137 @@ export function PromptsPage() {
                     selectedModelId={optimizeModelId}
                     onModelChange={setOptimizeModelId}
                     onApplySuggestion={(suggestion) => {
-                      if (!suggestion.originalText || !suggestion.suggestedText) return;
+                      if (!suggestion.originalText || !suggestion.suggestedText) {
+                        return { applied: false };
+                      }
 
+                      const currentMessages = promptMessagesRef.current;
+                      const currentContent = promptContentRef.current;
                       let applied = false;
+                      let failReason: 'no_match' | 'ambiguous_match' = 'no_match';
+                      let previewMessageIndex = suggestion.messageIndex ?? 0;
 
-                      // Try applyPatch on specific message first
-                      if (suggestion.messageIndex !== undefined && promptMessages[suggestion.messageIndex]) {
+                      // Legacy single-content mode: patch plain content directly.
+                      if (currentMessages.length === 0) {
                         const patchResult = applyPatch(
-                          promptMessages[suggestion.messageIndex].content,
+                          currentContent || '',
                           suggestion.originalText,
                           suggestion.suggestedText
                         );
                         if (patchResult.success) {
-                          const newMessages = [...promptMessages];
-                          newMessages[suggestion.messageIndex] = {
-                            ...newMessages[suggestion.messageIndex],
+                          promptContentRef.current = patchResult.newContent;
+                          setPromptContent(patchResult.newContent);
+                          showToast('success', t('suggestionApplied'));
+                          return { applied: true };
+                        }
+                        const smartResult = smartReplace(
+                          currentContent || '',
+                          suggestion.originalText,
+                          suggestion.suggestedText
+                        );
+                        if (smartResult.replaced) {
+                          promptContentRef.current = smartResult.content;
+                          setPromptContent(smartResult.content);
+                          showToast('success', t('suggestionApplied'));
+                          return { applied: true };
+                        }
+                        failReason = patchResult.failReason || 'no_match';
+                        setDiffPreviewData({
+                          suggestion: {
+                            originalText: suggestion.originalText,
+                            suggestedText: suggestion.suggestedText,
+                            messageIndex: suggestion.messageIndex,
+                            id: suggestion.id,
+                          },
+                          failReason,
+                          messageIndex: previewMessageIndex,
+                        });
+                        return { applied: false };
+                      }
+
+                      let nextMessages = currentMessages;
+
+                      // Try applyPatch on specific message first.
+                      if (suggestion.messageIndex !== undefined && currentMessages[suggestion.messageIndex]) {
+                        previewMessageIndex = suggestion.messageIndex;
+                        const patchResult = applyPatch(
+                          currentMessages[suggestion.messageIndex].content,
+                          suggestion.originalText,
+                          suggestion.suggestedText
+                        );
+                        if (patchResult.success) {
+                          nextMessages = [...currentMessages];
+                          nextMessages[suggestion.messageIndex] = {
+                            ...nextMessages[suggestion.messageIndex],
                             content: patchResult.newContent,
                           };
-                          setPromptMessages(newMessages);
                           applied = true;
                         } else if (patchResult.failReason) {
-                          // Show diff preview for failed patch
-                          setDiffPreviewData({
-                            suggestion: {
-                              originalText: suggestion.originalText,
-                              suggestedText: suggestion.suggestedText,
-                              messageIndex: suggestion.messageIndex,
-                              id: suggestion.id,
-                            },
-                            failReason: patchResult.failReason,
-                            messageIndex: suggestion.messageIndex,
-                          });
-                          return;
+                          failReason = patchResult.failReason;
                         }
                       }
 
-                      // Fallback: try all messages
+                      // Fallback: try all messages.
                       if (!applied) {
-                        for (let i = 0; i < promptMessages.length; i++) {
+                        for (let i = 0; i < currentMessages.length; i++) {
                           const patchResult = applyPatch(
-                            promptMessages[i].content,
-                            suggestion.originalText!,
-                            suggestion.suggestedText!
+                            currentMessages[i].content,
+                            suggestion.originalText,
+                            suggestion.suggestedText
                           );
                           if (patchResult.success) {
-                            const newMessages = [...promptMessages];
-                            newMessages[i] = {
-                              ...newMessages[i],
+                            nextMessages = [...currentMessages];
+                            nextMessages[i] = {
+                              ...nextMessages[i],
                               content: patchResult.newContent,
                             };
-                            setPromptMessages(newMessages);
+                            previewMessageIndex = i;
                             applied = true;
                             break;
+                          }
+                          if (patchResult.failReason === 'ambiguous_match') {
+                            failReason = 'ambiguous_match';
                           }
                         }
                       }
 
-                      // If still not applied, try smartReplace as last resort
+                      // If still not applied, try smartReplace as last resort.
                       if (!applied) {
-                        const newMessages = promptMessages.map((msg) => {
-                          const result = smartReplace(msg.content, suggestion.originalText!, suggestion.suggestedText!);
+                        const replacedMessages = currentMessages.map((msg) => {
+                          const result = smartReplace(
+                            msg.content,
+                            suggestion.originalText!,
+                            suggestion.suggestedText!
+                          );
                           if (result.replaced) applied = true;
                           return { ...msg, content: result.content };
                         });
                         if (applied) {
-                          setPromptMessages(newMessages);
+                          nextMessages = replacedMessages;
                         }
                       }
 
                       if (applied) {
+                        promptMessagesRef.current = nextMessages;
+                        setPromptMessages(nextMessages);
                         showToast('success', t('suggestionApplied'));
-                      } else {
-                        // Show diff preview for no match
-                        setDiffPreviewData({
-                          suggestion: {
-                            originalText: suggestion.originalText!,
-                            suggestedText: suggestion.suggestedText!,
-                            messageIndex: suggestion.messageIndex,
-                            id: suggestion.id,
-                          },
-                          failReason: 'no_match',
-                          messageIndex: suggestion.messageIndex ?? 0,
-                        });
+                        return { applied: true };
                       }
+
+                      setDiffPreviewData({
+                        suggestion: {
+                          originalText: suggestion.originalText,
+                          suggestedText: suggestion.suggestedText,
+                          messageIndex: suggestion.messageIndex,
+                          id: suggestion.id,
+                        },
+                        failReason,
+                        messageIndex: previewMessageIndex,
+                      });
+                      return { applied: false };
                     }}
                     onOptimize={handleOptimize}
+                    getPromptSnapshot={getOptimizePromptSnapshot}
                     isOptimizing={isOptimizing}
                     analysisResult={analysisResult}
                     evaluationList={evalListLoaded ? evalList : undefined}
@@ -3582,8 +3664,7 @@ export function PromptsPage() {
                   </Button>
                   {(compareRunning.left || compareRunning.right) && (
                     <Button variant="danger" onClick={() => handleStopComparison('both')}>
-                      <Square className="w-4 h-4" />
-                      <span>{t('stop')}</span>
+                      <StopIndicator label={t('stop')} />
                     </Button>
                   )}
                 </div>
@@ -3613,7 +3694,7 @@ export function PromptsPage() {
                           className="p-1 text-red-400 hover:text-red-300 transition-colors"
                           title={t('stop')}
                         >
-                          <Square className="w-3 h-3" />
+                          <StopIndicator iconSizeClassName="w-3 h-3" />
                         </button>
                       )}
                     </div>
@@ -3675,7 +3756,7 @@ export function PromptsPage() {
                           className="p-1 text-red-400 hover:text-red-300 transition-colors"
                           title={t('stop')}
                         >
-                          <Square className="w-3 h-3" />
+                          <StopIndicator iconSizeClassName="w-3 h-3" />
                         </button>
                       )}
                     </div>

@@ -13,12 +13,6 @@ export interface EvaluationConfig {
     model_parameters?: ModelParameters;
     inherited_from_prompt?: boolean;
     /**
-     * Execution mode for evaluation runs.
-     * - sequential: run test cases one by one (default).
-     * - parallel: run test cases concurrently.
-     */
-    execution_mode?: 'sequential' | 'parallel';
-    /**
      * How to process file attachments when sending to the model.
      * - auto: vision models send files directly; non-vision models use OCR (if available).
      * - vision: send files directly to the model (requires vision-capable model).
@@ -132,7 +126,6 @@ export interface RunConfig {
     judgeModelId?: string | null;
     judgeModelName?: string | null;
     passThreshold?: number;
-    executionMode?: 'sequential' | 'parallel';
     fileProcessing?: string;
     ocrProvider?: OcrProvider;
     ocrProviderResolved?: OcrProvider;

@@ -18,56 +18,56 @@ export declare const CreateTraceSchema: z.ZodObject<{
         type: z.ZodString;
         size: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
-        type: string;
         fileId: string;
         name: string;
+        type: string;
         size?: number | undefined;
     }, {
-        type: string;
         fileId: string;
         name: string;
+        type: string;
         size?: number | undefined;
     }>, "many">>;
     thinkingContent: z.ZodOptional<z.ZodString>;
     thinkingTimeMs: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
+    status: "success" | "error";
     source: "feature" | "api";
     input: string;
     tokensInput: number;
     tokensOutput: number;
     latencyMs: number;
-    status: "success" | "error";
     metadata: Record<string, unknown>;
     promptId?: string | undefined;
     modelId?: string | undefined;
-    output?: string | undefined;
-    errorMessage?: string | undefined;
     attachments?: {
-        type: string;
         fileId: string;
         name: string;
+        type: string;
         size?: number | undefined;
     }[] | undefined;
+    output?: string | undefined;
+    errorMessage?: string | undefined;
     thinkingContent?: string | undefined;
     thinkingTimeMs?: number | undefined;
 }, {
     input: string;
+    status?: "success" | "error" | undefined;
     promptId?: string | undefined;
     modelId?: string | undefined;
+    attachments?: {
+        fileId: string;
+        name: string;
+        type: string;
+        size?: number | undefined;
+    }[] | undefined;
     source?: "feature" | "api" | undefined;
     output?: string | undefined;
     tokensInput?: number | undefined;
     tokensOutput?: number | undefined;
     latencyMs?: number | undefined;
-    status?: "success" | "error" | undefined;
     errorMessage?: string | undefined;
     metadata?: Record<string, unknown> | undefined;
-    attachments?: {
-        type: string;
-        fileId: string;
-        name: string;
-        size?: number | undefined;
-    }[] | undefined;
     thinkingContent?: string | undefined;
     thinkingTimeMs?: number | undefined;
 }>;
@@ -80,13 +80,13 @@ export declare const TraceQuerySchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     page: number;
     limit: number;
+    status?: "success" | "error" | undefined;
     promptId?: string | undefined;
     source?: "feature" | "api" | undefined;
-    status?: "success" | "error" | undefined;
 }, {
+    status?: "success" | "error" | undefined;
     promptId?: string | undefined;
     source?: "feature" | "api" | undefined;
-    status?: "success" | "error" | undefined;
     page?: number | undefined;
     limit?: number | undefined;
 }>;

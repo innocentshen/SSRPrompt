@@ -23,7 +23,6 @@ export const EvaluationConfigSchema = z.object({
   pass_threshold: z.number().min(0).max(100).optional(),
   model_parameters: ModelParametersSchema.optional(),
   inherited_from_prompt: z.boolean().optional(),
-  execution_mode: z.enum(['sequential', 'parallel']).optional(),
   file_processing: z.enum(['auto', 'vision', 'ocr', 'none']).optional(),
   ocr_provider: OcrProviderSchema.optional(),
 });

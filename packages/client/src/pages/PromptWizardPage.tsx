@@ -17,7 +17,7 @@ import {
   X,
   Settings2,
 } from 'lucide-react';
-import { Button, Input, Select, useToast, MarkdownRenderer, ModelSelector } from '../components/ui';
+import { Button, Input, Select, useToast, MarkdownRenderer, ModelSelector, StopIndicator } from '../components/ui';
 import { ThinkingBlock, AttachmentPreview, AttachmentModal, ParameterPanel } from '../components/Prompt';
 import { providersApi, modelsApi } from '../api/providers';
 import { promptsApi } from '../api/prompts';
@@ -1061,10 +1061,7 @@ export function PromptWizardPage({ onNavigate }: PromptWizardPageProps) {
                     aria-label={isLoading ? tCommon('stop') : undefined}
                   >
                     {isLoading ? (
-                      <>
-                        <X className="w-4 h-4" />
-                        <span>{tCommon('stop')}</span>
-                      </>
+                      <StopIndicator label={tCommon('stop')} />
                     ) : (
                       <>
                         <Send className="w-4 h-4" />

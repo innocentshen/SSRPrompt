@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Sparkles,
   Wand2,
   Check,
+  Copy,
   X,
   Loader2,
   AlertCircle,
@@ -11,6 +12,8 @@ import {
   Trophy,
   Star,
   TrendingUp,
+  Maximize2,
+  Minimize2,
   Settings,
   ChevronDown,
   Database,
@@ -20,7 +23,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { PromptMessage } from '../../types/database';
-import { Button, ModelSelector, Badge } from '../ui';
+import { Button, ModelSelector, Badge, Modal, StopIndicator, OutputRenderer } from '../ui';
 import type { Model, Provider } from '../../types';
 import {
   BUILTIN_META_PROMPTS,
@@ -86,15 +89,29 @@ export interface AutoOptimizeContext {
   failedCases: AutoOptimizeFailureCase[];
 }
 
+export interface PromptSnapshot {
+  messages: PromptMessage[];
+  content?: string;
+}
+
+export interface ApplySuggestionResult {
+  applied: boolean;
+}
+
 interface PromptOptimizerProps {
+  cacheKey?: string;
   messages: PromptMessage[];
   content?: string;
   models: Model[];
   providers: Provider[];
   selectedModelId: string;
   onModelChange: (modelId: string) => void;
-  onApplySuggestion: (suggestion: OptimizationSuggestion) => void;
-  onOptimize: (context?: AutoOptimizeContext) => Promise<OptimizationSuggestion[]>;
+  onApplySuggestion: (suggestion: OptimizationSuggestion) => ApplySuggestionResult;
+  onOptimize: (
+    context?: AutoOptimizeContext,
+    options?: { signal?: AbortSignal }
+  ) => Promise<OptimizationSuggestion[]>;
+  getPromptSnapshot?: () => PromptSnapshot;
   onOpenSettings?: () => void;
   isOptimizing?: boolean;
   analysisResult?: AnalysisResult | null;
@@ -104,7 +121,8 @@ interface PromptOptimizerProps {
   onEvaluationSelect?: (evaluationId: string) => void;
 }
 
-type OptimizerView = 'analysis' | 'verification';
+type OptimizerView = 'analysis' | 'preview' | 'verification';
+type VerificationRunScope = 'custom' | 'all' | 'failed' | 'regression';
 
 type VerificationCase = {
   id: string;
@@ -119,6 +137,7 @@ type VerificationCase = {
   beforeScore?: number;
   beforePassed?: boolean;
   isFailed?: boolean;
+  passThreshold?: number;
 };
 
 type VerificationResult = {
@@ -183,15 +202,123 @@ const SEVERITY_CONFIG = {
   },
 };
 
-const AUTO_PIPELINE_MAX_ROUNDS = 3;
+const AUTO_PIPELINE_DEFAULT_ROUNDS = 3;
+const AUTO_PIPELINE_MIN_ROUNDS = 1;
+const AUTO_PIPELINE_MAX_ROUNDS_LIMIT = 10;
 const AUTO_PIPELINE_TOP_FAILURE_LIMIT = 10;
 const AUTO_PIPELINE_VALIDATION_HOLDOUT = 2;
 const MANUAL_SEMANTIC_PASS_THRESHOLD = 0.8;
+const MANUAL_PASS_THRESHOLD_MIN_PERCENT = 1;
+const MANUAL_PASS_THRESHOLD_MAX_PERCENT = 100;
+const MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT = 80;
+const DEFAULT_VERIFICATION_CASE_CONCURRENCY = 1;
+
+type PromptOptimizerCacheState = {
+  view: OptimizerView;
+  suggestions: OptimizationSuggestion[];
+  error: string | null;
+  hasAnalyzed: boolean;
+  selectedTemplate: string;
+  verificationInitialized: boolean;
+  verificationCases: VerificationCase[];
+  manualCaseInput: string;
+  manualCaseExpected: string;
+  manualCasePassThreshold: number;
+  verificationResults: VerificationResult[];
+  verificationMode: 'unknown' | 'judge' | 'fallback';
+  appliedSuggestionIds: Record<string, true>;
+  dismissedSuggestionIds: Record<string, true>;
+  autoPipelineRound: number;
+  autoPipelineMaxRounds: number;
+  autoPipelineStatus: string;
+  expandedResultCaseId: string | null;
+  wasInterrupted?: boolean;
+};
+
+const promptOptimizerCacheByKey = new Map<string, PromptOptimizerCacheState>();
 
 function getScoreColor(score: number): string {
   if (score >= 90) return 'text-green-400 light:text-green-500';
   if (score >= 70) return 'text-amber-400 light:text-amber-500';
   return 'text-red-400 light:text-red-500';
+}
+
+function clampAutoPipelineRounds(value: number): number {
+  if (!Number.isFinite(value)) return AUTO_PIPELINE_DEFAULT_ROUNDS;
+  const rounded = Math.round(value);
+  return Math.min(AUTO_PIPELINE_MAX_ROUNDS_LIMIT, Math.max(AUTO_PIPELINE_MIN_ROUNDS, rounded));
+}
+
+function clampManualPassThresholdPercent(value: number): number {
+  if (!Number.isFinite(value)) return MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT;
+  const rounded = Math.round(value);
+  return Math.min(
+    MANUAL_PASS_THRESHOLD_MAX_PERCENT,
+    Math.max(MANUAL_PASS_THRESHOLD_MIN_PERCENT, rounded)
+  );
+}
+
+function toUnitPassThreshold(value: number | undefined): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return MANUAL_SEMANTIC_PASS_THRESHOLD;
+  if (value > 1) {
+    return Math.min(1, Math.max(0, value / 100));
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (error instanceof Error && error.name === 'AbortError')
+  );
+}
+
+function delayWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener('abort', handleAbort, { once: true });
+  });
+}
+
+function normalizePositiveInteger(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function resolveVerificationCaseConcurrency(
+  config: Record<string, unknown> | undefined,
+  totalCases: number
+): number {
+  if (totalCases <= 1) return 1;
+
+  const configuredConcurrency = normalizePositiveInteger(config?.case_concurrency);
+  const resolvedConcurrency = configuredConcurrency ?? DEFAULT_VERIFICATION_CASE_CONCURRENCY;
+
+  return Math.min(totalCases, resolvedConcurrency);
 }
 
 function normalizePercentScore(value: number | null | undefined): number | undefined {
@@ -305,6 +432,7 @@ function formatPromptMessages(messages: ChatMessage[]): string {
 }
 
 export function PromptOptimizer({
+  cacheKey,
   messages,
   content,
   models,
@@ -313,6 +441,7 @@ export function PromptOptimizer({
   onModelChange,
   onApplySuggestion,
   onOptimize,
+  getPromptSnapshot,
   onOpenSettings,
   isOptimizing = false,
   analysisResult,
@@ -322,28 +451,56 @@ export function PromptOptimizer({
   onEvaluationSelect,
 }: PromptOptimizerProps) {
   const { t } = useTranslation('prompts');
-  const [view, setView] = useState<OptimizerView>('analysis');
-  const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  const { t: tCommon } = useTranslation('common');
+  const cachedState = cacheKey ? promptOptimizerCacheByKey.get(cacheKey) : undefined;
+
+  const [view, setView] = useState<OptimizerView>(cachedState?.view || 'analysis');
+  const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>(cachedState?.suggestions || []);
+  const [error, setError] = useState<string | null>(cachedState?.error || null);
+  const [hasAnalyzed, setHasAnalyzed] = useState(Boolean(cachedState?.hasAnalyzed));
   const [selectedTemplate, setSelectedTemplate] = useState<string>(() => {
+    if (cachedState?.selectedTemplate) return cachedState.selectedTemplate;
     const settings = getOptimizationSettings();
     return settings.selectedTemplate || 'general';
   });
 
-  const [verificationInitialized, setVerificationInitialized] = useState(false);
-  const [verificationCases, setVerificationCases] = useState<VerificationCase[]>([]);
-  const [manualCaseInput, setManualCaseInput] = useState('');
-  const [manualCaseExpected, setManualCaseExpected] = useState('');
-  const [verificationResults, setVerificationResults] = useState<VerificationResult[]>([]);
+  const [verificationInitialized, setVerificationInitialized] = useState(Boolean(cachedState?.verificationInitialized));
+  const [verificationCases, setVerificationCases] = useState<VerificationCase[]>(cachedState?.verificationCases || []);
+  const [manualCaseInput, setManualCaseInput] = useState(cachedState?.manualCaseInput || '');
+  const [manualCaseExpected, setManualCaseExpected] = useState(cachedState?.manualCaseExpected || '');
+  const [manualCasePassThreshold, setManualCasePassThreshold] = useState(
+    clampManualPassThresholdPercent(
+      cachedState?.manualCasePassThreshold ?? MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT
+    )
+  );
+  const [verificationResults, setVerificationResults] = useState<VerificationResult[]>(cachedState?.verificationResults || []);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [verificationMode, setVerificationMode] = useState<'unknown' | 'judge' | 'fallback'>('unknown');
-  const [appliedSuggestionIds, setAppliedSuggestionIds] = useState<Record<string, true>>({});
-  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<Record<string, true>>({});
+  const [verificationMode, setVerificationMode] = useState<'unknown' | 'judge' | 'fallback'>(cachedState?.verificationMode || 'unknown');
+  const [appliedSuggestionIds, setAppliedSuggestionIds] = useState<Record<string, true>>(cachedState?.appliedSuggestionIds || {});
+  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<Record<string, true>>(cachedState?.dismissedSuggestionIds || {});
   const [isAutoPipelineRunning, setIsAutoPipelineRunning] = useState(false);
-  const [autoPipelineRound, setAutoPipelineRound] = useState(0);
-  const [autoPipelineStatus, setAutoPipelineStatus] = useState('');
-  const [expandedResultCaseId, setExpandedResultCaseId] = useState<string | null>(null);
+  const [autoPipelineRound, setAutoPipelineRound] = useState(cachedState?.autoPipelineRound || 0);
+  const [autoPipelineMaxRounds, setAutoPipelineMaxRounds] = useState(
+    clampAutoPipelineRounds(cachedState?.autoPipelineMaxRounds ?? AUTO_PIPELINE_DEFAULT_ROUNDS)
+  );
+  const [autoPipelineStatus, setAutoPipelineStatus] = useState(cachedState?.autoPipelineStatus || '');
+  const [expandedResultCaseId, setExpandedResultCaseId] = useState<string | null>(cachedState?.expandedResultCaseId || null);
+  const [isPromptPreviewCollapsed, setIsPromptPreviewCollapsed] = useState(false);
+  const [isPromptPreviewFullscreen, setIsPromptPreviewFullscreen] = useState(false);
+  const [isPromptPreviewCopied, setIsPromptPreviewCopied] = useState(false);
+  const [verificationRunScope, setVerificationRunScope] = useState<VerificationRunScope>('custom');
+  const [isCaseManagerOpen, setIsCaseManagerOpen] = useState(false);
+  const [caseManagerDraftCases, setCaseManagerDraftCases] = useState<VerificationCase[]>([]);
+  const [caseManagerManualInput, setCaseManagerManualInput] = useState('');
+  const [caseManagerManualExpected, setCaseManagerManualExpected] = useState('');
+  const [caseManagerManualPassThreshold, setCaseManagerManualPassThreshold] = useState(
+    MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT
+  );
+  const [caseManagerFilterKeyword, setCaseManagerFilterKeyword] = useState('');
+  const hasAutoSelectedResultRef = useRef(false);
+  const analysisAbortControllerRef = useRef<AbortController | null>(null);
+  const verificationAbortControllerRef = useRef<AbortController | null>(null);
+  const autoPipelineAbortControllerRef = useRef<AbortController | null>(null);
 
   const hasContent =
     messages.some((message) => message.content.trim().length > 0) ||
@@ -357,8 +514,124 @@ export function PromptOptimizer({
         applied: item.applied || Boolean(appliedSuggestionIds[item.id]),
       }));
   }, [appliedSuggestionIds, dismissedSuggestionIds, suggestionSource]);
+  const hasUsableAnalysisResult = Boolean(
+    analysisResult &&
+    (
+      (analysisResult.summary || '').trim().length > 0 ||
+      (analysisResult.strengths || []).length > 0 ||
+      (analysisResult.suggestions || []).length > 0
+    )
+  );
   const effectiveSelectedEvaluationId = selectedEvaluationId || evaluationSummary?.evaluationId || '';
   const selectedCaseCount = verificationCases.filter((item) => item.selected).length;
+  const caseManagerSelectedCount = caseManagerDraftCases.filter((item) => item.selected).length;
+  const evaluationVerificationCases = useMemo(
+    () => caseManagerDraftCases.filter((item) => item.source === 'evaluation'),
+    [caseManagerDraftCases]
+  );
+  const manualVerificationCases = useMemo(
+    () => caseManagerDraftCases.filter((item) => item.source === 'manual'),
+    [caseManagerDraftCases]
+  );
+  const filteredEvaluationVerificationCases = useMemo(() => {
+    const keyword = caseManagerFilterKeyword.trim().toLowerCase();
+    if (!keyword) return evaluationVerificationCases;
+    return evaluationVerificationCases.filter((item) => {
+      const haystack = `${item.name} ${item.input} ${item.expectedOutput || ''}`.toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [caseManagerFilterKeyword, evaluationVerificationCases]);
+  const isStandaloneAnalyzing = isOptimizing && !isAutoPipelineRunning;
+  const caseManagerBusy = isVerifying || isAutoPipelineRunning || isOptimizing;
+  const runScopeCases = useMemo(() => {
+    const runnableCases = verificationCases.filter((item) =>
+      item.source === 'evaluation' ? true : item.input.trim().length > 0
+    );
+
+    if (verificationRunScope === 'all') {
+      return runnableCases;
+    }
+
+    if (verificationRunScope === 'failed') {
+      return runnableCases.filter((item) =>
+        item.source === 'evaluation' ? Boolean(item.isFailed) : item.beforePassed === false
+      );
+    }
+
+    if (verificationRunScope === 'regression') {
+      const regressionIds = new Set(
+        verificationResults
+          .filter((result) => result.beforePassed === true && result.afterPassed === false)
+          .map((result) => result.caseId)
+      );
+      return runnableCases.filter((item) => regressionIds.has(item.id));
+    }
+
+    return runnableCases.filter((item) => item.selected);
+  }, [verificationCases, verificationResults, verificationRunScope]);
+
+  useEffect(() => {
+    if (!cachedState?.wasInterrupted) return;
+    setAutoPipelineStatus(t('autoPipelineInterrupted'));
+    setIsAutoPipelineRunning(false);
+    setIsVerifying(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      analysisAbortControllerRef.current?.abort();
+      verificationAbortControllerRef.current?.abort();
+      autoPipelineAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cacheKey) return;
+    promptOptimizerCacheByKey.set(cacheKey, {
+      view,
+      suggestions,
+      error,
+      hasAnalyzed,
+      selectedTemplate,
+      verificationInitialized,
+      verificationCases,
+      manualCaseInput,
+      manualCaseExpected,
+      manualCasePassThreshold,
+      verificationResults,
+      verificationMode,
+      appliedSuggestionIds,
+      dismissedSuggestionIds,
+      autoPipelineRound,
+      autoPipelineMaxRounds,
+      autoPipelineStatus,
+      expandedResultCaseId,
+      wasInterrupted: isAutoPipelineRunning || isVerifying,
+    });
+  }, [
+    appliedSuggestionIds,
+    autoPipelineRound,
+    autoPipelineMaxRounds,
+    autoPipelineStatus,
+    cacheKey,
+    dismissedSuggestionIds,
+    error,
+    expandedResultCaseId,
+    hasAnalyzed,
+    isAutoPipelineRunning,
+    isVerifying,
+    manualCaseExpected,
+    manualCaseInput,
+    manualCasePassThreshold,
+    selectedTemplate,
+    suggestions,
+    verificationCases,
+    verificationInitialized,
+    verificationMode,
+    verificationResults,
+    view,
+  ]);
 
   const verificationSummary = useMemo(() => {
     const completed = verificationResults.filter((result) => result.status === 'completed');
@@ -406,6 +679,41 @@ export function PromptOptimizer({
     };
   }, [verificationResults]);
 
+  useEffect(() => {
+    if (verificationResults.length === 0) {
+      hasAutoSelectedResultRef.current = false;
+      if (expandedResultCaseId !== null) {
+        setExpandedResultCaseId(null);
+      }
+      return;
+    }
+
+    if (expandedResultCaseId) {
+      hasAutoSelectedResultRef.current = true;
+      const stillExists = verificationResults.some(
+        (item) => item.caseId === expandedResultCaseId
+      );
+      if (stillExists) return;
+
+      const preferred =
+        verificationResults.find((item) => item.status === 'completed') || verificationResults[0];
+      if (preferred && preferred.caseId !== expandedResultCaseId) {
+        setExpandedResultCaseId(preferred.caseId);
+      }
+      return;
+    }
+
+    // Auto-expand only once per non-empty result set.
+    if (hasAutoSelectedResultRef.current) return;
+
+    const preferred =
+      verificationResults.find((item) => item.status === 'completed') || verificationResults[0];
+    if (preferred && preferred.caseId !== expandedResultCaseId) {
+      setExpandedResultCaseId(preferred.caseId);
+      hasAutoSelectedResultRef.current = true;
+    }
+  }, [expandedResultCaseId, verificationResults]);
+
   const promptPreview = useMemo(() => {
     if (messages.length > 0) {
       const normalized = messages
@@ -418,18 +726,6 @@ export function PromptOptimizer({
     }
     return (content || '').trim();
   }, [content, messages]);
-
-  const selectedCasePreview = useMemo(() => {
-    const selected = verificationCases.find((item) => item.selected);
-    if (!selected) return '';
-    const generated = buildCaseMessages(
-      messages,
-      content,
-      selected.input,
-      selected.inputVariables || {}
-    );
-    return formatPromptMessages(generated);
-  }, [content, messages, verificationCases]);
 
   const getScoreLabel = (score: number): string => {
     if (score >= 90) return t('scoreExcellent');
@@ -453,7 +749,8 @@ export function PromptOptimizer({
 
   const runOptimizeOnce = async (
     switchToAnalysis = true,
-    context?: AutoOptimizeContext
+    context?: AutoOptimizeContext,
+    options?: { signal?: AbortSignal }
   ): Promise<OptimizationSuggestion[]> => {
     setError(null);
     if (switchToAnalysis) {
@@ -462,29 +759,126 @@ export function PromptOptimizer({
     }
 
     try {
-      const newSuggestions = await onOptimize(context);
+      if (options?.signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const newSuggestions = await onOptimize(context, { signal: options?.signal });
       setSuggestions(newSuggestions);
       setHasAnalyzed(true);
       setAppliedSuggestionIds({});
       setDismissedSuggestionIds({});
       return newSuggestions;
     } catch (optimizeError) {
+      if (isAbortError(optimizeError) || options?.signal?.aborted) {
+        setError(t('runStopped'));
+        throw optimizeError;
+      }
       setError(optimizeError instanceof Error ? optimizeError.message : t('analysisFailed'));
       return [];
     }
   };
 
   const handleOptimize = async () => {
-    await runOptimizeOnce(true);
+    if (isOptimizing || isAutoPipelineRunning || isVerifying) {
+      return;
+    }
+
+    const controller = chatApi.createAbortController();
+    analysisAbortControllerRef.current?.abort();
+    analysisAbortControllerRef.current = controller;
+
+    try {
+      await runOptimizeOnce(true, undefined, { signal: controller.signal });
+    } catch (optimizeError) {
+      if (!isAbortError(optimizeError)) {
+        setError(optimizeError instanceof Error ? optimizeError.message : t('analysisFailed'));
+      }
+    } finally {
+      if (analysisAbortControllerRef.current === controller) {
+        analysisAbortControllerRef.current = null;
+      }
+    }
   };
 
-  const handleApply = (suggestion: OptimizationSuggestion) => {
-    onApplySuggestion(suggestion);
+  const handleAbortAnalyze = () => {
+    analysisAbortControllerRef.current?.abort();
+  };
+
+  const handleAbortVerification = () => {
+    verificationAbortControllerRef.current?.abort();
+  };
+
+  const handleAbortAutoPipeline = () => {
+    autoPipelineAbortControllerRef.current?.abort();
+  };
+
+  const handleApply = (suggestion: OptimizationSuggestion): ApplySuggestionResult => {
+    const result = onApplySuggestion(suggestion);
+    if (!result.applied) {
+      return result;
+    }
     setAppliedSuggestionIds((prev) => ({ ...prev, [suggestion.id]: true }));
+    return result;
   };
 
   const handleDismiss = (suggestionId: string) => {
     setDismissedSuggestionIds((prev) => ({ ...prev, [suggestionId]: true }));
+  };
+
+  const resolvePromptSnapshot = (): PromptSnapshot => {
+    if (getPromptSnapshot) {
+      const snapshot = getPromptSnapshot();
+      if (snapshot && Array.isArray(snapshot.messages)) {
+        return snapshot;
+      }
+    }
+    return {
+      messages,
+      content,
+    };
+  };
+
+  const handleAutoPipelineMaxRoundsChange = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    setAutoPipelineMaxRounds(clampAutoPipelineRounds(parsed));
+  };
+
+  const handleManualPassThresholdInput = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    setCaseManagerManualPassThreshold(clampManualPassThresholdPercent(parsed));
+  };
+
+  const handleManualCaseThresholdChange = (caseId: string, value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    const nextThreshold = clampManualPassThresholdPercent(parsed) / 100;
+    setCaseManagerDraftCases((prev) =>
+      prev.map((row) =>
+        row.id === caseId && row.source === 'manual' ? { ...row, passThreshold: nextThreshold } : row
+      )
+    );
+  };
+
+  const handleCopyPromptPreview = async () => {
+    const text = promptPreview || '';
+    if (!text.trim()) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setIsPromptPreviewCopied(true);
+      setTimeout(() => setIsPromptPreviewCopied(false), 1200);
+    } catch {
+      setIsPromptPreviewCopied(false);
+    }
+  };
+
+  const togglePromptPreviewFullscreen = () => {
+    if (!isPromptPreviewFullscreen) {
+      setIsPromptPreviewCollapsed(false);
+    }
+    setIsPromptPreviewFullscreen((prev) => !prev);
   };
 
   const buildEvaluationCases = (): VerificationCase[] => {
@@ -629,25 +1023,130 @@ export function PromptOptimizer({
     return mergedCases;
   };
 
+  useEffect(() => {
+    if (!verificationInitialized) return;
+    setVerificationCases((prev) => {
+      const manualCases = prev.filter((item) => item.source === 'manual');
+      const prevEvaluationById = new Map(
+        prev
+          .filter((item) => item.source === 'evaluation')
+          .map((item) => [item.id, item] as const)
+      );
+      const refreshedEvaluationCases = buildEvaluationCases().map((item) => {
+        const prevItem = prevEvaluationById.get(item.id);
+        return prevItem ? { ...item, selected: prevItem.selected } : item;
+      });
+      return [...refreshedEvaluationCases, ...manualCases];
+    });
+    setVerificationResults([]);
+    setVerificationMode('unknown');
+  }, [
+    verificationInitialized,
+    effectiveSelectedEvaluationId,
+    evaluationSummary,
+  ]);
+
+  const openCaseManager = () => {
+    setCaseManagerDraftCases(verificationCases.map((item) => ({ ...item })));
+    setCaseManagerManualInput(manualCaseInput);
+    setCaseManagerManualExpected(manualCaseExpected);
+    setCaseManagerManualPassThreshold(manualCasePassThreshold);
+    setCaseManagerFilterKeyword('');
+    setIsCaseManagerOpen(true);
+  };
+
+  const handleCancelCaseManager = () => {
+    setIsCaseManagerOpen(false);
+    setCaseManagerDraftCases([]);
+  };
+
+  const handleSubmitCaseManager = () => {
+    setVerificationCases(caseManagerDraftCases);
+    setManualCaseInput(caseManagerManualInput);
+    setManualCaseExpected(caseManagerManualExpected);
+    setManualCasePassThreshold(clampManualPassThresholdPercent(caseManagerManualPassThreshold));
+    setIsCaseManagerOpen(false);
+    setCaseManagerDraftCases([]);
+  };
+
   const addManualCase = () => {
-    if (!manualCaseInput.trim()) return;
-    const manualCount = verificationCases.filter((item) => item.source === 'manual').length + 1;
+    if (!caseManagerManualInput.trim()) return;
+    const manualCount = caseManagerDraftCases.filter((item) => item.source === 'manual').length + 1;
     const nextCase: VerificationCase = {
       id: `manual_${Date.now()}`,
       source: 'manual',
       name: `${t('manualCasePrefix')} ${manualCount}`,
-      input: manualCaseInput.trim(),
-      expectedOutput: manualCaseExpected.trim() || undefined,
+      input: caseManagerManualInput.trim(),
+      expectedOutput: caseManagerManualExpected.trim() || undefined,
+      passThreshold: clampManualPassThresholdPercent(caseManagerManualPassThreshold) / 100,
       selected: true,
     };
-    setVerificationCases((prev) => [...prev, nextCase]);
-    setManualCaseInput('');
-    setManualCaseExpected('');
+    setCaseManagerDraftCases((prev) => [...prev, nextCase]);
+    setCaseManagerManualInput('');
+    setCaseManagerManualExpected('');
   };
 
-  const runVerification = async (casesOverride?: VerificationCase[]): Promise<VerificationResult[] | null> => {
+  const toggleCaseSelection = (caseId: string) => {
+    setCaseManagerDraftCases((prev) =>
+      prev.map((item) =>
+        item.id === caseId
+          ? {
+              ...item,
+              selected: !item.selected,
+            }
+          : item
+      )
+    );
+  };
+
+  const selectAllCases = () => {
+    setCaseManagerDraftCases((prev) =>
+      prev.map((item) => ({
+        ...item,
+        selected: item.source === 'evaluation' ? true : item.input.trim().length > 0,
+      }))
+    );
+  };
+
+  const selectFailedCases = () => {
+    const regressionIds = new Set(
+      verificationResults
+        .filter((result) => result.beforePassed === true && result.afterPassed === false)
+        .map((result) => result.caseId)
+    );
+
+    setCaseManagerDraftCases((prev) =>
+      prev.map((item) => {
+        const shouldSelect =
+          item.source === 'evaluation'
+            ? Boolean(item.isFailed) || regressionIds.has(item.id)
+            : item.beforePassed === false || regressionIds.has(item.id);
+        return { ...item, selected: shouldSelect };
+      })
+    );
+  };
+
+  const clearCaseSelection = () => {
+    setCaseManagerDraftCases((prev) => prev.map((item) => ({ ...item, selected: false })));
+  };
+
+  const removeManualCase = (caseId: string) => {
+    setCaseManagerDraftCases((prev) =>
+      prev.filter((item) => !(item.source === 'manual' && item.id === caseId))
+    );
+  };
+
+  const runVerification = async (
+    casesOverride?: VerificationCase[],
+    options?: { signal?: AbortSignal }
+  ): Promise<VerificationResult[] | null> => {
     const selectedCases = (casesOverride || verificationCases).filter((item) => item.selected);
     if (selectedCases.length === 0 || isVerifying) return null;
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    const promptSnapshot = resolvePromptSnapshot();
 
     setIsVerifying(true);
     let runningResults: VerificationResult[] =
@@ -661,6 +1160,12 @@ export function PromptOptimizer({
         status: 'pending',
       }));
     setVerificationResults(runningResults);
+    const updateRunningResult = (caseId: string, patch: Partial<VerificationResult>) => {
+      runningResults = runningResults.map((result) =>
+        result.caseId === caseId ? { ...result, ...patch } : result
+      );
+      setVerificationResults([...runningResults]);
+    };
 
     let evaluationDetail: EvaluationWithRelations | null = null;
     if (effectiveSelectedEvaluationId) {
@@ -677,8 +1182,12 @@ export function PromptOptimizer({
     const judgeModelId = evaluationDetail?.judgeModelId || '';
     const passThreshold = evaluationDetail?.config?.pass_threshold ?? 0.6;
     const useJudgeEvaluation = Boolean(judgeModelId && enabledCriteria.length > 0);
-    const fallbackPassThreshold = Math.max(passThreshold, MANUAL_SEMANTIC_PASS_THRESHOLD);
     const testCaseById = new Map((evaluationDetail?.testCases || []).map((item) => [item.id, item]));
+    const evaluationConfig = (evaluationDetail?.config || {}) as Record<string, unknown>;
+    const verificationCaseConcurrency = resolveVerificationCaseConcurrency(
+      evaluationConfig,
+      selectedCases.length
+    );
     const verificationModelId = evaluationDetail?.modelId || selectedModelId;
     const semanticJudgeModelId = selectedModelId || verificationModelId;
 
@@ -690,30 +1199,38 @@ export function PromptOptimizer({
 
     setVerificationMode(useJudgeEvaluation ? 'judge' : 'fallback');
 
-    for (const testCase of selectedCases) {
-      runningResults = runningResults.map((result) =>
-        result.caseId === testCase.id ? { ...result, status: 'running' } : result
-      );
-      setVerificationResults([...runningResults]);
+    const verifyCase = async (testCase: VerificationCase) => {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
 
+      updateRunningResult(testCase.id, { status: 'running' });
       try {
         const evaluationTestCase = testCase.testCaseId ? testCaseById.get(testCase.testCaseId) : undefined;
         const caseInput = evaluationTestCase?.inputText ?? testCase.input;
         const caseVariables = (evaluationTestCase?.inputVariables as Record<string, string>) || testCase.inputVariables || {};
         const expectedOutput = evaluationTestCase?.expectedOutput ?? testCase.expectedOutput;
-        const testMessages = buildCaseMessages(messages, content, caseInput, caseVariables);
+        const testMessages = buildCaseMessages(
+          promptSnapshot.messages,
+          promptSnapshot.content,
+          caseInput,
+          caseVariables
+        );
 
         const response = await chatApi.complete({
           modelId: verificationModelId,
           messages: testMessages,
           saveTrace: false,
           isEvalCase: true,
-        });
+        }, signal);
 
         let afterScore: number | undefined;
         let afterPassed: boolean | undefined;
         let judgeFeedback: Record<string, string> | undefined;
         let criterionScores: Record<string, number> | undefined;
+        const manualPassThreshold = toUnitPassThreshold(testCase.passThreshold);
+        const currentPassThreshold =
+          testCase.source === 'manual' ? manualPassThreshold : passThreshold;
 
         if (useJudgeEvaluation) {
           const evaluationResult = await evaluateOutputWithCriteria({
@@ -724,9 +1241,14 @@ export function PromptOptimizer({
             expectedOutput,
             modelOutput: response.content,
             fallbackReason: t('evaluationFailed'),
+            signal,
           });
           afterScore = Math.round(evaluationResult.weightedScore * 100);
-          afterPassed = evaluationResult.passed;
+          if (testCase.source === 'manual') {
+            afterPassed = afterScore >= currentPassThreshold * 100;
+          } else {
+            afterPassed = evaluationResult.passed;
+          }
           judgeFeedback = evaluationResult.feedback;
           criterionScores = evaluationResult.scores;
         } else {
@@ -739,10 +1261,11 @@ export function PromptOptimizer({
               expectedOutput: normalizedExpected,
               modelOutput: response.content,
               fallbackReason: t('evaluationFailed'),
+              signal,
             });
 
             afterScore = Math.round(semanticResult.score * 100);
-            afterPassed = semanticResult.score >= fallbackPassThreshold;
+            afterPassed = semanticResult.score >= currentPassThreshold;
             criterionScores = {
               semantic_match: semanticResult.score,
             };
@@ -754,7 +1277,7 @@ export function PromptOptimizer({
               const heuristicScore = scoreWithExpectedOutputHeuristic(response.content, normalizedExpected);
               if (typeof heuristicScore === 'number') {
                 afterScore = heuristicScore;
-                afterPassed = heuristicScore >= fallbackPassThreshold * 100;
+                afterPassed = heuristicScore >= currentPassThreshold * 100;
                 criterionScores = {
                   semantic_match: heuristicScore / 100,
                 };
@@ -772,48 +1295,129 @@ export function PromptOptimizer({
             ? afterScore - beforeScore
             : undefined;
 
-        runningResults = runningResults.map((result) =>
-          result.caseId === testCase.id
-            ? {
-                ...result,
-                output: response.content,
-                expectedOutput: expectedOutput || undefined,
-                afterScore,
-                afterPassed,
-                delta,
-                judgeFeedback,
-                criterionScores,
-                status: 'completed',
-              }
-            : result
-        );
-        setVerificationResults([...runningResults]);
+        updateRunningResult(testCase.id, {
+          output: response.content,
+          expectedOutput: expectedOutput || undefined,
+          afterScore,
+          afterPassed,
+          delta,
+          judgeFeedback,
+          criterionScores,
+          status: 'completed',
+        });
       } catch (verifyError) {
+        if (isAbortError(verifyError) || signal?.aborted) {
+          throw verifyError;
+        }
+        updateRunningResult(testCase.id, {
+          status: 'error',
+          errorMessage: verifyError instanceof Error ? verifyError.message : t('executionFailed'),
+        });
+      }
+    };
+
+    try {
+      let nextCaseIndex = 0;
+      const workerCount = Math.min(selectedCases.length, verificationCaseConcurrency);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            if (signal?.aborted) {
+              throw new DOMException('Aborted', 'AbortError');
+            }
+            const caseIndex = nextCaseIndex;
+            nextCaseIndex += 1;
+            if (caseIndex >= selectedCases.length) {
+              break;
+            }
+            await verifyCase(selectedCases[caseIndex]);
+          }
+        })
+      );
+      return runningResults;
+    } catch (verifyError) {
+      if (isAbortError(verifyError) || signal?.aborted) {
         runningResults = runningResults.map((result) =>
-          result.caseId === testCase.id
-            ? {
+          result.status === 'completed' || result.status === 'error'
+            ? result
+            : {
                 ...result,
                 status: 'error',
-                errorMessage: verifyError instanceof Error ? verifyError.message : t('executionFailed'),
+                errorMessage: t('runStopped'),
               }
-            : result
         );
         setVerificationResults([...runningResults]);
+        setError(t('runStopped'));
+        throw new DOMException('Aborted', 'AbortError');
       }
+      throw verifyError;
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleRunVerification = async (
+    casesOverride?: VerificationCase[],
+    options?: { signal?: AbortSignal }
+  ): Promise<VerificationResult[] | null> => {
+    const externalSignal = options?.signal;
+    const internalController = externalSignal ? null : chatApi.createAbortController();
+
+    if (internalController) {
+      verificationAbortControllerRef.current?.abort();
+      verificationAbortControllerRef.current = internalController;
     }
 
-    setIsVerifying(false);
-    return runningResults;
+    try {
+      return await runVerification(casesOverride, {
+        signal: externalSignal || internalController?.signal,
+      });
+    } catch (verifyError) {
+      if (isAbortError(verifyError) || externalSignal?.aborted) {
+        return null;
+      }
+      setError(verifyError instanceof Error ? verifyError.message : t('executionFailed'));
+      return null;
+    } finally {
+      if (internalController && verificationAbortControllerRef.current === internalController) {
+        verificationAbortControllerRef.current = null;
+      }
+    }
+  };
+
+  const handleRunVerificationByScope = () => {
+    if (isVerifying) {
+      handleAbortVerification();
+      return;
+    }
+
+    const scopedCases = runScopeCases.map((item) => ({ ...item, selected: true }));
+    if (scopedCases.length === 0) {
+      setError(t('noEvaluationForVerify'));
+      return;
+    }
+
+    void handleRunVerification(scopedCases);
   };
 
   const runAutoOptimizationPipeline = async () => {
     if (isAutoPipelineRunning || isVerifying || isOptimizing) return;
+
+    const pipelineController = chatApi.createAbortController();
+    autoPipelineAbortControllerRef.current?.abort();
+    autoPipelineAbortControllerRef.current = pipelineController;
+    const pipelineSignal = pipelineController.signal;
+
     setIsAutoPipelineRunning(true);
     setAutoPipelineRound(0);
     setAutoPipelineStatus(t('autoOptimizing'));
     setView('analysis');
 
     try {
+      if (pipelineSignal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
       let pipelineCases = verificationCases;
       if (!verificationInitialized) {
         pipelineCases = initVerificationCases({ switchView: false });
@@ -834,11 +1438,7 @@ export function PromptOptimizer({
       }
 
       if (!hasEvaluation && manualCasesWithExpected.length === 0) {
-        setAutoPipelineStatus(
-          t('autoPipelineNeedExpected', {
-            defaultValue: '请先为手动用例填写期望输出，或关联评测集后再执行自动优化循环。',
-          })
-        );
+        setAutoPipelineStatus(t('autoPipelineNeedExpected'));
         setView('verification');
         return;
       }
@@ -852,6 +1452,7 @@ export function PromptOptimizer({
       const split = splitTrainAndValidationCases(topFailureCases);
       let trainCases = split.train;
       const validationCases = split.validation;
+      const maxRounds = clampAutoPipelineRounds(autoPipelineMaxRounds);
       const source: AutoOptimizeContext['source'] =
         hasEvaluation && manualCases.length > 0 ? 'mixed' : hasEvaluation ? 'evaluation' : 'manual';
 
@@ -865,7 +1466,7 @@ export function PromptOptimizer({
       if (seedCases.length > 0) {
         optimizeContext = {
           round: 1,
-          maxRounds: AUTO_PIPELINE_MAX_ROUNDS,
+          maxRounds,
           source,
           trainCasesCount: trainCases.length,
           validationCasesCount: validationCases.length,
@@ -878,11 +1479,17 @@ export function PromptOptimizer({
         };
       }
 
-      for (let round = 1; round <= AUTO_PIPELINE_MAX_ROUNDS; round++) {
+      for (let round = 1; round <= maxRounds; round++) {
+        if (pipelineSignal.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
         setAutoPipelineRound(round);
         setAutoPipelineStatus(t('autoRoundLabel', { round }));
 
-        const suggestionsInRound = await runOptimizeOnce(true, optimizeContext);
+        const suggestionsInRound = await runOptimizeOnce(true, optimizeContext, {
+          signal: pipelineSignal,
+        });
         const candidates = suggestionsInRound.filter(
           (item) =>
             item.originalText &&
@@ -901,10 +1508,20 @@ export function PromptOptimizer({
           break;
         }
 
-        toApply.forEach((item) => handleApply(item));
+        let appliedCount = 0;
+        for (const item of toApply) {
+          const result = handleApply(item);
+          if (result.applied) {
+            appliedCount += 1;
+          }
+        }
+        if (appliedCount === 0) {
+          setAutoPipelineStatus(t('autoPipelineNoApplied'));
+          break;
+        }
 
-        setAutoPipelineStatus(t('autoPipelineApplied', { count: toApply.length }));
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        setAutoPipelineStatus(t('autoPipelineApplied', { count: appliedCount }));
+        await delayWithSignal(80, pipelineSignal);
 
         const roundCases = dedupeVerificationCases([
           ...trainCases.map((item) => ({ ...item, selected: true })),
@@ -913,7 +1530,10 @@ export function PromptOptimizer({
         ]);
         setVerificationCases(roundCases);
         setView('verification');
-        const verification = await runVerification(roundCases);
+        const verification = await handleRunVerification(roundCases, { signal: pipelineSignal });
+        if (pipelineSignal.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
         if (!verification || verification.length === 0) {
           setAutoPipelineStatus(t('autoPipelineNoVerification'));
           break;
@@ -945,7 +1565,7 @@ export function PromptOptimizer({
           break;
         }
 
-        if (round >= AUTO_PIPELINE_MAX_ROUNDS) {
+        if (round >= maxRounds) {
           break;
         }
 
@@ -982,7 +1602,7 @@ export function PromptOptimizer({
 
         optimizeContext = {
           round: round + 1,
-          maxRounds: AUTO_PIPELINE_MAX_ROUNDS,
+          maxRounds,
           source,
           trainCasesCount: trainCases.length,
           validationCasesCount: validationCases.length,
@@ -992,7 +1612,18 @@ export function PromptOptimizer({
       }
 
       setAutoPipelineStatus(t('autoPipelineDone'));
+    } catch (pipelineError) {
+      if (isAbortError(pipelineError) || pipelineSignal.aborted) {
+        setAutoPipelineStatus(t('runStopped'));
+      } else {
+        setAutoPipelineStatus(
+          pipelineError instanceof Error ? pipelineError.message : t('executionFailed')
+        );
+      }
     } finally {
+      if (autoPipelineAbortControllerRef.current === pipelineController) {
+        autoPipelineAbortControllerRef.current = null;
+      }
       setIsAutoPipelineRunning(false);
     }
   };
@@ -1006,7 +1637,7 @@ export function PromptOptimizer({
             {t('aiOptimization')}
           </h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center">
           {onOpenSettings && (
             <Button
               variant="ghost"
@@ -1017,48 +1648,6 @@ export function PromptOptimizer({
               <Settings className="w-4 h-4" />
             </Button>
           )}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleOptimize}
-            disabled={isOptimizing || !hasContent || !selectedModelId}
-          >
-            {isOptimizing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('analyzing')}
-              </>
-            ) : (
-              <>
-              <Wand2 className="w-4 h-4" />
-              {t('analyzePrompt')}
-            </>
-          )}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={runAutoOptimizationPipeline}
-            disabled={
-              isOptimizing ||
-              isVerifying ||
-              isAutoPipelineRunning ||
-              !hasContent ||
-              !selectedModelId
-            }
-          >
-            {isAutoPipelineRunning ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('autoOptimizing')}
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                {t('autoOptimizeLoop')}
-              </>
-            )}
-          </Button>
         </div>
       </div>
 
@@ -1148,7 +1737,7 @@ export function PromptOptimizer({
                     >
                       {t('passRate')}:{' '}
                       {isPendingEvaluation
-                        ? t('pending', { defaultValue: '待测试' })
+                        ? t('pending')
                         : `${(evaluationSummary.avgPassRate * 100).toFixed(1)}%`}
                     </span>
                     {!isPendingEvaluation && evaluationSummary.topFailures.length > 0 && (
@@ -1173,7 +1762,7 @@ export function PromptOptimizer({
         </div>
       </div>
 
-      <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <div className="inline-flex p-1 bg-slate-800/40 light:bg-slate-100 rounded-lg border border-slate-700 light:border-slate-200">
           <button
             type="button"
@@ -1188,6 +1777,17 @@ export function PromptOptimizer({
           </button>
           <button
             type="button"
+            onClick={() => setView('preview')}
+            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+              view === 'preview'
+                ? 'bg-cyan-500 text-white'
+                : 'text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
+            }`}
+          >
+            {t('promptPreviewPanel')}
+          </button>
+          <button
+            type="button"
             onClick={() => setView('verification')}
             className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
               view === 'verification'
@@ -1198,11 +1798,76 @@ export function PromptOptimizer({
             {t('verificationPanel')}
           </button>
         </div>
-        <span className="text-xs text-slate-500">
-          {view === 'analysis'
-            ? t('suggestionsCount', { count: displaySuggestions.length })
-            : t('selectedCasesCount', { count: selectedCaseCount })}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-slate-500 mr-1">
+            {view === 'analysis'
+              ? t('suggestionsCount', { count: displaySuggestions.length })
+              : view === 'verification'
+                ? t('selectedCasesCount', { count: selectedCaseCount })
+                : t('promptPreviewForVerification')}
+          </span>
+          <Button
+            variant={isStandaloneAnalyzing ? 'danger' : 'primary'}
+            size="sm"
+            onClick={isStandaloneAnalyzing ? handleAbortAnalyze : handleOptimize}
+            className={
+              isStandaloneAnalyzing
+                ? undefined
+                : 'from-cyan-500 to-teal-500 hover:from-cyan-600 hover:to-teal-600 shadow-cyan-500/30'
+            }
+            disabled={
+              !isStandaloneAnalyzing &&
+              (isOptimizing || isAutoPipelineRunning || isVerifying || !hasContent || !selectedModelId)
+            }
+          >
+            {isStandaloneAnalyzing ? (
+              <StopIndicator label={t('stop')} />
+            ) : (
+              <>
+                <Wand2 className="w-4 h-4" />
+                {t('analyzePrompt')}
+              </>
+            )}
+          </Button>
+          <Button
+            variant={isAutoPipelineRunning ? 'danger' : 'primary'}
+            size="sm"
+            onClick={isAutoPipelineRunning ? handleAbortAutoPipeline : runAutoOptimizationPipeline}
+            className={
+              isAutoPipelineRunning
+                ? undefined
+                : 'from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 shadow-emerald-500/30'
+            }
+            disabled={
+              !isAutoPipelineRunning &&
+              (isOptimizing || isVerifying || !hasContent || !selectedModelId)
+            }
+          >
+            {isAutoPipelineRunning ? (
+              <StopIndicator label={t('stop')} />
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                {t('autoOptimizeLoop')}
+              </>
+            )}
+          </Button>
+          <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-800/40 light:bg-slate-100">
+            <span className="text-xs text-slate-400 light:text-slate-600">
+              {t('autoMaxRoundsLabel')}
+            </span>
+            <input
+              type="number"
+              min={AUTO_PIPELINE_MIN_ROUNDS}
+              max={AUTO_PIPELINE_MAX_ROUNDS_LIMIT}
+              step={1}
+              value={autoPipelineMaxRounds}
+              onChange={(event) => handleAutoPipelineMaxRoundsChange(event.target.value)}
+              disabled={isAutoPipelineRunning}
+              className="w-16 px-2 py-1 text-xs bg-slate-700/60 light:bg-white border border-slate-600 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            />
+          </div>
+        </div>
       </div>
 
       {(isAutoPipelineRunning || autoPipelineStatus) && (
@@ -1312,13 +1977,26 @@ export function PromptOptimizer({
                 )}
 
                 {displaySuggestions.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center text-center py-8">
-                    <Check className="w-12 h-12 text-green-400 light:text-green-500 mb-4" />
-                    <h4 className="text-lg font-medium text-slate-300 light:text-slate-700 mb-2">
-                      {t('excellentPerformance')}
-                    </h4>
-                    <p className="text-sm text-slate-500 max-w-md">{t('noSuggestionsDesc')}</p>
-                  </div>
+                  !hasUsableAnalysisResult && hasAnalyzed ? (
+                    <div className="flex flex-col items-center justify-center text-center py-8">
+                      <AlertCircle className="w-12 h-12 text-amber-400 light:text-amber-500 mb-4" />
+                      <h4 className="text-lg font-medium text-slate-300 light:text-slate-700 mb-2">
+                        {t('analysisNoOutputTitle')}
+                      </h4>
+                      <p className="text-sm text-slate-500 max-w-md mb-4">{t('analysisNoOutputDesc')}</p>
+                      <Button variant="secondary" size="sm" onClick={handleOptimize}>
+                        {t('retry')}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-center py-8">
+                      <Check className="w-12 h-12 text-green-400 light:text-green-500 mb-4" />
+                      <h4 className="text-lg font-medium text-slate-300 light:text-slate-700 mb-2">
+                        {t('excellentPerformance')}
+                      </h4>
+                      <p className="text-sm text-slate-500 max-w-md">{t('noSuggestionsDesc')}</p>
+                    </div>
+                  )
                 ) : (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
@@ -1431,6 +2109,54 @@ export function PromptOptimizer({
               </div>
             )}
           </div>
+        ) : view === 'preview' ? (
+          <div className="h-full overflow-y-auto pr-1">
+            <div className="p-4 bg-slate-800/50 light:bg-slate-100 rounded-lg border border-slate-700 light:border-slate-200">
+              <div className="relative rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white overflow-hidden">
+                <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsPromptPreviewCollapsed((prev) => !prev)}
+                    className="p-1 rounded hover:bg-slate-800/60 light:hover:bg-slate-100 text-slate-400 light:text-slate-600"
+                    title={isPromptPreviewCollapsed ? t('expandPreview') : t('collapsePreview')}
+                  >
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPromptPreviewCollapsed ? '-rotate-90' : ''}`} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyPromptPreview()}
+                    className="p-1 rounded hover:bg-slate-800/60 light:hover:bg-slate-100 text-slate-400 light:text-slate-600"
+                    title={isPromptPreviewCopied ? t('previewCopied') : t('copyPreview')}
+                    disabled={!promptPreview.trim()}
+                  >
+                    {isPromptPreviewCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={togglePromptPreviewFullscreen}
+                    className="p-1 rounded hover:bg-slate-800/60 light:hover:bg-slate-100 text-slate-400 light:text-slate-600"
+                    title={t('fullscreenPreview')}
+                    disabled={!promptPreview.trim()}
+                  >
+                    {isPromptPreviewFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                {!isPromptPreviewCollapsed ? (
+                  <div className="max-h-[72vh] overflow-y-auto pt-6 pb-3 px-3">
+                    <OutputRenderer
+                      content={promptPreview || t('emptyPromptPreview')}
+                      preferences={{ format: 'auto' }}
+                      className="text-sm leading-6"
+                    />
+                  </div>
+                ) : (
+                  <div className="pt-8 pb-2 px-2 text-xs text-slate-500">
+                    {t('previewCollapsedHint')}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         ) : !verificationInitialized ? (
           <div className="h-full flex items-center justify-center">
             <div className="max-w-lg text-center">
@@ -1445,175 +2171,58 @@ export function PromptOptimizer({
             </div>
           </div>
         ) : (
-          <div className="h-full grid gap-4 xl:grid-cols-[minmax(360px,0.95fr)_minmax(420px,1.05fr)]">
-            <div className="min-h-0 overflow-y-auto p-4 bg-slate-800/50 light:bg-slate-100 rounded-lg border border-slate-700 light:border-slate-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <FlaskConical className="w-5 h-5 text-cyan-400 light:text-cyan-600" />
-                  <span className="text-sm font-medium text-slate-200 light:text-slate-800">
-                    {t('verificationCases')}
-                  </span>
-                </div>
-                <span className="text-xs text-slate-500">
-                  {t('selectedCasesCount', { count: selectedCaseCount })}
+          <div className="h-full grid gap-3 grid-rows-[auto_1fr]">
+            <div className="p-3 bg-slate-800/50 light:bg-slate-100 rounded-lg border border-slate-700 light:border-slate-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs text-slate-400 light:text-slate-600">{t('runScopeLabel')}</div>
+                {[
+                  { key: 'all' as VerificationRunScope, label: t('selectAllCases') },
+                  { key: 'failed' as VerificationRunScope, label: t('selectFailedCases') },
+                  { key: 'regression' as VerificationRunScope, label: t('regressionCount') },
+                  { key: 'custom' as VerificationRunScope, label: t('customScope') },
+                ].map((scope) => (
+                  <button
+                    key={scope.key}
+                    type="button"
+                    onClick={() => setVerificationRunScope(scope.key)}
+                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                      verificationRunScope === scope.key
+                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
+                        : 'border-slate-700 light:border-slate-300 text-slate-400 light:text-slate-600 hover:text-slate-200 light:hover:text-slate-800'
+                    }`}
+                  >
+                    {scope.label}
+                  </button>
+                ))}
+                <Button
+                  variant={isVerifying ? 'danger' : 'primary'}
+                  size="sm"
+                  onClick={handleRunVerificationByScope}
+                  disabled={
+                    !isVerifying &&
+                    (runScopeCases.length === 0 || isAutoPipelineRunning || isOptimizing)
+                  }
+                >
+                  {isVerifying ? (
+                    <StopIndicator label={t('stop')} />
+                  ) : (
+                    <>
+                      <FlaskConical className="w-4 h-4" />
+                      {t('runAndEvaluateCount', { count: runScopeCases.length })}
+                    </>
+                  )}
+                </Button>
+
+                <span className="ml-auto text-xs text-slate-500">
+                  {t('selectedCasesCount', { count: runScopeCases.length })}
                 </span>
-              </div>
-
-              <div className="mb-3 flex items-center gap-2">
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
-                  onClick={() =>
-                    setVerificationCases((prev) =>
-                      prev.map((item) => ({
-                        ...item,
-                        selected: item.source === 'evaluation' ? Boolean(item.isFailed) : item.selected,
-                      }))
-                    )
-                  }
-                  className="text-xs"
+                  onClick={openCaseManager}
                 >
-                  {t('selectFailedCases')}
+                  {t('caseManager')}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setVerificationCases((prev) =>
-                      prev.map((item) => ({
-                        ...item,
-                        selected: true,
-                      }))
-                    )
-                  }
-                  className="text-xs"
-                >
-                  {t('selectAllCases')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setVerificationCases((prev) =>
-                      prev.map((item) => ({
-                        ...item,
-                        selected: false,
-                      }))
-                    )
-                  }
-                  className="text-xs"
-                >
-                  {t('clearCaseSelection')}
-                </Button>
-              </div>
-
-              {verificationCases.filter((item) => item.source === 'evaluation').length > 0 ? (
-                <div className="space-y-3">
-                  <div className="text-xs text-slate-400 light:text-slate-600 flex items-center gap-1">
-                    <Database className="w-3 h-3" />
-                    {t('fromEvaluation')} "{evaluationSummary?.evaluationName || '-'}"
-                  </div>
-
-                  {verificationCases
-                    .filter((item) => item.source === 'evaluation')
-                    .map((item) => (
-                      <label
-                        key={item.id}
-                        className="flex items-center gap-2 py-2 text-sm text-slate-300 light:text-slate-700 cursor-pointer hover:bg-slate-700/20 light:hover:bg-slate-50 rounded px-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={item.selected}
-                          onChange={() =>
-                            setVerificationCases((prev) =>
-                              prev.map((row) =>
-                                row.id === item.id ? { ...row, selected: !row.selected } : row
-                              )
-                            )
-                          }
-                          className="rounded"
-                        />
-                        <span className="flex-1 truncate" title={item.name}>
-                          {item.name}
-                        </span>
-                        {typeof item.beforeScore === 'number' ? (
-                          <span className="text-xs text-slate-500">
-                            {t('before')}: {item.beforeScore}
-                          </span>
-                        ) : null}
-                      </label>
-                    ))}
-                </div>
-              ) : (
-                <div className="mb-4 p-3 bg-slate-700/30 light:bg-slate-50 rounded-lg text-xs text-slate-400">
-                  {t('noEvaluationForVerify')}
-                </div>
-              )}
-
-              <div className="mt-4 border-t border-slate-700 light:border-slate-200 pt-3">
-                <div className="text-xs text-slate-400 light:text-slate-600 mb-2">
-                  {t('manualCases')}
-                </div>
-
-                {verificationCases
-                  .filter((item) => item.source === 'manual')
-                  .map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 py-1">
-                      <input
-                        type="checkbox"
-                        checked={item.selected}
-                        onChange={() =>
-                          setVerificationCases((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, selected: !row.selected } : row
-                            )
-                          )
-                        }
-                        className="rounded"
-                      />
-                      <span className="text-sm text-slate-300 light:text-slate-700 flex-1 truncate">
-                        {item.input.slice(0, 60)}
-                        {item.input.length > 60 ? '...' : ''}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          setVerificationCases((prev) => prev.filter((row) => row.id !== item.id))
-                        }
-                      >
-                        <Trash2 className="w-3 h-3 text-slate-500" />
-                      </Button>
-                    </div>
-                  ))}
-
-                <div className="mt-2 p-2 bg-slate-700/30 light:bg-slate-50 rounded-lg border border-slate-600/50 light:border-slate-200">
-                  <textarea
-                    value={manualCaseInput}
-                    onChange={(event) => setManualCaseInput(event.target.value)}
-                    placeholder={t('testInput')}
-                    className="w-full p-2 text-sm bg-transparent border-none text-slate-200 light:text-slate-800 placeholder-slate-500 focus:outline-none resize-y min-h-[44px]"
-                    rows={2}
-                  />
-                  <textarea
-                    value={manualCaseExpected}
-                    onChange={(event) => setManualCaseExpected(event.target.value)}
-                    placeholder={t('expectedOutput')}
-                    className="w-full p-2 text-sm bg-transparent border-t border-slate-600/50 light:border-slate-200 text-slate-200 light:text-slate-800 placeholder-slate-500 focus:outline-none resize-y min-h-[34px]"
-                    rows={1}
-                  />
-                  <div className="flex justify-end mt-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={addManualCase}
-                      disabled={!manualCaseInput.trim()}
-                    >
-                      <Plus className="w-3 h-3" />
-                      {t('addCase')}
-                    </Button>
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -1634,47 +2243,9 @@ export function PromptOptimizer({
                 </Badge>
               </div>
 
-              <div className="mb-3 p-2 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white">
-                <div className="text-xs text-slate-400 light:text-slate-600 mb-1">
-                  {t('promptPreviewForVerification')}
-                </div>
-                <pre className="text-xs whitespace-pre-wrap break-words text-slate-300 light:text-slate-700 max-h-40 overflow-y-auto">
-                  {promptPreview || t('emptyPromptPreview')}
-                </pre>
-              </div>
-
-              <div className="mb-3 p-2 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white">
-                <div className="text-xs text-slate-400 light:text-slate-600 mb-1">
-                  {t('executionPromptPreview')}
-                </div>
-                <pre className="text-xs whitespace-pre-wrap break-words text-slate-300 light:text-slate-700 max-h-40 overflow-y-auto">
-                  {selectedCasePreview || t('noCaseSelectedForPreview')}
-                </pre>
-              </div>
-
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => void runVerification()}
-                disabled={isVerifying || selectedCaseCount === 0}
-                className="w-full mb-3"
-              >
-                {isVerifying ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {t('verifying')}
-                  </>
-                ) : (
-                  <>
-                    <FlaskConical className="w-4 h-4" />
-                    {t('runAndEvaluateCount', { count: selectedCaseCount })}
-                  </>
-                )}
-              </Button>
-
-              {verificationResults.length > 0 && (
+              {verificationResults.length > 0 ? (
                 <>
-                  <div className="grid gap-2 sm:grid-cols-2 mb-3">
+                  <div className="grid gap-2 grid-cols-2 lg:grid-cols-4 mb-3">
                     <div className="p-2 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white">
                       <div className="text-xs text-slate-500">{t('beforePassRate')}</div>
                       <div className="text-base font-medium text-slate-200 light:text-slate-800">
@@ -1731,155 +2302,494 @@ export function PromptOptimizer({
                     </div>
                   )}
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-slate-400 light:text-slate-600 border-b border-slate-700 light:border-slate-200">
-                          <th className="text-left py-2 pr-2">{t('caseName')}</th>
-                          <th className="text-center py-2 px-2">{t('before')}</th>
-                          <th className="text-center py-2 px-2">{t('after')}</th>
-                          <th className="text-center py-2 px-2">{t('delta')}</th>
-                          <th className="text-left py-2 pl-2">{t('status')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {verificationResults.map((result) => (
-                          <tr key={result.caseId} className="border-b border-slate-700/50 light:border-slate-100">
-                            <td className="py-2 pr-2 text-slate-300 light:text-slate-700">
-                              {result.caseName}
-                            </td>
-                            <td className="py-2 px-2 text-center">
-                              {typeof result.beforeScore === 'number' ? (
-                                <span className={result.beforeScore >= 80 ? 'text-green-400' : 'text-red-400'}>
-                                  {result.beforeScore}
-                                </span>
-                              ) : (
-                                <span className="text-slate-500">-</span>
-                              )}
-                            </td>
-                            <td className="py-2 px-2 text-center">
-                              {result.status === 'completed' && typeof result.afterScore === 'number' ? (
-                                <span className={result.afterScore >= 80 ? 'text-green-400' : 'text-amber-400'}>
-                                  {result.afterScore}
-                                </span>
-                              ) : result.status === 'running' ? (
-                                <Loader2 className="w-3 h-3 animate-spin inline" />
-                              ) : result.status === 'error' ? (
-                                <span className="text-red-400">{t('error')}</span>
-                              ) : (
-                                <span className="text-slate-500">-</span>
-                              )}
-                            </td>
-                            <td className="py-2 px-2 text-center">
-                              {typeof result.delta === 'number' ? (
-                                <span className={result.delta >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                  {result.delta >= 0 ? '+' : ''}
-                                  {result.delta.toFixed(0)}
-                                </span>
-                              ) : (
-                                <span className="text-slate-500">-</span>
-                              )}
-                            </td>
-                            <td className="py-2 pl-2">
-                              {result.status === 'completed' && result.afterPassed === true ? (
-                                <Check className="w-3 h-3 text-green-400 inline" />
-                              ) : result.status === 'completed' && result.afterPassed === false ? (
-                                <X className="w-3 h-3 text-red-400 inline" />
-                              ) : result.status === 'running' ? (
-                                <Loader2 className="w-3 h-3 animate-spin text-cyan-400 inline" />
-                              ) : result.status === 'error' ? (
-                                <AlertCircle className="w-3 h-3 text-red-400 inline" />
-                              ) : (
-                                <span className="text-slate-500">-</span>
-                              )}
-                            </td>
+                  <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/20 light:bg-white overflow-hidden">
+                    <div className="max-h-[52vh] overflow-auto">
+                      <table className="w-full text-xs table-fixed">
+                        <thead className="sticky top-0 z-10 bg-slate-900/95 light:bg-slate-50/95 backdrop-blur border-b border-slate-700 light:border-slate-200">
+                          <tr className="text-slate-400 light:text-slate-600">
+                            <th className="w-8 py-2 px-1 text-center" />
+                            <th className="w-[240px] text-left py-2 pr-2">{t('caseName')}</th>
+                            <th className="w-16 text-center py-2 px-1">{t('before')}</th>
+                            <th className="w-16 text-center py-2 px-1">{t('after')}</th>
+                            <th className="w-16 text-center py-2 px-1">{t('delta')}</th>
+                            <th className="w-24 text-left py-2 pl-2">{t('status')}</th>
+                            <th className="text-left py-2 pl-2 pr-2">{t('judgeFeedbackDetails')}</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {verificationResults.map((result) => {
+                            const isExpanded = expandedResultCaseId === result.caseId;
+                            const criterionEntries = Object.entries(result.criterionScores || {});
+                            const feedbackEntries = Object.entries(result.judgeFeedback || {});
+                            const feedbackSummary = feedbackEntries
+                              .map(([name, feedback]) => {
+                                const label = name === 'semantic_match' ? t('expectedOutput') : name;
+                                const text = String(feedback || '').replace(/\s+/g, ' ').trim();
+                                if (!text) return '';
+                                return `${label}: ${text}`;
+                              })
+                              .filter(Boolean)
+                              .join(' | ');
+                            const feedbackPreview = feedbackSummary || result.errorMessage || '-';
+                            const statusText =
+                              result.status === 'completed'
+                                ? result.afterPassed
+                                  ? t('success')
+                                  : t('error')
+                                : result.status === 'running'
+                                  ? t('verifying')
+                                  : result.status === 'error'
+                                    ? t('error')
+                                    : t('pending');
 
-                  <div className="mt-3 space-y-2">
-                    <div className="text-xs text-slate-400 light:text-slate-600">
-                      {t('evaluationDetails')}
+                            return (
+                              <Fragment key={result.caseId}>
+                                <tr
+                                  className={`border-b border-slate-700/50 light:border-slate-100 cursor-pointer hover:bg-slate-800/40 light:hover:bg-slate-50 ${
+                                    isExpanded ? 'bg-slate-800/30 light:bg-slate-50/70' : ''
+                                  }`}
+                                  onClick={() =>
+                                    setExpandedResultCaseId((prev) =>
+                                      prev === result.caseId ? null : result.caseId
+                                    )
+                                  }
+                                >
+                                  <td className="py-2 px-1 text-center">
+                                    <ChevronDown
+                                      className={`w-3.5 h-3.5 inline text-slate-500 transition-transform ${
+                                        isExpanded ? 'rotate-180' : ''
+                                      }`}
+                                    />
+                                  </td>
+                                  <td className="py-2 pr-2 text-slate-300 light:text-slate-700">
+                                    <div className="truncate" title={result.caseName}>
+                                      {result.caseName}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-1 text-center">
+                                    {typeof result.beforeScore === 'number' ? (
+                                      <span className={result.beforeScore >= 80 ? 'text-green-400' : 'text-red-400'}>
+                                        {result.beforeScore}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-1 text-center">
+                                    {result.status === 'completed' && typeof result.afterScore === 'number' ? (
+                                      <span className={result.afterScore >= 80 ? 'text-green-400' : 'text-amber-400'}>
+                                        {result.afterScore}
+                                      </span>
+                                    ) : result.status === 'running' ? (
+                                      <Loader2 className="w-3 h-3 animate-spin inline text-cyan-400" />
+                                    ) : result.status === 'error' ? (
+                                      <span className="text-red-400">-</span>
+                                    ) : (
+                                      <span className="text-slate-500">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-1 text-center">
+                                    {typeof result.delta === 'number' ? (
+                                      <span className={result.delta >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                        {result.delta >= 0 ? '+' : ''}
+                                        {result.delta.toFixed(0)}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 pl-2">
+                                    <div className="inline-flex items-center gap-1">
+                                      {result.status === 'completed' && result.afterPassed === true ? (
+                                        <Check className="w-3 h-3 text-green-400" />
+                                      ) : result.status === 'completed' && result.afterPassed === false ? (
+                                        <X className="w-3 h-3 text-red-400" />
+                                      ) : result.status === 'running' ? (
+                                        <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
+                                      ) : result.status === 'error' ? (
+                                        <AlertCircle className="w-3 h-3 text-red-400" />
+                                      ) : (
+                                        <span className="w-3 h-3 inline-block rounded-full bg-slate-500/40" />
+                                      )}
+                                      <span className="text-slate-400 light:text-slate-600">{statusText}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-2 pl-2 pr-2">
+                                    <div
+                                      className="block w-full text-[11px] leading-4 text-slate-500 light:text-slate-600 truncate"
+                                      title={feedbackPreview === '-' ? undefined : feedbackPreview}
+                                    >
+                                      {feedbackPreview}
+                                    </div>
+                                  </td>
+                                </tr>
+
+                                {isExpanded && (
+                                  <tr className="border-b border-slate-700/50 light:border-slate-100 bg-slate-900/35 light:bg-slate-50/80">
+                                    <td colSpan={7} className="px-3 py-3">
+                                      <div className="grid gap-3 lg:grid-cols-2 mb-3">
+                                        <div className="rounded border border-slate-700 light:border-slate-200 bg-slate-900/20 light:bg-white p-2">
+                                          <div className="text-slate-400 light:text-slate-600 mb-1">{t('expectedOutput')}</div>
+                                          <div className="text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words max-h-36 overflow-y-auto">
+                                            {result.expectedOutput || '-'}
+                                          </div>
+                                        </div>
+                                        <div className="rounded border border-slate-700 light:border-slate-200 bg-slate-900/20 light:bg-white p-2">
+                                          <div className="text-slate-400 light:text-slate-600 mb-1">{t('modelOutputPreview')}</div>
+                                          <div className="text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words max-h-36 overflow-y-auto">
+                                            {result.output ||
+                                              (result.status === 'running'
+                                                ? t('verifying')
+                                                : result.errorMessage || '-')}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {criterionEntries.length > 0 && (
+                                        <div className="mb-3">
+                                          <div className="text-slate-400 light:text-slate-600 mb-1">{t('criterionScores')}</div>
+                                          <div className="grid gap-1 sm:grid-cols-2">
+                                            {criterionEntries.map(([name, score]) => (
+                                              <div
+                                                key={`${result.caseId}_${name}_score`}
+                                                className="rounded border border-slate-700/80 light:border-slate-200 bg-slate-900/20 light:bg-white px-2 py-1.5 flex items-center justify-between"
+                                              >
+                                                <span className="text-slate-300 light:text-slate-700">
+                                                  {name === 'semantic_match' ? t('expectedOutput') : name}
+                                                </span>
+                                                <span className="text-cyan-300 light:text-cyan-700">
+                                                  {Math.round(score * 100)}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {feedbackEntries.length > 0 && (
+                                        <div>
+                                          <div className="text-slate-400 light:text-slate-600 mb-1">{t('judgeFeedbackDetails')}</div>
+                                          <div className="space-y-2">
+                                            {feedbackEntries.map(([name, feedback]) => (
+                                              <div
+                                                key={`${result.caseId}_${name}_feedback`}
+                                                className="rounded border border-slate-700/80 light:border-slate-200 bg-slate-900/20 light:bg-white px-2 py-1.5"
+                                              >
+                                                <div className="text-slate-400 light:text-slate-600">
+                                                  {name === 'semantic_match' ? t('expectedOutput') : name}
+                                                </div>
+                                                <div className="mt-0.5 text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
+                                                  {feedback}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-                    {verificationResults
-                      .filter((result) => result.status === 'completed')
-                      .map((result) => {
-                        const criterionEntries = Object.entries(result.criterionScores || {});
-                        const feedbackEntries = Object.entries(result.judgeFeedback || {});
-                        const isExpanded = expandedResultCaseId === result.caseId;
-                        return (
-                          <div key={result.caseId} className="rounded border border-slate-700 light:border-slate-200 bg-slate-900/20 light:bg-white">
-                            <button
-                              type="button"
-                              className="w-full flex items-center justify-between px-3 py-2 text-left"
-                              onClick={() => setExpandedResultCaseId((prev) => (prev === result.caseId ? null : result.caseId))}
-                            >
-                              <span className="text-xs text-slate-300 light:text-slate-700">{result.caseName}</span>
-                              <span className="text-xs text-slate-500">
-                                {typeof result.afterScore === 'number' ? `${t('after')}: ${result.afterScore}` : '-'}
-                              </span>
-                            </button>
-                            {isExpanded && (
-                              <div className="px-3 pb-3 text-xs">
-                                {criterionEntries.length > 0 && (
-                                  <div className="mb-2">
-                                    <div className="text-slate-400 light:text-slate-600 mb-1">{t('criterionScores')}</div>
-                                    <div className="space-y-1">
-                                      {criterionEntries.map(([name, score]) => (
-                                        <div key={name} className="flex items-center justify-between">
-                                          <span className="text-slate-300 light:text-slate-700">
-                                            {name === 'semantic_match' ? t('expectedOutput') : name}
-                                          </span>
-                                          <span className="text-cyan-300 light:text-cyan-700">{Math.round(score * 100)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {feedbackEntries.length > 0 && (
-                                  <div className="mb-2">
-                                    <div className="text-slate-400 light:text-slate-600 mb-1">{t('judgeFeedbackDetails')}</div>
-                                    <div className="space-y-1">
-                                      {feedbackEntries.map(([name, feedback]) => (
-                                        <div key={`${result.caseId}_${name}`} className="text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words">
-                                          <span className="text-slate-400 light:text-slate-600">
-                                            {name === 'semantic_match' ? t('expectedOutput') : name}
-                                            {': '}
-                                          </span>
-                                          {feedback}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {result.expectedOutput && (
-                                  <div className="mb-2">
-                                    <div className="text-slate-400 light:text-slate-600 mb-1">{t('expectedOutput')}</div>
-                                    <div className="text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words max-h-28 overflow-y-auto">
-                                      {result.expectedOutput}
-                                    </div>
-                                  </div>
-                                )}
-                                <div>
-                                  <div className="text-slate-400 light:text-slate-600 mb-1">{t('modelOutputPreview')}</div>
-                                  <div className="text-slate-300 light:text-slate-700 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-                                    {result.output || '-'}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
                   </div>
                 </>
+              ) : (
+                <div className="min-h-[44vh] flex items-center justify-center">
+                  <div className="w-full max-w-xl p-5 rounded-xl border border-dashed border-slate-700/70 light:border-slate-300 bg-slate-900/20 light:bg-white text-center">
+                    <div className="mx-auto mb-3 w-10 h-10 rounded-full bg-cyan-500/12 text-cyan-300 light:text-cyan-600 flex items-center justify-center">
+                      <BarChart3 className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-medium text-slate-200 light:text-slate-800">
+                      {t('autoEvaluationPending')}
+                    </h4>
+                    <p className="mt-1 text-xs text-slate-500 light:text-slate-600">
+                      {runScopeCases.length === 0 ? t('noEvaluationForVerify') : t('verificationPanelDesc')}
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                      <Button
+                        variant={isVerifying ? 'danger' : 'primary'}
+                        size="sm"
+                        onClick={handleRunVerificationByScope}
+                        disabled={
+                          !isVerifying &&
+                          (runScopeCases.length === 0 || isAutoPipelineRunning || isOptimizing)
+                        }
+                      >
+                        {isVerifying ? (
+                          <StopIndicator label={t('stop')} />
+                        ) : (
+                          <>
+                            <FlaskConical className="w-4 h-4" />
+                            {t('runAndEvaluateCount', { count: runScopeCases.length })}
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={openCaseManager}
+                      >
+                        {t('caseManager')}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
         )}
       </div>
+
+      <Modal
+        isOpen={isCaseManagerOpen}
+        onClose={handleCancelCaseManager}
+        title={t('caseManager')}
+        size="2xl"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={selectAllCases}
+              disabled={caseManagerBusy || caseManagerDraftCases.length === 0}
+            >
+              {t('selectAllCases')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={selectFailedCases}
+              disabled={caseManagerBusy || caseManagerDraftCases.length === 0}
+            >
+              {t('selectFailedCases')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearCaseSelection}
+              disabled={caseManagerBusy || caseManagerSelectedCount === 0}
+            >
+              {t('clearCaseSelection')}
+            </Button>
+            <span className="ml-auto text-xs text-slate-500 light:text-slate-600">
+              {t('selectedCasesCount', { count: caseManagerSelectedCount })}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/20 light:bg-white px-2 py-2">
+            <span className="text-xs text-slate-500 light:text-slate-600">{tCommon('search')}</span>
+            <input
+              type="text"
+              value={caseManagerFilterKeyword}
+              onChange={(event) => setCaseManagerFilterKeyword(event.target.value)}
+              disabled={caseManagerBusy}
+              placeholder={`${tCommon('search')}...`}
+              className="min-w-[220px] flex-1 px-2 py-1 text-xs bg-slate-900/60 light:bg-white border border-slate-700 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-800/40 light:bg-slate-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-300 light:text-slate-700">
+                  {t('fromEvaluation')}
+                </span>
+                <span className="text-xs text-slate-500">{evaluationVerificationCases.length}</span>
+              </div>
+              <div className="max-h-[56vh] overflow-y-auto pr-1 space-y-1.5">
+                {filteredEvaluationVerificationCases.length === 0 ? (
+                  <div className="text-xs text-slate-500">{t('noEvaluationForVerify')}</div>
+                ) : (
+                  filteredEvaluationVerificationCases.map((item) => (
+                    <label
+                      key={item.id}
+                      className="flex items-start gap-2 rounded border border-slate-700/80 light:border-slate-200 px-2 py-1.5 cursor-pointer hover:bg-slate-700/30 light:hover:bg-white"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={item.selected}
+                        onChange={() => toggleCaseSelection(item.id)}
+                        disabled={caseManagerBusy}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500/50"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs text-slate-200 light:text-slate-800 truncate" title={item.name}>
+                          {item.name}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">
+                          {item.isFailed ? t('selectFailedCases') : t('passRate')}
+                          {typeof item.historicalPassRate === 'number'
+                            ? ` ${(item.historicalPassRate * 100).toFixed(0)}%`
+                            : ''}
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {typeof item.beforeScore === 'number' ? `${t('before')}: ${item.beforeScore}` : '-'}
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-800/40 light:bg-slate-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-300 light:text-slate-700">
+                  {t('manualCases')}
+                </span>
+                <span className="text-xs text-slate-500">{manualVerificationCases.length}</span>
+              </div>
+
+              <div className="space-y-2 mb-3">
+                <textarea
+                  value={caseManagerManualInput}
+                  onChange={(event) => setCaseManagerManualInput(event.target.value)}
+                  placeholder={t('inputPlaceholder')}
+                  rows={3}
+                  disabled={caseManagerBusy}
+                  className="w-full px-2 py-1.5 text-xs bg-slate-900/60 light:bg-white border border-slate-700 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <textarea
+                  value={caseManagerManualExpected}
+                  onChange={(event) => setCaseManagerManualExpected(event.target.value)}
+                  placeholder={t('expectedOutput')}
+                  rows={2}
+                  disabled={caseManagerBusy}
+                  className="w-full px-2 py-1.5 text-xs bg-slate-900/60 light:bg-white border border-slate-700 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                />
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-400 light:text-slate-600 shrink-0">
+                    {t('manualPassThreshold')}
+                  </label>
+                  <input
+                    type="number"
+                    min={MANUAL_PASS_THRESHOLD_MIN_PERCENT}
+                    max={MANUAL_PASS_THRESHOLD_MAX_PERCENT}
+                    step={1}
+                    value={caseManagerManualPassThreshold}
+                    onChange={(event) => handleManualPassThresholdInput(event.target.value)}
+                    disabled={caseManagerBusy}
+                    className="w-20 px-2 py-1 text-xs bg-slate-900/60 light:bg-white border border-slate-700 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  />
+                  <span className="text-xs text-slate-500">%</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={addManualCase}
+                    disabled={caseManagerBusy || !caseManagerManualInput.trim()}
+                    className="ml-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {t('addCase')}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="max-h-[34vh] overflow-y-auto pr-1 space-y-1.5">
+                {manualVerificationCases.length === 0 ? (
+                  <div className="text-xs text-slate-500">-</div>
+                ) : (
+                  manualVerificationCases.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded border border-slate-700/80 light:border-slate-200 px-2 py-2 bg-slate-900/20 light:bg-white"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={item.selected}
+                          onChange={() => toggleCaseSelection(item.id)}
+                          disabled={caseManagerBusy}
+                          className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 text-cyan-500 focus:ring-cyan-500/50"
+                        />
+                        <div className="min-w-0 flex-1 text-xs text-slate-200 light:text-slate-800 truncate" title={item.name}>
+                          {item.name}
+                        </div>
+                        <input
+                          type="number"
+                          min={MANUAL_PASS_THRESHOLD_MIN_PERCENT}
+                          max={MANUAL_PASS_THRESHOLD_MAX_PERCENT}
+                          step={1}
+                          value={Math.round(toUnitPassThreshold(item.passThreshold) * 100)}
+                          onChange={(event) =>
+                            handleManualCaseThresholdChange(item.id, event.target.value)
+                          }
+                          disabled={caseManagerBusy}
+                          className="w-16 px-1.5 py-0.5 text-[11px] bg-slate-800/60 light:bg-white border border-slate-700 light:border-slate-300 rounded text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                        />
+                        <span className="text-[11px] text-slate-500">%</span>
+                        <button
+                          type="button"
+                          onClick={() => removeManualCase(item.id)}
+                          disabled={caseManagerBusy}
+                          className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-slate-700/40 disabled:opacity-50"
+                          title={t('deleteRecord')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500 light:text-slate-600 whitespace-pre-wrap break-words max-h-20 overflow-y-auto">
+                        {item.input}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={handleCancelCaseManager}>
+              {tCommon('cancel')}
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleSubmitCaseManager} disabled={caseManagerBusy}>
+              {tCommon('submit')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {isPromptPreviewFullscreen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 p-4">
+          <div className="h-full rounded-xl border border-slate-700 bg-slate-900 relative overflow-hidden">
+            <div className="absolute top-3 left-3 text-xs text-slate-300 z-10">
+              {t('promptPreviewForVerification')}
+            </div>
+            <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => void handleCopyPromptPreview()}
+                className="p-1.5 rounded hover:bg-slate-700 text-slate-300"
+                title={isPromptPreviewCopied ? t('previewCopied') : t('copyPreview')}
+              >
+                {isPromptPreviewCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={togglePromptPreviewFullscreen}
+                className="p-1.5 rounded hover:bg-slate-700 text-slate-300"
+                title={t('exitFullscreenPreview')}
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="h-full overflow-auto pt-10 px-3 pb-3">
+              <OutputRenderer
+                content={promptPreview || t('emptyPromptPreview')}
+                preferences={{ format: 'auto' }}
+                className="text-base leading-7"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+

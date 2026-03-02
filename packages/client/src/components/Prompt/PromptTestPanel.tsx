@@ -16,9 +16,8 @@ import {
   Flag,
   ChevronLeft,
   ChevronRight,
-  Square,
 } from 'lucide-react';
-import { Button, ModelSelector, OutputRenderer, OutputRendererControls, Select } from '../ui';
+import { Button, ModelSelector, OutputRenderer, OutputRendererControls, Select, StopIndicator } from '../ui';
 import { ThinkingBlock } from './ThinkingBlock';
 import { AttachmentModal } from './AttachmentModal';
 import { chatApi, type StreamCallbacks, type ContentPart } from '../../api/chat';
@@ -1806,10 +1805,7 @@ export function PromptTestPanel({
                       className="rounded-full flex-shrink-0 whitespace-nowrap"
                     >
                       {running ? (
-                        <>
-                          <Square className="w-4 h-4" />
-                          <span>{tCommon('stop')}</span>
-                        </>
+                        <StopIndicator label={tCommon('stop')} />
                       ) : (
                         <>
                           <Play className="w-4 h-4" />
@@ -2207,10 +2203,7 @@ export function PromptTestPanel({
                       className="rounded-full flex-shrink-0 whitespace-nowrap"
                     >
                       {running ? (
-                        <>
-                          <Square className="w-4 h-4" />
-                          <span>{tCommon('stop')}</span>
-                        </>
+                        <StopIndicator label={tCommon('stop')} />
                       ) : (
                         <>
                           {currentChatRun ? (
