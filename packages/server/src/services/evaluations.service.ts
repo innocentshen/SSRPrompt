@@ -563,6 +563,321 @@ export class EvaluationsService {
   async updateOrder(userId: string, updates: { id: string; orderIndex: number }[]): Promise<void> {
     await evaluationsRepository.updateOrder(userId, updates);
   }
+
+  /**
+   * Get evaluations associated with a specific prompt.
+   * Returns lightweight list for the evaluation selector.
+   */
+  async getEvaluationsByPromptId(userId: string, promptId: string) {
+    const evaluations = await evaluationsRepository.findByPromptId(userId, promptId);
+
+    return evaluations.map((ev) => ({
+      id: ev.id,
+      name: ev.name,
+      modelName: ev.model?.name || ev.model?.modelId || 'Unknown',
+      judgeModelName: ev.judgeModel?.name || ev.judgeModel?.modelId || 'Unknown',
+      runCount: ev._count.runs,
+      latestRunAt: ev.runs[0]?.createdAt ? new Date(ev.runs[0].createdAt).toISOString() : null,
+      avgPassRate: 0, // Will be populated by getSummary if needed
+    }));
+  }
+
+  /**
+   * Get aggregated evaluation summary for a specific evaluation.
+   * Computes: average pass rate, criterion scores, latency, token usage,
+   * top failure cases, and recent trend delta.
+   */
+  async getEvaluationSummary(userId: string, evaluationId: string) {
+    const runs = await evaluationsRepository.findCompletedRunsByEvaluationId(userId, evaluationId);
+
+    if (runs.length === 0) {
+      // Initialization state: return evaluation metadata and test cases even before the first run.
+      const evaluation = await this.findById(userId, evaluationId);
+      const criteriaNames = (evaluation.criteria || [])
+        .filter((criterion) => criterion.enabled)
+        .map((criterion) => criterion.name);
+      const testCaseStats = (evaluation.testCases || []).map((testCase) => ({
+        testCaseId: testCase.id,
+        testCaseName: testCase.name,
+        inputText: testCase.inputText,
+        inputVariables: (testCase.inputVariables as Record<string, string>) || {},
+        expectedOutput: testCase.expectedOutput,
+        passCount: 0,
+        totalCount: 0,
+        latestPassed: false,
+        latestScore: 0,
+        latestModelOutput: '',
+      }));
+
+      return {
+        evaluationId,
+        evaluationName: evaluation.name,
+        modelName: evaluation.model?.name || evaluation.model?.modelId || 'Unknown',
+        judgeModelName: evaluation.judgeModel?.name || evaluation.judgeModel?.modelId || 'Unknown',
+        totalRuns: 0,
+        latestRunAt: null,
+        avgPassRate: 0,
+        avgCriterionScores: {},
+        avgLatencyMs: 0,
+        avgTokens: 0,
+        topFailures: [],
+        criteriaNames,
+        testCaseStats,
+      };
+    }
+
+    // All runs share the same evaluation - use the first one for metadata
+    const evaluation = runs[0].evaluation;
+    const evaluationName = evaluation.name;
+    const modelName = evaluation.model?.name || evaluation.model?.modelId || 'Unknown';
+    const judgeModelName = evaluation.judgeModel?.name || evaluation.judgeModel?.modelId || 'Unknown';
+    const criteriaNames = evaluation.criteria
+      .filter((c) => c.enabled)
+      .map((c) => c.name);
+
+    // Build test case name lookup
+    const testCaseNameMap = new Map<string, string>();
+    const testCaseExpectedMap = new Map<string, string | null>();
+    for (const tc of evaluation.testCases) {
+      testCaseNameMap.set(tc.id, tc.name);
+      testCaseExpectedMap.set(tc.id, tc.expectedOutput);
+    }
+
+    // Aggregate pass rates per run
+    const runPassRates: number[] = [];
+    let totalLatencyMs = 0;
+    let totalTokens = 0;
+    let totalResultCount = 0;
+
+    // Criterion score accumulation
+    const criterionScoreSums: Record<string, number> = {};
+    const criterionScoreCounts: Record<string, number> = {};
+
+    // Failure tracking per test case
+    const failureMap = new Map<string, {
+      failCount: number;
+      totalCount: number;
+      latestModelOutput: string;
+      latestAiFeedback: Record<string, string>;
+      latestScores: Record<string, number>;
+    }>();
+
+    for (const run of runs) {
+      const results = run.testCaseResults;
+      if (results.length === 0) continue;
+
+      const passedCount = results.filter((r) => r.passed).length;
+      runPassRates.push(passedCount / results.length);
+
+      for (const result of results) {
+        totalResultCount++;
+        totalLatencyMs += result.latencyMs;
+        totalTokens += result.tokensInput + result.tokensOutput;
+
+        // Accumulate criterion scores (handle Decimal types)
+        const scores = result.scores as Record<string, unknown>;
+        if (scores) {
+          for (const [key, val] of Object.entries(scores)) {
+            const numVal = typeof val === 'object' && val !== null
+              ? Number(transformDecimal(val))
+              : Number(val);
+            if (!isNaN(numVal)) {
+              criterionScoreSums[key] = (criterionScoreSums[key] || 0) + numVal;
+              criterionScoreCounts[key] = (criterionScoreCounts[key] || 0) + 1;
+            }
+          }
+        }
+
+        // Track failures
+        if (!result.passed) {
+          const existing = failureMap.get(result.testCaseId);
+          if (existing) {
+            existing.failCount++;
+            existing.totalCount++;
+            // Update latest output/feedback (runs are ordered desc, so first occurrence is latest)
+          } else {
+            failureMap.set(result.testCaseId, {
+              failCount: 1,
+              totalCount: 1,
+              latestModelOutput: result.modelOutput || '',
+              latestAiFeedback: (result.aiFeedback as Record<string, string>) || {},
+              latestScores: transformDecimal(scores as Record<string, number>) || {},
+            });
+          }
+        } else {
+          // Track total count for passed results too
+          const existing = failureMap.get(result.testCaseId);
+          if (existing) {
+            existing.totalCount++;
+          }
+        }
+      }
+    }
+
+    // Calculate averages
+    const avgPassRate = runPassRates.length > 0
+      ? runPassRates.reduce((a, b) => a + b, 0) / runPassRates.length
+      : 0;
+
+    const avgCriterionScores: Record<string, number> = {};
+    for (const [key, sum] of Object.entries(criterionScoreSums)) {
+      avgCriterionScores[key] = sum / (criterionScoreCounts[key] || 1);
+    }
+
+    const avgLatencyMs = totalResultCount > 0 ? totalLatencyMs / totalResultCount : 0;
+    const avgTokens = totalResultCount > 0 ? totalTokens / totalResultCount : 0;
+
+    // Sort failures by fail count descending, take top 10
+    const topFailures = Array.from(failureMap.entries())
+      .sort(([, a], [, b]) => b.failCount - a.failCount)
+      .slice(0, 10)
+      .map(([testCaseId, data]) => ({
+        testCaseId,
+        testCaseName: testCaseNameMap.get(testCaseId) || 'Unknown',
+        failCount: data.failCount,
+        totalCount: data.totalCount,
+        latestModelOutput: data.latestModelOutput,
+        latestAiFeedback: data.latestAiFeedback,
+        expectedOutput: testCaseExpectedMap.get(testCaseId) || null,
+        latestScores: data.latestScores,
+      }));
+
+    // Build testCaseStats for ALL test cases (for the verification panel)
+    // Track per-testCase pass/fail across all runs
+    const testCaseAggMap = new Map<string, {
+      passCount: number;
+      totalCount: number;
+      latestPassed: boolean;
+      latestScore: number;
+      latestModelOutput: string;
+    }>();
+
+    // Process runs in order (newest first) to get "latest" values from first occurrence
+    for (const run of runs) {
+      for (const result of run.testCaseResults) {
+        const existing = testCaseAggMap.get(result.testCaseId);
+        if (existing) {
+          existing.totalCount++;
+          if (result.passed) existing.passCount++;
+        } else {
+          // First occurrence = latest run (runs are sorted desc)
+          const scores = result.scores as Record<string, unknown>;
+          const scoreValues = scores ? Object.values(scores).map(v =>
+            typeof v === 'object' && v !== null ? Number(transformDecimal(v)) : Number(v)
+          ).filter(n => !isNaN(n)) : [];
+          const avgScore = scoreValues.length > 0
+            ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
+            : 0;
+
+          testCaseAggMap.set(result.testCaseId, {
+            passCount: result.passed ? 1 : 0,
+            totalCount: 1,
+            latestPassed: result.passed,
+            latestScore: avgScore,
+            latestModelOutput: result.modelOutput || '',
+          });
+        }
+      }
+    }
+
+    const testCaseStats = evaluation.testCases.map((tc) => {
+      const stats = testCaseAggMap.get(tc.id);
+      return {
+        testCaseId: tc.id,
+        testCaseName: tc.name,
+        inputText: tc.inputText,
+        inputVariables: (tc.inputVariables as Record<string, string>) || {},
+        expectedOutput: tc.expectedOutput,
+        passCount: stats?.passCount ?? 0,
+        totalCount: stats?.totalCount ?? 0,
+        latestPassed: stats?.latestPassed ?? true,
+        latestScore: stats?.latestScore ?? 0,
+        latestModelOutput: stats?.latestModelOutput ?? '',
+      };
+    });
+
+    // Calculate recent delta (compare two most recent runs)
+    let recentDelta: { passRateChange: number; criterionChanges: Record<string, number> } | undefined;
+    if (runs.length >= 2) {
+      const latestRun = runs[0];
+      const previousRun = runs[1];
+
+      const latestResults = latestRun.testCaseResults;
+      const previousResults = previousRun.testCaseResults;
+
+      if (latestResults.length > 0 && previousResults.length > 0) {
+        const latestPassRate = latestResults.filter((r) => r.passed).length / latestResults.length;
+        const prevPassRate = previousResults.filter((r) => r.passed).length / previousResults.length;
+
+        const criterionChanges: Record<string, number> = {};
+        // Calculate per-criterion score changes
+        const latestCriterionAvgs: Record<string, { sum: number; count: number }> = {};
+        const prevCriterionAvgs: Record<string, { sum: number; count: number }> = {};
+
+        for (const r of latestResults) {
+          const scores = r.scores as Record<string, unknown>;
+          if (scores) {
+            for (const [key, val] of Object.entries(scores)) {
+              const numVal = Number(typeof val === 'object' && val !== null ? transformDecimal(val) : val);
+              if (!isNaN(numVal)) {
+                if (!latestCriterionAvgs[key]) latestCriterionAvgs[key] = { sum: 0, count: 0 };
+                latestCriterionAvgs[key].sum += numVal;
+                latestCriterionAvgs[key].count++;
+              }
+            }
+          }
+        }
+
+        for (const r of previousResults) {
+          const scores = r.scores as Record<string, unknown>;
+          if (scores) {
+            for (const [key, val] of Object.entries(scores)) {
+              const numVal = Number(typeof val === 'object' && val !== null ? transformDecimal(val) : val);
+              if (!isNaN(numVal)) {
+                if (!prevCriterionAvgs[key]) prevCriterionAvgs[key] = { sum: 0, count: 0 };
+                prevCriterionAvgs[key].sum += numVal;
+                prevCriterionAvgs[key].count++;
+              }
+            }
+          }
+        }
+
+        for (const key of Object.keys(latestCriterionAvgs)) {
+          const latestAvg = latestCriterionAvgs[key].sum / latestCriterionAvgs[key].count;
+          const prevAvg = prevCriterionAvgs[key]
+            ? prevCriterionAvgs[key].sum / prevCriterionAvgs[key].count
+            : 0;
+          criterionChanges[key] = latestAvg - prevAvg;
+        }
+
+        recentDelta = {
+          passRateChange: latestPassRate - prevPassRate,
+          criterionChanges,
+        };
+      }
+    }
+
+    const latestRunAt = runs[0]?.createdAt
+      ? new Date(runs[0].createdAt).toISOString()
+      : null;
+
+    return {
+      evaluationId,
+      evaluationName,
+      modelName,
+      judgeModelName,
+      totalRuns: runs.length,
+      latestRunAt,
+      avgPassRate,
+      avgCriterionScores,
+      avgLatencyMs,
+      avgTokens,
+      topFailures,
+      recentDelta,
+      criteriaNames,
+      testCaseStats,
+    };
+  }
 }
 
 /**

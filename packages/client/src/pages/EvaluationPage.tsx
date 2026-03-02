@@ -255,7 +255,7 @@ function extractStructuredTextScore(content: string): number | null {
   }
 
   const patterns = [
-    /\bscore\b\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
+    /["']?\bscore\b["']?\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
     /(?:评分|分数|得分)\s*(?:[:：=]|为)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/,
   ];
 
@@ -264,6 +264,29 @@ function extractStructuredTextScore(content: string): number | null {
     if (!match?.[1]) continue;
     const score = normalizeJudgeScore(match[1]);
     if (score !== null) return score;
+  }
+
+  return null;
+}
+
+function extractStructuredTextReason(content: string): string | null {
+  const text = content.trim();
+  if (!text) return null;
+
+  const quotedReason = text.match(
+    /["']?(?:reason|feedback|comment|理由|说明)["']?\s*(?:[:：=]|is|为)\s*(["'])([\s\S]*?)\1/i
+  );
+  if (quotedReason?.[2]) {
+    const value = quotedReason[2].trim();
+    if (value) return value;
+  }
+
+  const plainReason = text.match(
+    /["']?(?:reason|feedback|comment|理由|说明)["']?\s*(?:[:：=]|is|为)\s*([^\n\r}]+)/i
+  );
+  if (plainReason?.[1]) {
+    const value = plainReason[1].replace(/,\s*$/, '').trim();
+    if (value) return value;
   }
 
   return null;
@@ -301,7 +324,7 @@ function collectJsonCandidates(content: string): string[] {
     if (block) pushCandidate(block);
   }
 
-  const scoreObjectRegex = /\{[\s\S]*?"(?:score|评分|分数)"[\s\S]*?\}/g;
+  const scoreObjectRegex = /\{[\s\S]*?["']?(?:score|评分|分数)["']?[\s\S]*?\}/g;
   for (const match of trimmed.matchAll(scoreObjectRegex)) {
     if (match[0]) pushCandidate(match[0]);
   }
@@ -342,14 +365,15 @@ function parseJudgeEvaluationResponse(
     }
   }
 
+  const textReason = extractStructuredTextReason(normalizedContent);
   const textScore = extractStructuredTextScore(normalizedContent);
   if (textScore !== null) {
-    return { score: textScore, reason: normalizedContent || fallbackReason };
+    return { score: textScore, reason: textReason || normalizedContent || fallbackReason };
   }
 
   return {
     score: 0,
-    reason: normalizedContent || fallbackReason,
+    reason: textReason || normalizedContent || fallbackReason,
   };
 }
 

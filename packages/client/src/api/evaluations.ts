@@ -11,6 +11,8 @@ import type {
   UpdateTestCaseDto,
   CreateCriterionDto,
   UpdateCriterionDto,
+  EvaluationListItem,
+  EvaluationSummary,
 } from '@ssrprompt/shared';
 
 /**
@@ -76,6 +78,18 @@ export const evaluationsApi = {
    */
   batchUpdateOrder: (updates: { id: string; orderIndex: number }[]) =>
     apiClient.put<{ success: boolean }>('/evaluations/batch-order', updates),
+
+  /**
+   * Get evaluations associated with a specific prompt
+   */
+  getByPromptId: (promptId: string) =>
+    apiClient.get<EvaluationListItem[]>(`/prompts/${promptId}/evaluations`),
+
+  /**
+   * Get aggregated summary for a specific evaluation
+   */
+  getSummary: (promptId: string, evaluationId: string) =>
+    apiClient.get<EvaluationSummary>(`/prompts/${promptId}/evaluations/${evaluationId}/summary`),
 };
 
 /**

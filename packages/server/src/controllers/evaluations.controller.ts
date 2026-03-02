@@ -54,6 +54,24 @@ export const evaluationsController = {
   },
 
   /**
+   * GET /prompts/:id/evaluations - Get evaluations for a prompt
+   */
+  async getByPromptId(req: Request, res: Response): Promise<void> {
+    const promptId = req.params.id;
+    const evaluations = await evaluationsService.getEvaluationsByPromptId(req.user!.userId, promptId);
+    res.json({ data: evaluations });
+  },
+
+  /**
+   * GET /prompts/:id/evaluations/:evaluationId/summary - Get evaluation summary
+   */
+  async getSummary(req: Request, res: Response): Promise<void> {
+    const { evaluationId } = req.params;
+    const summary = await evaluationsService.getEvaluationSummary(req.user!.userId, evaluationId);
+    res.json({ data: summary });
+  },
+
+  /**
    * POST /evaluations - Create evaluation
    */
   async create(req: Request, res: Response): Promise<void> {

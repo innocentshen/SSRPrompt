@@ -1,0 +1,66 @@
+{
+  "startedAt": "2026-03-02T09:00:06.250Z",
+  "baseUrl": "http://localhost:5173",
+  "checks": [
+    {
+      "name": "进入 Demo 模式",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "进入智能优化页面",
+      "passed": false,
+      "detail": "未找到智能优化入口"
+    },
+    {
+      "name": "应用建议按钮可生效",
+      "passed": false,
+      "detail": "未找到应用按钮"
+    },
+    {
+      "name": "忽略建议按钮可生效",
+      "passed": false,
+      "detail": "未找到忽略按钮"
+    },
+    {
+      "name": "可见优化后整体 Prompt 预览",
+      "passed": false,
+      "detail": ""
+    },
+    {
+      "name": "可见执行 Prompt 预览",
+      "passed": false,
+      "detail": ""
+    },
+    {
+      "name": "运行评测后产生结果面板",
+      "passed": false,
+      "detail": "未找到运行按钮"
+    },
+    {
+      "name": "可见详细评测结果入口",
+      "passed": false,
+      "detail": ""
+    },
+    {
+      "name": "可见案例级评测细节（含模型输出）",
+      "passed": false,
+      "detail": ""
+    },
+    {
+      "name": "自动优化回归循环可触发",
+      "passed": false,
+      "detail": "未找到自动循环按钮"
+    }
+  ],
+  "screenshots": [
+    "H:\\ssrprompt\\output\\playwright\\01-home.png",
+    "H:\\ssrprompt\\output\\playwright\\01b-after-demo-login.png",
+    "H:\\ssrprompt\\output\\playwright\\02-optimizer.png",
+    "H:\\ssrprompt\\output\\playwright\\03-analysis-actions.png",
+    "H:\\ssrprompt\\output\\playwright\\04-verification-results.png",
+    "H:\\ssrprompt\\output\\playwright\\05-auto-pipeline.png"
+  ],
+  "errors": [],
+  "endedAt": "2026-03-02T09:00:20.938Z"
+}

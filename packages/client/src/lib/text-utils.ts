@@ -3,6 +3,17 @@
  */
 
 /**
+ * Result of attempting to apply a patch (text replacement).
+ */
+export interface PatchResult {
+  success: boolean;
+  newContent: string;
+  matchStart: number;
+  matchEnd: number;
+  failReason?: 'no_match' | 'ambiguous_match';
+}
+
+/**
  * Remove common Markdown formatting for comparison
  */
 export function stripMarkdown(text: string): string {
@@ -189,5 +200,142 @@ export function smartReplace(
   return {
     replaced: false,
     content,
+  };
+}
+
+/**
+ * Apply a patch (text replacement) with three-tier matching strategy:
+ * 1. Exact substring match (checks for ambiguity)
+ * 2. Trimmed match
+ * 3. Whitespace-normalized match (with position mapping)
+ *
+ * Returns PatchResult indicating success/failure with detailed reason.
+ */
+export function applyPatch(
+  content: string,
+  originalText: string,
+  suggestedText: string
+): PatchResult {
+  // Tier 1: Exact substring match
+  const firstIndex = content.indexOf(originalText);
+  if (firstIndex !== -1) {
+    // Check for ambiguity: does it appear more than once?
+    const secondIndex = content.indexOf(originalText, firstIndex + 1);
+    if (secondIndex !== -1) {
+      return {
+        success: false,
+        newContent: content,
+        matchStart: firstIndex,
+        matchEnd: firstIndex + originalText.length,
+        failReason: 'ambiguous_match',
+      };
+    }
+    const newContent = content.slice(0, firstIndex) + suggestedText + content.slice(firstIndex + originalText.length);
+    return {
+      success: true,
+      newContent,
+      matchStart: firstIndex,
+      matchEnd: firstIndex + originalText.length,
+    };
+  }
+
+  // Tier 2: Trim both sides and try match
+  const trimmedOriginal = originalText.trim();
+  if (trimmedOriginal && trimmedOriginal !== originalText) {
+    const trimIndex = content.indexOf(trimmedOriginal);
+    if (trimIndex !== -1) {
+      // Check ambiguity
+      const trimSecondIndex = content.indexOf(trimmedOriginal, trimIndex + 1);
+      if (trimSecondIndex !== -1) {
+        return {
+          success: false,
+          newContent: content,
+          matchStart: trimIndex,
+          matchEnd: trimIndex + trimmedOriginal.length,
+          failReason: 'ambiguous_match',
+        };
+      }
+      const newContent = content.slice(0, trimIndex) + suggestedText.trim() + content.slice(trimIndex + trimmedOriginal.length);
+      return {
+        success: true,
+        newContent,
+        matchStart: trimIndex,
+        matchEnd: trimIndex + trimmedOriginal.length,
+      };
+    }
+  }
+
+  // Tier 3: Whitespace-normalized match with position mapping
+  const normalizedOriginal = originalText.replace(/\s+/g, ' ').trim();
+  if (normalizedOriginal) {
+    // Build a normalized version of content with position mapping
+    const contentChars = [...content];
+    let normalizedContent = '';
+    const positionMap: number[] = []; // maps normalizedContent index -> original content index
+
+    let lastWasSpace = false;
+    for (let i = 0; i < contentChars.length; i++) {
+      const ch = contentChars[i];
+      if (/\s/.test(ch)) {
+        if (!lastWasSpace && normalizedContent.length > 0) {
+          normalizedContent += ' ';
+          positionMap.push(i);
+          lastWasSpace = true;
+        }
+      } else {
+        normalizedContent += ch;
+        positionMap.push(i);
+        lastWasSpace = false;
+      }
+    }
+
+    const normalizedIndex = normalizedContent.indexOf(normalizedOriginal);
+    if (normalizedIndex !== -1) {
+      // Check ambiguity
+      const normalizedSecondIndex = normalizedContent.indexOf(normalizedOriginal, normalizedIndex + 1);
+      if (normalizedSecondIndex !== -1) {
+        const originalStart = positionMap[normalizedIndex] ?? 0;
+        const lastNormIdx = normalizedIndex + normalizedOriginal.length - 1;
+        const originalEnd = (positionMap[lastNormIdx] ?? originalStart) + 1;
+        return {
+          success: false,
+          newContent: content,
+          matchStart: originalStart,
+          matchEnd: originalEnd,
+          failReason: 'ambiguous_match',
+        };
+      }
+
+      // Map back to original positions
+      const originalStart = positionMap[normalizedIndex] ?? 0;
+      const lastNormIdx = normalizedIndex + normalizedOriginal.length - 1;
+      let originalEnd = (positionMap[lastNormIdx] ?? originalStart) + 1;
+
+      // Extend to include any trailing whitespace that was part of the match
+      while (originalEnd < content.length && /\s/.test(content[originalEnd])) {
+        // Only extend if this doesn't go past a meaningful boundary
+        if (originalEnd + 1 >= content.length || !/\s/.test(content[originalEnd + 1])) {
+          break;
+        }
+        originalEnd++;
+      }
+
+      const newContent = content.slice(0, originalStart) + suggestedText.trim() + content.slice(originalEnd);
+      return {
+        success: true,
+        newContent,
+        matchStart: originalStart,
+        matchEnd: originalEnd,
+      };
+    }
+  }
+
+  // No match found
+  return {
+    success: false,
+    newContent: content,
+    matchStart: -1,
+    matchEnd: -1,
+    failReason: 'no_match',
   };
 }

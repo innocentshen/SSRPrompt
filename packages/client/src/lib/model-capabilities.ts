@@ -130,6 +130,62 @@ export function inferReasoningSupport(modelId: string): boolean {
   return false;
 }
 
+// 支持 json_schema 结构化输出的模型关键词
+const JSON_SCHEMA_MODEL_PATTERNS = [
+  'gpt-4o',
+  'gpt-4-turbo',
+  'o1',
+  'o3',
+  'o4',
+  'gpt-5',
+  'gpt-oss',
+  'chatgpt-4o',
+];
+
+// 支持 json_object 结构化输出的模型关键词
+const JSON_OBJECT_MODEL_PATTERNS = [
+  'gpt-3.5-turbo',
+  'gpt-4',
+  'claude',
+  'gemini',
+  'deepseek',
+  'qwen',
+  'qwq',
+  'glm',
+  'yi-',
+  'mistral',
+  'mixtral',
+  'command-r',
+];
+
+export type StructuredOutputSupport = 'json_schema' | 'json_object' | 'none';
+
+/**
+ * 根据模型名称推断结构化输出支持级别
+ * - json_schema: 完整 JSON Schema 约束（gpt-4o, o1, o3 等）
+ * - json_object: JSON 对象模式（claude, gemini, deepseek 等）
+ * - none: 不支持，使用 regex fallback
+ */
+export function inferStructuredOutputSupport(modelId: string): StructuredOutputSupport {
+  const lowerModelId = modelId.toLowerCase();
+
+  // Check json_schema support first (more specific patterns)
+  for (const pattern of JSON_SCHEMA_MODEL_PATTERNS) {
+    if (lowerModelId.includes(pattern)) {
+      return 'json_schema';
+    }
+  }
+
+  // Check json_object support
+  for (const pattern of JSON_OBJECT_MODEL_PATTERNS) {
+    if (lowerModelId.includes(pattern)) {
+      return 'json_object';
+    }
+  }
+
+  return 'none';
+}
+
 /**
  * 根据模型名称推断是否支持函数调用
  */

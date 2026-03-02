@@ -7,4 +7,5 @@ export * from './trace.js';
 export * from './auth.js';
 export * from './ocr.js';
 export * from './share.js';
+export * from './optimization.js';
 //# sourceMappingURL=index.d.ts.map

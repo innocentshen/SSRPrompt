@@ -173,4 +173,68 @@ export interface EvaluationDetail extends Evaluation {
     criteria: EvaluationCriterion[];
     runs: EvaluationRun[];
 }
+/**
+ * Detail of a frequently failing test case.
+ */
+export interface FailureCaseDetail {
+    testCaseId: string;
+    testCaseName: string;
+    failCount: number;
+    totalCount: number;
+    latestModelOutput: string;
+    latestAiFeedback: Record<string, string>;
+    expectedOutput: string | null;
+    latestScores: Record<string, number>;
+}
+/**
+ * Aggregated summary of an evaluation's runs.
+ * Used by the optimization system to provide data-driven suggestions.
+ */
+export interface EvaluationSummary {
+    evaluationId: string;
+    evaluationName: string;
+    modelName: string;
+    judgeModelName: string;
+    totalRuns: number;
+    latestRunAt: string | null;
+    avgPassRate: number;
+    avgCriterionScores: Record<string, number>;
+    avgLatencyMs: number;
+    avgTokens: number;
+    topFailures: FailureCaseDetail[];
+    recentDelta?: {
+        passRateChange: number;
+        criterionChanges: Record<string, number>;
+    };
+    criteriaNames?: string[];
+    /** Stats for ALL test cases (both passed and failed), used by verification panel */
+    testCaseStats?: TestCaseStat[];
+}
+/**
+ * Per-test-case aggregate stats for verification panel.
+ */
+export interface TestCaseStat {
+    testCaseId: string;
+    testCaseName: string;
+    inputText: string;
+    inputVariables: Record<string, string>;
+    expectedOutput: string | null;
+    passCount: number;
+    totalCount: number;
+    latestPassed: boolean;
+    latestScore: number;
+    latestModelOutput: string;
+}
+/**
+ * Lightweight evaluation list item for the evaluation selector.
+ */
+export interface EvaluationListItem {
+    id: string;
+    name: string;
+    modelName: string;
+    judgeModelName: string;
+    runCount: number;
+    latestRunAt: string | null;
+    avgPassRate: number;
+}
 //# sourceMappingURL=evaluation.d.ts.map

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from 'express';
 import { promptsController } from '../controllers/prompts.controller.js';
+import { evaluationsController } from '../controllers/evaluations.controller.js';
 
 const router: IRouter = Router();
 
@@ -86,6 +87,47 @@ router.put('/batch-order', (req, res, next) => promptsController.batchUpdateOrde
 router.get('/:id', (req, res, next) => promptsController.getById(req, res, next));
 router.put('/:id', (req, res, next) => promptsController.update(req, res, next));
 router.delete('/:id', (req, res, next) => promptsController.delete(req, res, next));
+
+/**
+ * @swagger
+ * /prompts/{id}/evaluations:
+ *   get:
+ *     tags: [Prompts]
+ *     summary: Get evaluations linked to a prompt
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Evaluation list
+ */
+router.get('/:id/evaluations', (req, res) => evaluationsController.getByPromptId(req, res));
+
+/**
+ * @swagger
+ * /prompts/{id}/evaluations/{evaluationId}/summary:
+ *   get:
+ *     tags: [Prompts]
+ *     summary: Get aggregated evaluation summary
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: evaluationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Evaluation summary
+ */
+router.get('/:id/evaluations/:evaluationId/summary', (req, res) => evaluationsController.getSummary(req, res));
 
 /**
  * @swagger
