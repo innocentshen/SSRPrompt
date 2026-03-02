@@ -3,7 +3,7 @@
  * 用于跨页面同步缓存状态
  */
 
-type CacheEventType = 'prompts' | 'models' | 'providers' | 'evaluations';
+type CacheEventType = 'prompts' | 'promptGroups' | 'models' | 'providers' | 'evaluations';
 
 type CacheEventListener = (type: CacheEventType, data?: unknown) => void;
 
@@ -70,6 +70,7 @@ export const cacheEvents = new CacheEventEmitter();
 
 // 便捷方法
 export const invalidatePromptsCache = (data?: unknown) => cacheEvents.invalidate('prompts', data);
+export const invalidatePromptGroupsCache = (data?: unknown) => cacheEvents.invalidate('promptGroups', data);
 export const invalidateModelsCache = (data?: unknown) => cacheEvents.invalidate('models', data);
 export const invalidateProvidersCache = (data?: unknown) => cacheEvents.invalidate('providers', data);
 export const invalidateEvaluationsCache = (data?: unknown) => cacheEvents.invalidate('evaluations', data);

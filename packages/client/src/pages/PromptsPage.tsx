@@ -55,7 +55,7 @@ import type { Prompt, PromptVersion, PromptGroup, OcrProvider, ShareLink } from 
 import { PromptMessage, PromptMessageRole, PromptConfig, PromptVariable, ReasoningEffort, DEFAULT_PROMPT_CONFIG } from '../types/database';
 import { useToast } from '../store/useUIStore';
 import { useGlobalStore } from '../store/useGlobalStore';
-import { invalidatePromptsCache } from '../lib/cache-events';
+import { invalidatePromptGroupsCache, invalidatePromptsCache } from '../lib/cache-events';
 
 type TabType = 'edit' | 'observe' | 'optimize';
 
@@ -561,6 +561,7 @@ export function PromptsPage() {
     try {
       const updated = await promptGroupsApi.update(groupId, { name: nextName });
       setPromptGroups((prev) => prev.map((g) => (g.id === groupId ? (updated as PromptGroup) : g)));
+      invalidatePromptGroupsCache(updated);
       cancelEditGroupName();
       return true;
     } catch (e) {
@@ -580,6 +581,7 @@ export function PromptsPage() {
       });
 
       setPromptGroups((prev) => [...prev, group as PromptGroup]);
+      invalidatePromptGroupsCache(group);
       setExpandedGroupIds((prev) => ({
         ...prev,
         ...(parentId ? { [parentId]: true } : {}),
@@ -610,6 +612,7 @@ export function PromptsPage() {
           // Server lifts direct children to top-level when deleting a parent group.
           .map((g) => (g.parentId === groupId ? { ...g, parentId: null } : g))
       );
+      invalidatePromptGroupsCache({ id: groupId, deleted: true });
 
       setPrompts((prev) => prev.map((p) => (p.groupId === groupId ? { ...p, groupId: null } : p)));
       setSelectedPrompt((prev) => (prev && prev.groupId === groupId ? { ...prev, groupId: null } : prev));

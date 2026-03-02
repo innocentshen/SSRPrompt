@@ -975,6 +975,22 @@ export function EvaluationPage() {
         }
       }
 
+      if (type === 'promptGroups') {
+        (async () => {
+          try {
+            const promptGroupsData = await promptGroupsApi.list();
+            const latestPromptGroups = (promptGroupsData || []) as PromptGroup[];
+            setPromptGroups(latestPromptGroups);
+            if (listCache) {
+              listCache.promptGroups = latestPromptGroups;
+            }
+          } catch (e) {
+            console.error('Failed to refresh prompt groups:', e);
+          }
+        })();
+        return;
+      }
+
       if (type === 'models') {
         (async () => {
           try {
@@ -1495,11 +1511,13 @@ export function EvaluationPage() {
     }
 
     const shouldInvalidateListCache =
+      cacheEvents.hasPendingUpdates('promptGroups') ||
       cacheEvents.hasPendingUpdates('models') ||
       cacheEvents.hasPendingUpdates('providers') ||
       cacheEvents.hasPendingUpdates('evaluations');
 
     if (shouldInvalidateListCache) {
+      cacheEvents.consumePendingUpdates('promptGroups');
       cacheEvents.consumePendingUpdates('models');
       cacheEvents.consumePendingUpdates('providers');
       cacheEvents.consumePendingUpdates('evaluations');
@@ -2249,6 +2267,31 @@ export function EvaluationPage() {
     return testCaseMap;
   };
 
+  const resolveEvaluationModelRelation = useCallback((modelId: string | null | undefined) => {
+    if (!modelId) return null;
+    const model = models.find((item) => item.id === modelId);
+    if (!model) return null;
+    const provider = providers.find((item) => item.id === model.providerId);
+    return {
+      id: model.id,
+      name: model.name,
+      modelId: model.modelId,
+      provider: provider ? { type: provider.type } : undefined,
+    };
+  }, [models, providers]);
+
+  const selectedEvaluationModel = useMemo(() => {
+    if (!selectedEvaluation) return null;
+    return resolveEvaluationModelRelation(selectedEvaluation.modelId) ?? selectedEvaluation.model ?? null;
+  }, [resolveEvaluationModelRelation, selectedEvaluation]);
+
+  const selectedEvaluationJudgeModel = useMemo(() => {
+    if (!selectedEvaluation) return null;
+    return resolveEvaluationModelRelation(selectedEvaluation.judgeModelId) ?? selectedEvaluation.judgeModel ?? null;
+  }, [resolveEvaluationModelRelation, selectedEvaluation]);
+
+  const selectedEvaluationPassThreshold = selectedEvaluation?.config.pass_threshold ?? 0.6;
+
   const resolveRunExportMeta = (run: EvaluationRun) => {
     const runConfig = run.runConfig as RunConfig | null;
     const promptName =
@@ -2257,8 +2300,8 @@ export function EvaluationPage() {
       runConfig?.promptVersion ?? selectedEvaluation?.prompt?.currentVersion ?? '';
     const modelName =
       runConfig?.modelName ??
-      selectedEvaluation?.model?.name ??
-      selectedEvaluation?.model?.modelId ??
+      selectedEvaluationModel?.name ??
+      selectedEvaluationModel?.modelId ??
       selectedEvaluation?.modelId ??
       '';
     const modelParameters = formatModelParameters(
@@ -3179,7 +3222,7 @@ export function EvaluationPage() {
       }
     }
 
-    const passed = computeWeightedPass(scores, enabledCriteria, selectedEvaluation.config?.pass_threshold || 0.6);
+    const passed = computeWeightedPass(scores, enabledCriteria, selectedEvaluation.config?.pass_threshold ?? 0.6);
     return { scores, aiFeedback, passed };
   };
 
@@ -3422,12 +3465,21 @@ export function EvaluationPage() {
   const handleUpdateEvaluation = async (field: string, value: string | null) => {
     if (!selectedEvaluation) return;
     const evaluationId = selectedEvaluation.id;
+    const patchEvaluation = (evaluation: EvaluationWithRelations): EvaluationWithRelations => {
+      const next = { ...evaluation, [field]: value } as EvaluationWithRelations;
+      if (field === 'modelId') {
+        next.model = resolveEvaluationModelRelation(value);
+      } else if (field === 'judgeModelId') {
+        next.judgeModel = resolveEvaluationModelRelation(value);
+      }
+      return next;
+    };
     setSelectedEvaluation((prev) =>
-      prev?.id === evaluationId ? ({ ...prev, [field]: value } as EvaluationWithRelations) : prev
+      prev?.id === evaluationId ? patchEvaluation(prev) : prev
     );
     setEvaluations((prev) => {
       const next = prev.map((e) =>
-        e.id === evaluationId ? ({ ...e, [field]: value } as EvaluationWithRelations) : e
+        e.id === evaluationId ? patchEvaluation(e) : e
       );
       updateListCache({ evaluations: next });
       return next;
@@ -4401,18 +4453,18 @@ export function EvaluationPage() {
                         {selectedPrompt.name} <span className="text-cyan-500 light:text-cyan-600">v{selectedPrompt.currentVersion}</span>
                       </span>
                     )}
-                    {selectedEvaluation.model && (
+                    {selectedEvaluationModel && (
                       <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                        {selectedEvaluation.model.modelId}
+                        {selectedEvaluationModel.modelId}
                       </span>
                     )}
-                    {selectedEvaluation.judgeModel && (
+                    {selectedEvaluationJudgeModel && (
                       <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                        {selectedEvaluation.judgeModel.modelId}
+                        {selectedEvaluationJudgeModel.modelId}
                       </span>
                     )}
                     <span className="inline-flex items-center whitespace-nowrap">
-                      {t(`threshold${String((selectedEvaluation.config.pass_threshold || 0.6) * 10)}`)}
+                      {t(`threshold${String(selectedEvaluationPassThreshold * 10)}`)}
                     </span>
                   </div>
                 }
@@ -4459,9 +4511,9 @@ export function EvaluationPage() {
                           disabled={!isSelectedEvaluationOwner}
                           placeholder={t('selectModel')}
                         />
-                        {selectedEvaluation.model && (
+                        {selectedEvaluationModel && (
                           <p className="text-xs text-slate-500 light:text-slate-600 mt-1.5">
-                            {t('reproducibleModel')}: {selectedEvaluation.model.provider?.type ? `${selectedEvaluation.model.provider.type}/` : ''}{selectedEvaluation.model.modelId}
+                            {t('reproducibleModel')}: {selectedEvaluationModel.provider?.type ? `${selectedEvaluationModel.provider.type}/` : ''}{selectedEvaluationModel.modelId}
                           </p>
                         )}
                         {selectedEvaluation.config?.model_parameters && (
@@ -4488,16 +4540,16 @@ export function EvaluationPage() {
                           disabled={!isSelectedEvaluationOwner}
                           placeholder={t('noJudgeModel')}
                         />
-                        {selectedEvaluation.judgeModel && (
+                        {selectedEvaluationJudgeModel && (
                           <p className="text-xs text-slate-500 light:text-slate-600 mt-1.5">
-                            {t('reproducibleJudgeModel')}: {selectedEvaluation.judgeModel.provider?.type ? `${selectedEvaluation.judgeModel.provider.type}/` : ''}{selectedEvaluation.judgeModel.modelId}
+                            {t('reproducibleJudgeModel')}: {selectedEvaluationJudgeModel.provider?.type ? `${selectedEvaluationJudgeModel.provider.type}/` : ''}{selectedEvaluationJudgeModel.modelId}
                           </p>
                         )}
                       </div>
                       <div className="p-3.5">
                         <p className="text-xs text-slate-500 light:text-slate-600 mb-1.5">{t('passThreshold')}</p>
                         <Select
-                          value={String((selectedEvaluation.config.pass_threshold || 0.6) * 10)}
+                          value={String(selectedEvaluationPassThreshold * 10)}
                           onChange={(e) => handleUpdateConfig('pass_threshold', Number(e.target.value) / 10)}
                           options={[
                             { value: '10', label: t('threshold10') },
