@@ -293,9 +293,11 @@ export class ShareLinksService {
         const page = query.page || 1;
         const limit = query.pageSize || 20;
         const skip = (page - 1) * limit;
+        const resourceId = query.resourceId;
         const where = {
             userId,
             ...(query.resourceType ? { resourceType: query.resourceType } : {}),
+            ...(resourceId ? { resourceId } : {}),
             ...(query.includeRevoked ? {} : { revokedAt: null }),
         };
         const [total, links] = await Promise.all([

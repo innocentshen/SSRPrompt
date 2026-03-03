@@ -162,6 +162,7 @@ declare class EvaluationsRepositoryClass extends TenantRepository<Evaluation, Pr
         results: Prisma.JsonValue;
         completedAt: Date | null;
         errorMessage: string | null;
+        title: string | null;
         evaluationId: string;
         totalTokensInput: number;
         totalTokensOutput: number;

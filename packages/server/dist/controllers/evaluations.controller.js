@@ -196,11 +196,13 @@ export const criteriaController = {
 };
 // Run creation schema
 const CreateRunSchema = z.object({
+    title: z.string().trim().min(1).max(120).nullable().optional(),
     modelParameters: z.record(z.unknown()).optional(),
     testCaseIds: z.array(z.string().uuid()).optional(),
 });
 // Run update schema
 const UpdateRunSchema = z.object({
+    title: z.string().trim().min(1).max(120).nullable().optional(),
     status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
     results: z.record(z.unknown()).optional(),
     errorMessage: z.string().nullable().optional(),

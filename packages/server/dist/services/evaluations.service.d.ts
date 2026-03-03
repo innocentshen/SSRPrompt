@@ -240,6 +240,7 @@ export declare class RunsService {
      * Create a new run
      */
     create(userId: string, evaluationId: string, data?: {
+        title?: string | null;
         modelParameters?: Record<string, unknown>;
         testCaseIds?: string[];
     }, options?: {
@@ -249,6 +250,7 @@ export declare class RunsService {
      * Create a new run and enqueue server-side execution.
      */
     createAndExecute(userId: string, evaluationId: string, data?: {
+        title?: string | null;
         modelParameters?: Record<string, unknown>;
         testCaseIds?: string[];
     }): Promise<EvaluationRun>;
@@ -264,6 +266,7 @@ export declare class RunsService {
      * Update a run
      */
     update(userId: string, id: string, data: {
+        title?: string | null;
         status?: 'pending' | 'running' | 'completed' | 'failed';
         results?: Record<string, unknown>;
         errorMessage?: string | null;

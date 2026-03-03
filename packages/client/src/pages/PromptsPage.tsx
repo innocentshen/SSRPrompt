@@ -50,11 +50,18 @@ import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import { formatDateTime } from '../lib/date-utils';
 import { getErrorMessage } from '../lib/error-messages';
 import {
+  createPromptMessageId,
+  isAbortError,
+  toApiConfig,
+  toApiMessages,
+  toFrontendConfig,
+  toFrontendMessages,
+} from '../lib/prompts-page-utils';
+import {
   getPromptOptimizerPreference,
   savePromptOptimizerPreference,
 } from '../lib/prompt-optimizer-preferences';
 import { smartReplace, applyPatch } from '../lib/text-utils';
-import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
 import { buildExpiresAtByPreset, generateSharePassword, getShareExpirePreset, type ShareExpirePreset } from '../lib/share-link-settings';
 import { buildOcrProviderOptions, useEnabledOcrProviders } from '../hooks/useEnabledOcrProviders';
 import type { Prompt, PromptVersion, PromptGroup, OcrProvider, ShareLink } from '../types';
@@ -64,52 +71,6 @@ import { useGlobalStore } from '../store/useGlobalStore';
 import { invalidatePromptGroupsCache, invalidatePromptsCache } from '../lib/cache-events';
 
 type TabType = 'edit' | 'observe' | 'optimize';
-
-// Type conversion helpers for shared package types to frontend types
-const toFrontendConfig = (config: unknown): PromptConfig => {
-  const c = (config || {}) as Record<string, unknown>;
-  return {
-    temperature: (c.temperature as number) ?? DEFAULT_PROMPT_CONFIG.temperature,
-    top_p: (c.top_p as number) ?? DEFAULT_PROMPT_CONFIG.top_p,
-    frequency_penalty: (c.frequency_penalty as number) ?? DEFAULT_PROMPT_CONFIG.frequency_penalty,
-    presence_penalty: (c.presence_penalty as number) ?? DEFAULT_PROMPT_CONFIG.presence_penalty,
-    max_tokens: (c.max_tokens as number) ?? DEFAULT_PROMPT_CONFIG.max_tokens,
-    output_schema: toFrontendOutputSchema(c.output_schema),
-    reasoning: c.reasoning as PromptConfig['reasoning'],
-  };
-};
-
-const toFrontendMessages = (messages: unknown): PromptMessage[] => {
-  const msgs = (messages || []) as Array<{ role?: string; content?: string; id?: string }>;
-  return msgs.map((m, i) => ({
-    id: m.id || `msg-${Date.now()}-${i}`,
-    role: (m.role || 'user') as PromptMessage['role'],
-    content: m.content || '',
-  }));
-};
-
-// Type conversion from frontend to API (for saving)
-const toApiConfig = (config: PromptConfig): Record<string, unknown> => ({
-  temperature: config.temperature,
-  top_p: config.top_p,
-  frequency_penalty: config.frequency_penalty,
-  presence_penalty: config.presence_penalty,
-  max_tokens: config.max_tokens,
-  output_schema: toApiOutputSchema(config.output_schema),
-  reasoning: config.reasoning,
-});
-
-const toApiMessages = (messages: PromptMessage[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> =>
-  messages.map((m) => ({ role: m.role, content: m.content }));
-
-const createPromptMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-
-function isAbortError(error: unknown): boolean {
-  return (
-    (error instanceof DOMException && error.name === 'AbortError') ||
-    (error instanceof Error && error.name === 'AbortError')
-  );
-}
 
 type PromptTestCache = {
   testInput: string;

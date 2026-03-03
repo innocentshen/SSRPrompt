@@ -2459,7 +2459,7 @@ export function PromptOptimizer({
                     />
                   </div>
                 ) : (
-                  <div className="pt-8 pb-2 px-2 text-xs text-slate-500">
+                  <div className="pt-2 pb-2 px-2 pr-24 text-xs text-slate-500">
                     {t('previewCollapsedHint')}
                   </div>
                 )}

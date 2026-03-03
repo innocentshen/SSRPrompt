@@ -921,6 +921,7 @@ export class RunsService {
             });
         }
         const totalCases = selectedTestCaseIds.length;
+        const normalizedTitle = typeof data?.title === 'string' ? data.title.trim() : null;
         // Build runConfig snapshot
         const runConfig = {
             promptId: evaluation.promptId,
@@ -939,6 +940,7 @@ export class RunsService {
         const nextStatus = options?.status ?? 'running';
         const run = await runsRepository.create(evaluationId, {
             status: nextStatus,
+            title: normalizedTitle && normalizedTitle.length > 0 ? normalizedTitle : null,
             results: { totalCases, completedCases: 0 },
             modelParameters: data?.modelParameters,
             runConfig: runConfig,
@@ -1136,6 +1138,10 @@ export class RunsService {
         // Verify evaluation ownership
         await this.evaluationsService.assertOwner(userId, run.evaluationId);
         const updateData = {};
+        if (data.title !== undefined) {
+            const normalizedTitle = typeof data.title === 'string' ? data.title.trim() : '';
+            updateData.title = normalizedTitle.length > 0 ? normalizedTitle : null;
+        }
         if (data.status !== undefined)
             updateData.status = data.status;
         if (data.results !== undefined)

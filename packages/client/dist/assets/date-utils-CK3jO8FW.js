@@ -1,0 +1,1 @@
+function e(t,n){if(!t)return"-";try{const r=t instanceof Date?t:new Date(t);return isNaN(r.getTime())?"-":r.toLocaleDateString("zh-CN",n)}catch{return"-"}}function i(t,n){if(!t)return"-";try{const r=t instanceof Date?t:new Date(t);return isNaN(r.getTime())?"-":r.toLocaleString("zh-CN",n)}catch{return"-"}}export{i as a,e as f};

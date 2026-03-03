@@ -35,6 +35,19 @@ import { getFileUploadCapabilities } from '../lib/model-capabilities';
 import { cacheEvents } from '../lib/cache-events';
 import { formatDateTime } from '../lib/date-utils';
 import { getErrorMessage } from '../lib/error-messages';
+import {
+  buildCsv,
+  formatAttachmentLinks,
+  formatImportJobError,
+  formatModelParameters,
+  formatScoreDetails,
+  formatTimestampForFilename,
+  mergeResultsByTestCase,
+  readImportProgressNumber,
+  readImportProgressString,
+  sanitizeFilenamePart,
+  type CsvColumn,
+} from '../lib/evaluation-page-utils';
 import { buildExpiresAtByPreset, generateSharePassword, getShareExpirePreset, type ShareExpirePreset } from '../lib/share-link-settings';
 import { buildOcrProviderOptions, useEnabledOcrProviders } from '../hooks/useEnabledOcrProviders';
 import { calculateAiCost, formatUsdCost, formatUsdCostFormula } from '../lib/cost';
@@ -95,130 +108,6 @@ const importStageLabelKeyMap: Record<string, string> = {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
-
-type CsvColumn = { key: string; label: string };
-
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const text = String(value);
-  if (/[",\r\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-function buildCsv(columns: CsvColumn[], rows: Array<Record<string, unknown>>): string {
-  const header = columns.map((column) => csvEscape(column.label)).join(',');
-  const lines = rows.map((row) => columns.map((column) => csvEscape(row[column.key])).join(','));
-  return [header, ...lines].join('\r\n');
-}
-
-function formatModelParameters(params?: ModelParameters | null): string {
-  if (!params) return '';
-  const entries: string[] = [];
-  if (params.temperature !== undefined) entries.push(`temperature=${params.temperature}`);
-  if (params.max_tokens !== undefined) entries.push(`max_tokens=${params.max_tokens}`);
-  if (params.top_p !== undefined) entries.push(`top_p=${params.top_p}`);
-  if (params.frequency_penalty !== undefined) entries.push(`frequency_penalty=${params.frequency_penalty}`);
-  if (params.presence_penalty !== undefined) entries.push(`presence_penalty=${params.presence_penalty}`);
-  return entries.join('; ');
-}
-
-function formatScoreDetails(
-  scores: Record<string, number>,
-  feedback: Record<string, unknown>
-): string {
-  const entries = Object.entries(scores || {});
-  if (entries.length === 0) return '';
-  return entries
-    .map(([name, score]) => {
-      const scoreValue = typeof score === 'number' && !Number.isNaN(score) ? (score * 10).toFixed(1) : String(score);
-      const feedbackValue = feedback?.[name];
-      let feedbackText = '';
-      if (feedbackValue !== undefined && feedbackValue !== null && feedbackValue !== '') {
-        if (typeof feedbackValue === 'string') {
-          feedbackText = feedbackValue;
-        } else {
-          try {
-            feedbackText = JSON.stringify(feedbackValue);
-          } catch {
-            feedbackText = String(feedbackValue);
-          }
-        }
-      }
-      return feedbackText ? `${name}:${scoreValue} (${feedbackText})` : `${name}:${scoreValue}`;
-    })
-    .join(' | ');
-}
-
-function formatAttachmentLinks(attachments?: FileAttachment[] | null): string {
-  if (!attachments || attachments.length === 0) return '';
-  return attachments
-    .map((attachment) => {
-      const link = `${API_BASE_URL}/files/${attachment.fileId}`;
-      return attachment.name ? `${attachment.name}: ${link}` : link;
-    })
-    .join('; ');
-}
-
-function mergeResultsByTestCase(prev: TestCaseResult[], updates: TestCaseResult[]): TestCaseResult[] {
-  if (updates.length === 0) return prev;
-  const updatesById = new Map(updates.map((result) => [result.testCaseId, result]));
-  const prevIds = new Set(prev.map((result) => result.testCaseId));
-  const next = prev.map((result) => updatesById.get(result.testCaseId) ?? result);
-  for (const result of updates) {
-    if (!prevIds.has(result.testCaseId)) {
-      next.push(result);
-    }
-  }
-  return next;
-}
-
-function formatTimestampForFilename(dateValue: string | Date | null | undefined): string {
-  if (!dateValue) return 'unknown-time';
-  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return 'unknown-time';
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-  ].join('-') + `_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
-}
-
-function sanitizeFilenamePart(value: string, fallback: string): string {
-  const trimmed = value.trim();
-  const base = trimmed || fallback;
-  const sanitized = base
-    .replace(/[\\/:*?"<>|]/g, '-')
-    .replace(/\s+/g, ' ')
-    .replace(/^[. ]+|[. ]+$/g, '');
-  return sanitized || fallback;
-}
-
-function readImportProgressNumber(progress: Record<string, unknown> | null | undefined, key: string): number {
-  const value = progress ? progress[key] : undefined;
-  const num = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function readImportProgressString(progress: Record<string, unknown> | null | undefined, key: string): string {
-  const value = progress ? progress[key] : undefined;
-  if (value === null || value === undefined) return '';
-  return typeof value === 'string' ? value : String(value);
-}
-
-function formatImportJobError(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const record = err as { message?: unknown };
-    if (typeof record.message === 'string') return record.message;
-  }
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
 
 function clampScore(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -811,8 +700,8 @@ export function EvaluationPage() {
   const [analysisReportsLoading, setAnalysisReportsLoading] = useState(false);
   const [selectedAnalysisReportId, setSelectedAnalysisReportId] = useState<string | null>(null);
   const [analysisReportMutating, setAnalysisReportMutating] = useState(false);
-  const [renameAnalysisModalOpen, setRenameAnalysisModalOpen] = useState(false);
-  const [renameAnalysisTitle, setRenameAnalysisTitle] = useState('');
+  const [isEditingAnalysisTitle, setIsEditingAnalysisTitle] = useState(false);
+  const [editingAnalysisTitle, setEditingAnalysisTitle] = useState('');
   const [analysisEntryModalOpen, setAnalysisEntryModalOpen] = useState(false);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [analysisDraft, setAnalysisDraft] = useState<AnalysisDraftContext | null>(null);
@@ -2394,7 +2283,7 @@ export function EvaluationPage() {
       const testCaseName = testCase?.name || t('testCaseNum', { num: index + 1 });
       const attachments = testCase?.attachments || [];
       const expectedOutput = testCase?.expectedOutput ?? '';
-      const attachmentLinks = formatAttachmentLinks(attachments);
+      const attachmentLinks = formatAttachmentLinks(API_BASE_URL, attachments);
       const scores = result.scores || {};
       const feedback = (result.aiFeedback || {}) as Record<string, unknown>;
       const hasScores = Object.keys(scores).length > 0;
@@ -4053,6 +3942,10 @@ export function EvaluationPage() {
   useEffect(() => {
     setAnalysisCompareTab('models');
   }, [selectedAnalysisReport?.id]);
+  useEffect(() => {
+    setIsEditingAnalysisTitle(false);
+    setEditingAnalysisTitle('');
+  }, [selectedAnalysisReport?.id]);
   const analysisPayloadPreview = useMemo(
     () => (analysisDraft ? buildAnalysisPayload(analysisDraft, analysisDeepMode) : null),
     [analysisDraft, analysisDeepMode]
@@ -4113,30 +4006,38 @@ export function EvaluationPage() {
     [t]
   );
 
-  const openRenameAnalysisModal = () => {
+  const startEditingAnalysisTitle = () => {
     if (!selectedAnalysisReport || !isSelectedEvaluationOwner) return;
-    setRenameAnalysisTitle(selectedAnalysisReport.title || '');
-    setRenameAnalysisModalOpen(true);
+    setEditingAnalysisTitle(selectedAnalysisReport.title || '');
+    setIsEditingAnalysisTitle(true);
   };
 
-  const closeRenameAnalysisModal = () => {
+  const cancelEditingAnalysisTitle = () => {
     if (analysisReportMutating) return;
-    setRenameAnalysisModalOpen(false);
-    setRenameAnalysisTitle('');
+    setIsEditingAnalysisTitle(false);
+    setEditingAnalysisTitle('');
   };
 
-  const handleRenameAnalysisReport = async () => {
+  const saveAnalysisReportTitle = async () => {
     if (!selectedEvaluation || !selectedAnalysisReport) return;
+
+    const nextTitle = editingAnalysisTitle.trim() || null;
+    const currentTitle = selectedAnalysisReport.title?.trim() || null;
+    if (nextTitle === currentTitle) {
+      setIsEditingAnalysisTitle(false);
+      setEditingAnalysisTitle('');
+      return;
+    }
 
     setAnalysisReportMutating(true);
     try {
       const updated = await evaluationAnalysisReportsApi.updateTitle(selectedEvaluation.id, selectedAnalysisReport.id, {
-        title: renameAnalysisTitle.trim() || null,
+        title: nextTitle,
       });
       setAnalysisReports((prev) => prev.map((report) => (report.id === updated.id ? updated : report)));
       setSelectedAnalysisReportId(updated.id);
-      setRenameAnalysisModalOpen(false);
-      setRenameAnalysisTitle('');
+      setIsEditingAnalysisTitle(false);
+      setEditingAnalysisTitle('');
       showToast('success', t('analysisUpdated'));
     } catch (error) {
       showToast('error', getErrorMessage(error));
@@ -4157,8 +4058,8 @@ export function EvaluationPage() {
         setSelectedAnalysisReportId((current) => (current === report.id ? (next[0]?.id ?? null) : current));
         return next;
       });
-      setRenameAnalysisModalOpen(false);
-      setRenameAnalysisTitle('');
+      setIsEditingAnalysisTitle(false);
+      setEditingAnalysisTitle('');
       showToast('success', t('analysisDeleted'));
     } catch (error) {
       showToast('error', getErrorMessage(error));
@@ -5263,36 +5164,65 @@ export function EvaluationPage() {
                         {selectedAnalysisReport ? (
                           <>
                             <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-700/60 light:border-slate-200">
-                              <div>
-                                <div className="text-sm text-slate-200 light:text-slate-800 font-medium">
-                                  {getAnalysisReportTitle(selectedAnalysisReport)}
-                                </div>
+                              <div className="min-w-0 flex-1">
+                                {isEditingAnalysisTitle && isSelectedEvaluationOwner ? (
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      value={editingAnalysisTitle}
+                                      onChange={(event) => setEditingAnalysisTitle(event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          void saveAnalysisReportTitle();
+                                        }
+                                        if (event.key === 'Escape') {
+                                          cancelEditingAnalysisTitle();
+                                        }
+                                      }}
+                                      className="max-w-md"
+                                      placeholder={t('analysisTitlePlaceholder')}
+                                      maxLength={200}
+                                      autoFocus
+                                    />
+                                    <Button size="sm" onClick={() => void saveAnalysisReportTitle()} disabled={analysisReportMutating}>
+                                      <Check className="w-4 h-4" />
+                                    </Button>
+                                    <Button size="sm" variant="ghost" onClick={cancelEditingAnalysisTitle} disabled={analysisReportMutating}>
+                                      <X className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-sm text-slate-200 light:text-slate-800 font-medium truncate">
+                                      {getAnalysisReportTitle(selectedAnalysisReport)}
+                                    </div>
+                                    {isSelectedEvaluationOwner && (
+                                      <button
+                                        type="button"
+                                        onClick={startEditingAnalysisTitle}
+                                        disabled={analysisReportMutating}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/70 light:border-slate-200 bg-slate-900/50 light:bg-white text-slate-400 light:text-slate-500 hover:text-cyan-300 light:hover:text-cyan-600 hover:border-cyan-500/40 light:hover:border-cyan-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                        title={tCommon('edit')}
+                                      >
+                                        <Pencil className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                                 <div className="text-xs text-slate-500 light:text-slate-600 mt-1">
                                   {t('analyzeModel')}: {selectedAnalysisReport.analysisModelName || selectedAnalysisReport.analysisModelId}
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
                                 {isSelectedEvaluationOwner && (
-                                  <>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={openRenameAnalysisModal}
-                                      disabled={analysisReportMutating}
-                                    >
-                                      <Pencil className="w-4 h-4" />
-                                      <span>{t('analysisRename')}</span>
-                                    </Button>
-                                    <Button
-                                      variant="danger"
-                                      size="sm"
-                                      onClick={() => void handleDeleteAnalysisReport(selectedAnalysisReport)}
-                                      disabled={analysisReportMutating}
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                      <span>{tCommon('delete')}</span>
-                                    </Button>
-                                  </>
+                                  <Button
+                                    variant="danger"
+                                    size="sm"
+                                    onClick={() => void handleDeleteAnalysisReport(selectedAnalysisReport)}
+                                    disabled={analysisReportMutating}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                    <span>{tCommon('delete')}</span>
+                                  </Button>
                                 )}
                                 <Button
                                   variant="secondary"
@@ -5316,7 +5246,7 @@ export function EvaluationPage() {
                                   </span>
                                 );
                               })}
-                              <span className="text-slate-500 light:text-slate-600">路</span>
+                              <span className="text-slate-500 light:text-slate-600">·</span>
                               <span className="text-slate-400 light:text-slate-600">
                                 {selectedAnalysisReport.runIds.length === 1 ? t('singleRunAnalysis') : t('multiRunAnalysis')}
                               </span>
@@ -5789,32 +5719,6 @@ export function EvaluationPage() {
             </div>
           </div>
         )}
-      </Modal>
-
-      <Modal
-        isOpen={renameAnalysisModalOpen}
-        onClose={closeRenameAnalysisModal}
-        title={t('analysisRename')}
-        size="md"
-      >
-        <div className="space-y-4">
-          <Input
-            label={t('analysisTitle')}
-            value={renameAnalysisTitle}
-            onChange={(event) => setRenameAnalysisTitle(event.target.value)}
-            placeholder={t('analysisTitlePlaceholder')}
-            maxLength={200}
-            autoFocus
-          />
-          <div className="flex justify-end gap-3 pt-2 border-t border-slate-700 light:border-slate-200">
-            <Button variant="ghost" onClick={closeRenameAnalysisModal} disabled={analysisReportMutating}>
-              {tCommon('cancel')}
-            </Button>
-            <Button onClick={() => void handleRenameAnalysisReport()} loading={analysisReportMutating}>
-              {tCommon('save')}
-            </Button>
-          </div>
-        </div>
       </Modal>
 
       <Modal
