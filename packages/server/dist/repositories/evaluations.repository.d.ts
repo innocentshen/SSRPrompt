@@ -61,6 +61,114 @@ declare class EvaluationsRepositoryClass extends TenantRepository<Evaluation, Pr
         id: string;
         orderIndex: number;
     }[]): Promise<void>;
+    /**
+     * Find evaluations associated with a specific prompt.
+     * Returns lightweight data for evaluation selection list.
+     */
+    findByPromptId(userId: string, promptId: string): Promise<{
+        model: {
+            name: string;
+            id: string;
+            modelId: string;
+        } | null;
+        name: string;
+        id: string;
+        runs: {
+            createdAt: Date;
+        }[];
+        judgeModel: {
+            name: string;
+            id: string;
+            modelId: string;
+        } | null;
+        _count: {
+            runs: number;
+        };
+    }[]>;
+    /**
+     * Find completed runs for an evaluation with their test case results.
+     * Used for aggregating evaluation statistics.
+     */
+    findCompletedRunsByEvaluationId(userId: string, evaluationId: string, limit?: number): Promise<({
+        evaluation: {
+            model: {
+                name: string;
+                id: string;
+                modelId: string;
+            } | null;
+            criteria: {
+                prompt: string | null;
+                name: string;
+                id: string;
+                createdAt: Date;
+                description: string | null;
+                enabled: boolean;
+                evaluationId: string;
+                weight: Prisma.Decimal;
+            }[];
+            judgeModel: {
+                name: string;
+                id: string;
+                modelId: string;
+            } | null;
+            testCases: {
+                name: string;
+                id: string;
+                createdAt: Date;
+                orderIndex: number;
+                attachments: Prisma.JsonValue;
+                evaluationId: string;
+                inputText: string;
+                inputVariables: Prisma.JsonValue;
+                expectedOutput: string | null;
+                notes: string | null;
+            }[];
+        } & {
+            status: import("@prisma/client").$Enums.EvaluationStatus;
+            name: string;
+            userId: string;
+            id: string;
+            createdAt: Date;
+            config: Prisma.JsonValue;
+            results: Prisma.JsonValue;
+            orderIndex: number;
+            completedAt: Date | null;
+            isPublic: boolean;
+            shareAttachments: boolean;
+            promptId: string | null;
+            modelId: string | null;
+            judgeModelId: string | null;
+        };
+        testCaseResults: {
+            id: string;
+            createdAt: Date;
+            errorMessage: string | null;
+            tokensInput: number;
+            tokensOutput: number;
+            latencyMs: number;
+            evaluationId: string;
+            modelOutput: string | null;
+            scores: Prisma.JsonValue;
+            aiFeedback: Prisma.JsonValue;
+            ocrLatencyMs: number;
+            passed: boolean;
+            runId: string | null;
+            testCaseId: string;
+        }[];
+    } & {
+        status: import("@prisma/client").$Enums.EvaluationStatus;
+        id: string;
+        createdAt: Date;
+        results: Prisma.JsonValue;
+        completedAt: Date | null;
+        errorMessage: string | null;
+        evaluationId: string;
+        totalTokensInput: number;
+        totalTokensOutput: number;
+        modelParameters: Prisma.JsonValue | null;
+        runConfig: Prisma.JsonValue | null;
+        startedAt: Date;
+    })[]>;
 }
 /**
  * Test Cases Repository
@@ -115,6 +223,10 @@ export declare class CriteriaRepository {
  * Evaluation Runs Repository
  */
 export declare class RunsRepository {
+    /**
+     * Find run by ID (lightweight)
+     */
+    findById(id: string): Promise<EvaluationRun | null>;
     /**
      * Create a run
      */

@@ -19,6 +19,7 @@ export const UpdateShareLinkSchema = z.object({
 
 export const ListShareLinksQuerySchema = z.object({
   resourceType: ShareResourceTypeSchema.optional(),
+  resourceId: z.string().uuid().optional(),
   includeRevoked: z
     .string()
     .optional()

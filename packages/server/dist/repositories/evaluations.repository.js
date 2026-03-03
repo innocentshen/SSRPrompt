@@ -265,6 +265,84 @@ class EvaluationsRepositoryClass extends TenantRepository {
             data: { orderIndex: u.orderIndex },
         })));
     }
+    /**
+     * Find evaluations associated with a specific prompt.
+     * Returns lightweight data for evaluation selection list.
+     */
+    async findByPromptId(userId, promptId) {
+        return prisma.evaluation.findMany({
+            where: {
+                promptId,
+                userId,
+            },
+            select: {
+                id: true,
+                name: true,
+                model: {
+                    select: {
+                        id: true,
+                        name: true,
+                        modelId: true,
+                    },
+                },
+                judgeModel: {
+                    select: {
+                        id: true,
+                        name: true,
+                        modelId: true,
+                    },
+                },
+                _count: {
+                    select: { runs: true },
+                },
+                runs: {
+                    where: { status: 'completed' },
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                    select: {
+                        createdAt: true,
+                    },
+                },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+    /**
+     * Find completed runs for an evaluation with their test case results.
+     * Used for aggregating evaluation statistics.
+     */
+    async findCompletedRunsByEvaluationId(userId, evaluationId, limit = 20) {
+        return prisma.evaluationRun.findMany({
+            where: {
+                evaluationId,
+                status: 'completed',
+                evaluation: {
+                    userId,
+                },
+            },
+            include: {
+                testCaseResults: true,
+                evaluation: {
+                    include: {
+                        testCases: {
+                            orderBy: { orderIndex: 'asc' },
+                        },
+                        criteria: {
+                            orderBy: { createdAt: 'asc' },
+                        },
+                        model: {
+                            select: { id: true, name: true, modelId: true },
+                        },
+                        judgeModel: {
+                            select: { id: true, name: true, modelId: true },
+                        },
+                    },
+                },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+        });
+    }
 }
 /**
  * Test Cases Repository
@@ -368,6 +446,14 @@ export class CriteriaRepository {
  */
 export class RunsRepository {
     /**
+     * Find run by ID (lightweight)
+     */
+    async findById(id) {
+        return prisma.evaluationRun.findUnique({
+            where: { id },
+        });
+    }
+    /**
      * Create a run
      */
     async create(evaluationId, data) {
@@ -402,11 +488,7 @@ export class RunsRepository {
         return prisma.evaluationRun.findUnique({
             where: { id },
             include: {
-                testCaseResults: {
-                    include: {
-                        testCase: true,
-                    },
-                },
+                testCaseResults: true,
             },
         });
     }
@@ -450,9 +532,6 @@ export class TestCaseResultsRepository {
     async findByRunId(runId) {
         return prisma.testCaseResult.findMany({
             where: { runId },
-            include: {
-                testCase: true,
-            },
         });
     }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, ChevronDown, Zap, Trash2, FileText, Bot, Scale, ScanText, Download, Check, CircleDollarSign } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, Loader2, Play, ChevronRight, ChevronDown, Zap, Trash2, FileText, Bot, Scale, ScanText, Download, Check, CircleDollarSign, Pencil, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Input, StopIndicator } from '../ui';
 import type { EvaluationRun, EvaluationStatus, Model, RunConfig } from '../../types';
@@ -19,6 +19,7 @@ interface RunHistoryProps {
   onBatchExport?: (runs: EvaluationRun[]) => void;
   batchExporting?: boolean;
   onAnalyzeRuns?: (runs: EvaluationRun[]) => void;
+  onUpdateRunTitle?: (runId: string, title: string | null) => void | Promise<void>;
   onAnalyzeSelectionLimitReached?: (max: number) => void;
   maxAnalyzeSelection?: number;
   analyzeSelectionTrigger?: number;
@@ -49,6 +50,10 @@ const statusConfig: Record<EvaluationStatus, { labelKey: string; variant: 'info'
   completed: { labelKey: 'completed', variant: 'success', icon: <CheckCircle2 className="w-4 h-4" /> },
   failed: { labelKey: 'failed', variant: 'error', icon: <XCircle className="w-4 h-4" /> },
 };
+
+function canSelectRunForAnalyze(run: EvaluationRun): boolean {
+  return run.status === 'completed';
+}
 
 function formatDateInputValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -117,6 +122,7 @@ export function RunHistory({
   onBatchExport,
   batchExporting,
   onAnalyzeRuns,
+  onUpdateRunTitle,
   onAnalyzeSelectionLimitReached,
   maxAnalyzeSelection = 20,
   analyzeSelectionTrigger = 0,
@@ -135,6 +141,9 @@ export function RunHistory({
   const [endDate, setEndDate] = useState(initialDateRange.endDate);
   const [isAnalyzeSelectionMode, setIsAnalyzeSelectionMode] = useState(false);
   const [analyzeSelectedRunIds, setAnalyzeSelectedRunIds] = useState<Set<string>>(() => new Set());
+  const [editingRunTitleId, setEditingRunTitleId] = useState<string | null>(null);
+  const [editingRunTitleDraft, setEditingRunTitleDraft] = useState('');
+  const [savingRunTitleId, setSavingRunTitleId] = useState<string | null>(null);
 
   useEffect(() => {
     runHistoryDateRangeCache = { startDate, endDate };
@@ -143,11 +152,30 @@ export function RunHistory({
   useEffect(() => {
     setAnalyzeSelectedRunIds((prev) => {
       if (prev.size === 0) return prev;
-      const existing = new Set(runs.map((run) => run.id));
-      const next = new Set(Array.from(prev).filter((id) => existing.has(id)));
+      const selectable = new Set(
+        runs
+          .filter(canSelectRunForAnalyze)
+          .map((run) => run.id)
+      );
+      const next = new Set(Array.from(prev).filter((id) => selectable.has(id)));
       return next.size === prev.size ? prev : next;
     });
   }, [runs]);
+
+  useEffect(() => {
+    if (!editingRunTitleId) return;
+    if (runs.some((run) => run.id === editingRunTitleId)) return;
+    setEditingRunTitleId(null);
+    setEditingRunTitleDraft('');
+    setSavingRunTitleId(null);
+  }, [editingRunTitleId, runs]);
+
+  useEffect(() => {
+    if (!isAnalyzeSelectionMode) return;
+    setEditingRunTitleId(null);
+    setEditingRunTitleDraft('');
+    setSavingRunTitleId(null);
+  }, [isAnalyzeSelectionMode]);
 
   useEffect(() => {
     if (!onAnalyzeRuns || analyzeSelectionTrigger <= runHistoryAnalyzeSelectionTriggerCache) return;
@@ -220,6 +248,10 @@ export function RunHistory({
       return false;
     });
   }, [endDate, modelQuery, runs, startDate, statusFilters]);
+  const analyzeSelectableFilteredRuns = useMemo(
+    () => filteredRuns.filter(canSelectRunForAnalyze),
+    [filteredRuns]
+  );
 
   const runCostMap = useMemo(() => {
     const pricingById = new Map(
@@ -251,11 +283,12 @@ export function RunHistory({
 
   const analyzeSelectedCount = analyzeSelectedRunIds.size;
 
-  const toggleAnalyzeRunSelection = (runId: string) => {
+  const toggleAnalyzeRunSelection = (run: EvaluationRun) => {
+    if (!canSelectRunForAnalyze(run)) return;
     setAnalyzeSelectedRunIds((prev) => {
-      if (prev.has(runId)) {
+      if (prev.has(run.id)) {
         const next = new Set(prev);
-        next.delete(runId);
+        next.delete(run.id);
         return next;
       }
       if (prev.size >= maxAnalyzeSelection) {
@@ -263,7 +296,7 @@ export function RunHistory({
         return prev;
       }
       const next = new Set(prev);
-      next.add(runId);
+      next.add(run.id);
       return next;
     });
   };
@@ -274,9 +307,9 @@ export function RunHistory({
   };
 
   const selectAllFilteredForAnalyze = () => {
-    if (filteredRuns.length === 0) return;
-    const pick = filteredRuns.slice(0, maxAnalyzeSelection).map((run) => run.id);
-    if (filteredRuns.length > maxAnalyzeSelection) {
+    if (analyzeSelectableFilteredRuns.length === 0) return;
+    const pick = analyzeSelectableFilteredRuns.slice(0, maxAnalyzeSelection).map((run) => run.id);
+    if (analyzeSelectableFilteredRuns.length > maxAnalyzeSelection) {
       onAnalyzeSelectionLimitReached?.(maxAnalyzeSelection);
     }
     setAnalyzeSelectedRunIds(new Set(pick));
@@ -284,10 +317,37 @@ export function RunHistory({
 
   const startMultiRunAnalyze = () => {
     if (!onAnalyzeRuns || analyzeSelectedRunIds.size === 0) return;
-    const selected = filteredRuns.filter((run) => analyzeSelectedRunIds.has(run.id));
+    const selected = analyzeSelectableFilteredRuns.filter((run) => analyzeSelectedRunIds.has(run.id));
     if (selected.length === 0) return;
     onAnalyzeRuns(selected);
     exitAnalyzeSelectionMode();
+  };
+
+  const startEditRunTitle = (run: EvaluationRun) => {
+    if (!onUpdateRunTitle) return;
+    setEditingRunTitleId(run.id);
+    setEditingRunTitleDraft(run.title?.trim() ?? '');
+  };
+
+  const cancelEditRunTitle = () => {
+    if (savingRunTitleId) return;
+    setEditingRunTitleId(null);
+    setEditingRunTitleDraft('');
+  };
+
+  const saveRunTitle = async (runId: string) => {
+    if (!onUpdateRunTitle || savingRunTitleId) return;
+    const nextTitle = editingRunTitleDraft.trim();
+    setSavingRunTitleId(runId);
+    try {
+      await Promise.resolve(onUpdateRunTitle(runId, nextTitle.length > 0 ? nextTitle : null));
+      setEditingRunTitleId(null);
+      setEditingRunTitleDraft('');
+    } catch (error) {
+      console.error('Failed to update run title:', error);
+    } finally {
+      setSavingRunTitleId((prev) => (prev === runId ? null : prev));
+    }
   };
 
   if (runs.length === 0) {
@@ -386,7 +446,7 @@ export function RunHistory({
                 setIsAnalyzeSelectionMode(true);
                 setAnalyzeSelectedRunIds(new Set());
               }}
-              disabled={filteredRuns.length === 0}
+              disabled={analyzeSelectableFilteredRuns.length === 0}
             >
               <span>{t('multiRunAnalysis')}</span>
             </Button>
@@ -400,7 +460,7 @@ export function RunHistory({
                 variant="secondary"
                 size="sm"
                 onClick={selectAllFilteredForAnalyze}
-                disabled={filteredRuns.length === 0}
+                disabled={analyzeSelectableFilteredRuns.length === 0}
               >
                 <span>{t('selectAllFilteredRuns')}</span>
               </Button>
@@ -444,8 +504,14 @@ export function RunHistory({
         ) : (
           filteredRuns.map((run, index) => {
             const status = statusConfig[run.status];
+            const canSelectForAnalyze = canSelectRunForAnalyze(run);
+            const canEditRunTitle = !isAnalyzeSelectionMode && !!onUpdateRunTitle;
             const isSelectedForAnalyze = analyzeSelectedRunIds.has(run.id);
             const isSelected = isAnalyzeSelectionMode ? isSelectedForAnalyze : selectedRunId === run.id;
+            const defaultRunTitle = t('executionNum', { num: filteredRuns.length - index });
+            const runTitle = run.title?.trim() || defaultRunTitle;
+            const isEditingRunTitle = editingRunTitleId === run.id;
+            const isSavingRunTitle = savingRunTitleId === run.id;
             const runConfig = run.runConfig as RunConfig | null;
             const liveMetrics = selectedRunLiveMetrics?.runId === run.id ? selectedRunLiveMetrics : null;
             const runCost = liveMetrics
@@ -506,7 +572,7 @@ export function RunHistory({
               key={run.id}
               onClick={() => {
                 if (isAnalyzeSelectionMode) {
-                  toggleAnalyzeRunSelection(run.id);
+                  toggleAnalyzeRunSelection(run);
                   return;
                 }
                 onSelectRun(run);
@@ -514,8 +580,11 @@ export function RunHistory({
               className={`w-full relative overflow-hidden p-3 rounded-xl border transition-all text-left ${
                 isSelected
                   ? 'bg-slate-800/60 light:bg-cyan-50/70 border-cyan-500/50 light:border-cyan-300 ring-1 ring-cyan-500/20 light:ring-cyan-300/40 shadow-sm'
-                  : 'bg-slate-800/30 light:bg-white border-slate-700 light:border-slate-200 hover:bg-slate-800/45 light:hover:bg-slate-50 hover:border-slate-600 light:hover:border-slate-300 hover:shadow-sm'
+                  : (isAnalyzeSelectionMode && !canSelectForAnalyze)
+                    ? 'bg-slate-800/20 light:bg-slate-50 border-slate-700 light:border-slate-200 opacity-70 cursor-not-allowed'
+                    : 'bg-slate-800/30 light:bg-white border-slate-700 light:border-slate-200 hover:bg-slate-800/45 light:hover:bg-slate-50 hover:border-slate-600 light:hover:border-slate-300 hover:shadow-sm'
               }`}
+              disabled={isAnalyzeSelectionMode && !canSelectForAnalyze}
             >
               <span
                 aria-hidden
@@ -536,7 +605,9 @@ export function RunHistory({
                       className={`w-5 h-5 mt-0.5 rounded-full border flex items-center justify-center ${
                         isSelectedForAnalyze
                           ? 'border-cyan-500 bg-cyan-500 text-white'
-                          : 'border-slate-500 light:border-slate-400 text-transparent'
+                          : canSelectForAnalyze
+                            ? 'border-slate-500 light:border-slate-400 text-transparent'
+                            : 'border-slate-700 light:border-slate-300 bg-slate-800/30 light:bg-slate-100 text-transparent'
                       }`}
                     >
                       {isSelectedForAnalyze && <Check className="w-3 h-3" />}
@@ -551,10 +622,72 @@ export function RunHistory({
                     {status.icon}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-slate-200 light:text-slate-800">
-                        {t('executionNum', { num: filteredRuns.length - index })}
-                      </span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isEditingRunTitle ? (
+                        <div className="flex items-center gap-1 min-w-0" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            value={editingRunTitleDraft}
+                            onChange={(event) => setEditingRunTitleDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                void saveRunTitle(run.id);
+                              }
+                              if (event.key === 'Escape') {
+                                event.preventDefault();
+                                cancelEditRunTitle();
+                              }
+                            }}
+                            placeholder={defaultRunTitle}
+                            maxLength={120}
+                            disabled={isSavingRunTitle}
+                            className="h-7 min-w-0 w-56 max-w-[55vw] rounded-md border border-cyan-500/40 bg-slate-900/70 light:bg-white px-2 text-sm text-slate-100 light:text-slate-800 outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:opacity-70"
+                          />
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void saveRunTitle(run.id);
+                            }}
+                            disabled={isSavingRunTitle}
+                            className="p-1 rounded text-cyan-400 hover:text-cyan-300 hover:bg-slate-700/50 light:hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            title={tCommon('save')}
+                          >
+                            {isSavingRunTitle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              cancelEditRunTitle();
+                            }}
+                            disabled={isSavingRunTitle}
+                            className="p-1 rounded text-slate-400 hover:text-slate-200 light:hover:text-slate-700 hover:bg-slate-700/50 light:hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            title={tCommon('cancel')}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-sm font-medium text-slate-200 light:text-slate-800 truncate">
+                            {runTitle}
+                          </span>
+                          {canEditRunTitle && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                startEditRunTitle(run);
+                              }}
+                              className="p-1 rounded text-slate-500 hover:text-cyan-400 hover:bg-slate-700/50 light:hover:bg-slate-100"
+                              title={tCommon('edit')}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </>
+                      )}
                       <Badge variant={status.variant}>{t(status.labelKey)}</Badge>
                     </div>
                     <p className="text-xs text-slate-500 light:text-slate-600 mt-0.5">

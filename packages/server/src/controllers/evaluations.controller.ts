@@ -251,12 +251,14 @@ export const criteriaController = {
 
 // Run creation schema
 const CreateRunSchema = z.object({
+  title: z.string().trim().min(1).max(120).nullable().optional(),
   modelParameters: z.record(z.unknown()).optional(),
   testCaseIds: z.array(z.string().uuid()).optional(),
 });
 
 // Run update schema
 const UpdateRunSchema = z.object({
+  title: z.string().trim().min(1).max(120).nullable().optional(),
   status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
   results: z.record(z.unknown()).optional(),
   errorMessage: z.string().nullable().optional(),
@@ -308,6 +310,14 @@ export const runsController = {
    */
   async retryScores(req: Request, res: Response): Promise<void> {
     const run = await runsService.retryScores(req.user!.userId, req.params.id);
+    res.json({ data: run });
+  },
+
+  /**
+   * POST /runs/:id/retry-errored-cases - Retry errored test cases in current run
+   */
+  async retryErroredCases(req: Request, res: Response): Promise<void> {
+    const run = await runsService.retryErroredCases(req.user!.userId, req.params.id);
     res.json({ data: run });
   },
 

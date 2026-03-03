@@ -368,20 +368,6 @@ export function PromptApiKeysManager() {
     [invokeUrl]
   );
 
-  const formatPromptCallableVersion = useCallback(
-    (prompt: PromptListItem): string => {
-      if (prompt.apiVersionMode === 'fixed') {
-        const version = prompt.apiFixedVersion ?? prompt.currentVersion;
-        return t('promptApiModeFixedLabel', { defaultValue: `Fixed v${version}`, version });
-      }
-      return t('promptApiModeLatestLabel', {
-        defaultValue: `Latest (current v${prompt.currentVersion})`,
-        version: prompt.currentVersion,
-      });
-    },
-    [t]
-  );
-
   const handleUpdatePromptVersionMode = (promptId: string, mode: PromptApiVersionMode) => {
     setPromptVersionDrafts((prev) => {
       const current = prev[promptId] || { mode: 'latest' as PromptApiVersionMode, fixedVersion: '' };
@@ -823,7 +809,7 @@ export function PromptApiKeysManager() {
                                   handleUpdatePromptVersionMode(prompt.id, event.target.value as PromptApiVersionMode)
                                 }
                                 disabled={isUpdating}
-                                className="min-w-[120px] rounded-md border border-slate-700 light:border-slate-300 bg-slate-900 light:bg-white px-2 py-1.5 text-xs text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                                className="min-w-[108px] rounded-md border border-slate-700 light:border-slate-300 bg-slate-900 light:bg-white px-2 py-1.5 text-xs text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                               >
                                 <option value="latest">
                                   {t('promptApiVersionModeLatestOption', { defaultValue: 'Latest (current)' })}
@@ -833,7 +819,7 @@ export function PromptApiKeysManager() {
                                 </option>
                               </select>
                               {versionDraft.mode === 'fixed' && (
-                                <div className="inline-flex w-[108px] overflow-hidden rounded-md border border-slate-700 light:border-slate-300 bg-slate-900 light:bg-white focus-within:ring-2 focus-within:ring-cyan-500/40">
+                                <div className="inline-flex w-[84px] overflow-hidden rounded-md border border-slate-700 light:border-slate-300 bg-slate-900 light:bg-white focus-within:ring-2 focus-within:ring-cyan-500/40">
                                   <input
                                     type="text"
                                     inputMode="numeric"
@@ -876,12 +862,10 @@ export function PromptApiKeysManager() {
                                 onClick={() => void handleSavePromptVersionConfig(prompt)}
                                 loading={isUpdating}
                                 disabled={isUpdating || !isVersionDraftDirty(prompt)}
+                                className="shrink-0 whitespace-nowrap"
                               >
                                 {tCommon('save')}
                               </Button>
-                              <span className="text-[11px] text-slate-500 light:text-slate-600 whitespace-nowrap">
-                                {formatPromptCallableVersion(prompt)}
-                              </span>
                             </div>
                           </td>
                           <td className="px-3 py-2 align-top">

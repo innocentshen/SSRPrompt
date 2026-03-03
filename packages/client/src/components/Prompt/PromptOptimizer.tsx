@@ -14,28 +14,34 @@ import {
   TrendingUp,
   Maximize2,
   Minimize2,
-  Settings,
   ChevronDown,
   Database,
   BarChart3,
   FlaskConical,
+  Paperclip,
   Plus,
   Trash2,
 } from 'lucide-react';
 import type { PromptMessage } from '../../types/database';
 import { Button, ModelSelector, Badge, Modal, StopIndicator, OutputRenderer } from '../ui';
-import type { Model, Provider } from '../../types';
+import { AttachmentModal } from './AttachmentModal';
+import type { Model, Provider, FileAttachment, OcrProvider } from '../../types';
 import {
   BUILTIN_META_PROMPTS,
   saveOptimizationSettings,
   getOptimizationSettings,
 } from '../../lib/optimization-settings';
+import {
+  getPromptOptimizerPreference,
+  savePromptOptimizerPreference,
+} from '../../lib/prompt-optimizer-preferences';
 import type {
   EvaluationSummary,
   EvaluationListItem,
   EvaluationCriterion,
+  EvaluationConfig,
 } from '@ssrprompt/shared';
-import type { ChatMessage } from '../../api/chat';
+import type { ChatMessage, ContentPart } from '../../api/chat';
 import { chatApi } from '../../api/chat';
 import { evaluationsApi, type EvaluationWithRelations } from '../../api/evaluations';
 import {
@@ -123,6 +129,17 @@ interface PromptOptimizerProps {
 
 type OptimizerView = 'analysis' | 'preview' | 'verification';
 type VerificationRunScope = 'custom' | 'all' | 'failed' | 'regression';
+type FileProcessingMode = NonNullable<EvaluationConfig['file_processing']>;
+type EffectiveAttachmentMode = 'vision' | 'ocr' | 'none';
+
+type VerificationAttachmentHandling = {
+  configuredMode: FileProcessingMode;
+  activeMode: FileProcessingMode;
+  effectiveMode: EffectiveAttachmentMode;
+  modelSupportsVision: boolean;
+  ocrProvider?: OcrProvider;
+  attachmentCount: number;
+};
 
 type VerificationCase = {
   id: string;
@@ -131,6 +148,7 @@ type VerificationCase = {
   name: string;
   input: string;
   inputVariables?: Record<string, string>;
+  attachments?: FileAttachment[];
   expectedOutput?: string;
   selected: boolean;
   historicalPassRate?: number;
@@ -144,6 +162,7 @@ type VerificationResult = {
   caseId: string;
   caseName: string;
   output: string;
+  attachments?: FileAttachment[];
   expectedOutput?: string;
   beforeScore?: number;
   afterScore?: number;
@@ -212,6 +231,8 @@ const MANUAL_PASS_THRESHOLD_MIN_PERCENT = 1;
 const MANUAL_PASS_THRESHOLD_MAX_PERCENT = 100;
 const MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT = 80;
 const DEFAULT_VERIFICATION_CASE_CONCURRENCY = 1;
+const FILE_PROCESSING_MODES: FileProcessingMode[] = ['auto', 'vision', 'ocr', 'none'];
+const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
 
 type PromptOptimizerCacheState = {
   view: OptimizerView;
@@ -226,6 +247,8 @@ type PromptOptimizerCacheState = {
   manualCasePassThreshold: number;
   verificationResults: VerificationResult[];
   verificationMode: 'unknown' | 'judge' | 'fallback';
+  verificationFileProcessingOverride: FileProcessingMode | null;
+  verificationOcrProviderOverride: OcrProvider | null;
   appliedSuggestionIds: Record<string, true>;
   dismissedSuggestionIds: Record<string, true>;
   autoPipelineRound: number;
@@ -319,6 +342,111 @@ function resolveVerificationCaseConcurrency(
   const resolvedConcurrency = configuredConcurrency ?? DEFAULT_VERIFICATION_CASE_CONCURRENCY;
 
   return Math.min(totalCases, resolvedConcurrency);
+}
+
+function normalizeAttachments(value: unknown): FileAttachment[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const attachment = item as Partial<FileAttachment>;
+      if (typeof attachment.fileId !== 'string' || !attachment.fileId.trim()) return null;
+      if (typeof attachment.name !== 'string' || !attachment.name.trim()) return null;
+      if (typeof attachment.type !== 'string' || !attachment.type.trim()) return null;
+      const normalized: FileAttachment = {
+        fileId: attachment.fileId,
+        name: attachment.name,
+        type: attachment.type,
+      };
+      if (typeof attachment.size === 'number') {
+        normalized.size = attachment.size;
+      }
+      return normalized;
+    })
+    .filter((item): item is FileAttachment => Boolean(item));
+}
+
+function resolveEvaluationFileProcessing(config: Record<string, unknown> | undefined): FileProcessingMode {
+  const rawMode = config?.file_processing;
+  if (typeof rawMode !== 'string') return 'auto';
+  return FILE_PROCESSING_MODES.includes(rawMode as FileProcessingMode)
+    ? (rawMode as FileProcessingMode)
+    : 'auto';
+}
+
+function resolveEvaluationOcrProvider(config: Record<string, unknown> | undefined): OcrProvider | undefined {
+  const rawProvider = config?.ocr_provider;
+  if (typeof rawProvider !== 'string') return undefined;
+  return OCR_PROVIDERS.includes(rawProvider as OcrProvider) ? (rawProvider as OcrProvider) : undefined;
+}
+
+function resolveEffectiveAttachmentMode(
+  mode: FileProcessingMode,
+  supportsVision: boolean
+): EffectiveAttachmentMode {
+  if (mode === 'none') return 'none';
+  if (mode === 'ocr') return 'ocr';
+  if (mode === 'vision') return supportsVision ? 'vision' : 'none';
+  return supportsVision ? 'vision' : 'ocr';
+}
+
+function getFileProcessingLabelKey(
+  mode: FileProcessingMode | EffectiveAttachmentMode
+): 'fileProcessingAuto' | 'fileProcessingVision' | 'fileProcessingOcr' | 'fileProcessingNone' {
+  if (mode === 'vision') return 'fileProcessingVision';
+  if (mode === 'ocr') return 'fileProcessingOcr';
+  if (mode === 'none') return 'fileProcessingNone';
+  return 'fileProcessingAuto';
+}
+
+function isFileProcessingMode(value: string): value is FileProcessingMode {
+  return FILE_PROCESSING_MODES.includes(value as FileProcessingMode);
+}
+
+function isOcrProvider(value: string): value is OcrProvider {
+  return OCR_PROVIDERS.includes(value as OcrProvider);
+}
+
+function appendAttachmentsToMessages(messages: ChatMessage[], attachments: FileAttachment[]): ChatMessage[] {
+  const normalizedAttachments = normalizeAttachments(attachments);
+  if (normalizedAttachments.length === 0) return messages;
+
+  const attachmentParts: ContentPart[] = normalizedAttachments.map((file) => ({
+    type: 'file_ref',
+    file_ref: { fileId: file.fileId },
+  }));
+
+  const targetIndex = [...messages].reverse().findIndex((message) => message.role === 'user');
+  const userIndex = targetIndex === -1 ? -1 : messages.length - 1 - targetIndex;
+
+  if (userIndex === -1) {
+    return [
+      ...messages,
+      {
+        role: 'user',
+        content: attachmentParts,
+      },
+    ];
+  }
+
+  const nextMessages = [...messages];
+  const userMessage = nextMessages[userIndex];
+  const existingContent = userMessage.content;
+
+  const contentParts: ContentPart[] =
+    typeof existingContent === 'string'
+      ? existingContent.trim()
+        ? [{ type: 'text', text: existingContent }, ...attachmentParts]
+        : [...attachmentParts]
+      : [...existingContent, ...attachmentParts];
+
+  nextMessages[userIndex] = {
+    ...userMessage,
+    content: contentParts,
+  };
+
+  return nextMessages;
 }
 
 function normalizePercentScore(value: number | null | undefined): number | undefined {
@@ -442,7 +570,7 @@ export function PromptOptimizer({
   onApplySuggestion,
   onOptimize,
   getPromptSnapshot,
-  onOpenSettings,
+  onOpenSettings: _onOpenSettings,
   isOptimizing = false,
   analysisResult,
   evaluationList,
@@ -452,6 +580,7 @@ export function PromptOptimizer({
 }: PromptOptimizerProps) {
   const { t } = useTranslation('prompts');
   const { t: tCommon } = useTranslation('common');
+  const { t: tEvaluation } = useTranslation('evaluation');
   const cachedState = cacheKey ? promptOptimizerCacheByKey.get(cacheKey) : undefined;
 
   const [view, setView] = useState<OptimizerView>(cachedState?.view || 'analysis');
@@ -460,6 +589,8 @@ export function PromptOptimizer({
   const [hasAnalyzed, setHasAnalyzed] = useState(Boolean(cachedState?.hasAnalyzed));
   const [selectedTemplate, setSelectedTemplate] = useState<string>(() => {
     if (cachedState?.selectedTemplate) return cachedState.selectedTemplate;
+    const promptPreference = cacheKey ? getPromptOptimizerPreference(cacheKey) : {};
+    if (promptPreference.templateId) return promptPreference.templateId;
     const settings = getOptimizationSettings();
     return settings.selectedTemplate || 'general';
   });
@@ -476,6 +607,10 @@ export function PromptOptimizer({
   const [verificationResults, setVerificationResults] = useState<VerificationResult[]>(cachedState?.verificationResults || []);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationMode, setVerificationMode] = useState<'unknown' | 'judge' | 'fallback'>(cachedState?.verificationMode || 'unknown');
+  const [verificationFileProcessingOverride, setVerificationFileProcessingOverride] =
+    useState<FileProcessingMode | null>(cachedState?.verificationFileProcessingOverride ?? null);
+  const [verificationOcrProviderOverride, setVerificationOcrProviderOverride] =
+    useState<OcrProvider | null>(cachedState?.verificationOcrProviderOverride ?? null);
   const [appliedSuggestionIds, setAppliedSuggestionIds] = useState<Record<string, true>>(cachedState?.appliedSuggestionIds || {});
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<Record<string, true>>(cachedState?.dismissedSuggestionIds || {});
   const [isAutoPipelineRunning, setIsAutoPipelineRunning] = useState(false);
@@ -488,7 +623,12 @@ export function PromptOptimizer({
   const [isPromptPreviewCollapsed, setIsPromptPreviewCollapsed] = useState(false);
   const [isPromptPreviewFullscreen, setIsPromptPreviewFullscreen] = useState(false);
   const [isPromptPreviewCopied, setIsPromptPreviewCopied] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null);
   const [verificationRunScope, setVerificationRunScope] = useState<VerificationRunScope>('custom');
+  const [referenceFileProcessing, setReferenceFileProcessing] = useState<FileProcessingMode>('auto');
+  const [referenceOcrProvider, setReferenceOcrProvider] = useState<OcrProvider | undefined>(undefined);
+  const [evaluationCaseAttachmentsById, setEvaluationCaseAttachmentsById] =
+    useState<Record<string, FileAttachment[]>>({});
   const [isCaseManagerOpen, setIsCaseManagerOpen] = useState(false);
   const [caseManagerDraftCases, setCaseManagerDraftCases] = useState<VerificationCase[]>([]);
   const [caseManagerManualInput, setCaseManagerManualInput] = useState('');
@@ -501,6 +641,9 @@ export function PromptOptimizer({
   const analysisAbortControllerRef = useRef<AbortController | null>(null);
   const verificationAbortControllerRef = useRef<AbortController | null>(null);
   const autoPipelineAbortControllerRef = useRef<AbortController | null>(null);
+  const lastEvaluationIdRef = useRef<string>('');
+  const promptPreviewScrollRef = useRef<HTMLDivElement | null>(null);
+  const promptPreviewFullscreenScrollRef = useRef<HTMLDivElement | null>(null);
 
   const hasContent =
     messages.some((message) => message.content.trim().length > 0) ||
@@ -570,6 +713,108 @@ export function PromptOptimizer({
     return runnableCases.filter((item) => item.selected);
   }, [verificationCases, verificationResults, verificationRunScope]);
 
+  const activeVerificationFileProcessing = verificationFileProcessingOverride ?? referenceFileProcessing;
+  const activeVerificationOcrProvider = verificationOcrProviderOverride ?? referenceOcrProvider;
+  const verificationModelSupportsVision = useMemo(() => {
+    if (!selectedModelId) return true;
+    const selectedModel = models.find((item) => item.id === selectedModelId);
+    return selectedModel?.supportsVision ?? true;
+  }, [models, selectedModelId]);
+  const currentVerificationAttachmentHandling = useMemo<VerificationAttachmentHandling>(() => {
+    const attachmentCount = runScopeCases.reduce((count, item) => {
+      const resolvedAttachments =
+        item.source === 'evaluation' && item.testCaseId
+          ? (evaluationCaseAttachmentsById[item.testCaseId] ?? normalizeAttachments(item.attachments))
+          : normalizeAttachments(item.attachments);
+      return count + resolvedAttachments.length;
+    }, 0);
+
+    return {
+      configuredMode: referenceFileProcessing,
+      activeMode: activeVerificationFileProcessing,
+      effectiveMode: resolveEffectiveAttachmentMode(
+        activeVerificationFileProcessing,
+        verificationModelSupportsVision
+      ),
+      modelSupportsVision: verificationModelSupportsVision,
+      ocrProvider: activeVerificationOcrProvider,
+      attachmentCount,
+    };
+  }, [
+    activeVerificationFileProcessing,
+    activeVerificationOcrProvider,
+    evaluationCaseAttachmentsById,
+    referenceFileProcessing,
+    runScopeCases,
+    verificationModelSupportsVision,
+  ]);
+
+  useEffect(() => {
+    if (
+      lastEvaluationIdRef.current &&
+      lastEvaluationIdRef.current !== effectiveSelectedEvaluationId
+    ) {
+      setVerificationFileProcessingOverride(null);
+      setVerificationOcrProviderOverride(null);
+    }
+    lastEvaluationIdRef.current = effectiveSelectedEvaluationId;
+  }, [effectiveSelectedEvaluationId]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const applyReferenceDefaults = () => {
+      if (disposed) return;
+      setReferenceFileProcessing('auto');
+      setReferenceOcrProvider(undefined);
+      setEvaluationCaseAttachmentsById({});
+    };
+
+    if (!effectiveSelectedEvaluationId) {
+      applyReferenceDefaults();
+      return () => {
+        disposed = true;
+      };
+    }
+
+    const loadEvaluationDetail = async () => {
+      try {
+        const detail = await evaluationsApi.getById(effectiveSelectedEvaluationId);
+        if (disposed) return;
+
+        const evaluationConfig = (detail.config || {}) as Record<string, unknown>;
+        setReferenceFileProcessing(resolveEvaluationFileProcessing(evaluationConfig));
+        setReferenceOcrProvider(resolveEvaluationOcrProvider(evaluationConfig));
+
+        const attachmentsById: Record<string, FileAttachment[]> = {};
+        for (const testCase of detail.testCases || []) {
+          attachmentsById[testCase.id] = normalizeAttachments(testCase.attachments);
+        }
+        setEvaluationCaseAttachmentsById(attachmentsById);
+
+        setVerificationCases((prev) =>
+          prev.map((item) => {
+            if (item.source !== 'evaluation' || !item.testCaseId) return item;
+            const nextAttachments = attachmentsById[item.testCaseId];
+            if (!nextAttachments) return item;
+            return {
+              ...item,
+              attachments: nextAttachments,
+            };
+          })
+        );
+      } catch {
+        applyReferenceDefaults();
+      }
+    };
+
+    void loadEvaluationDetail();
+
+    return () => {
+      disposed = true;
+    };
+  }, [effectiveSelectedEvaluationId]);
+
   useEffect(() => {
     if (!cachedState?.wasInterrupted) return;
     setAutoPipelineStatus(t('autoPipelineInterrupted'));
@@ -601,6 +846,8 @@ export function PromptOptimizer({
       manualCasePassThreshold,
       verificationResults,
       verificationMode,
+      verificationFileProcessingOverride,
+      verificationOcrProviderOverride,
       appliedSuggestionIds,
       dismissedSuggestionIds,
       autoPipelineRound,
@@ -628,6 +875,8 @@ export function PromptOptimizer({
     suggestions,
     verificationCases,
     verificationInitialized,
+    verificationFileProcessingOverride,
+    verificationOcrProviderOverride,
     verificationMode,
     verificationResults,
     view,
@@ -727,6 +976,16 @@ export function PromptOptimizer({
     return (content || '').trim();
   }, [content, messages]);
 
+  useEffect(() => {
+    if (view !== 'preview' || isPromptPreviewCollapsed) return;
+    promptPreviewScrollRef.current?.scrollTo({ top: 0 });
+  }, [view, promptPreview, isPromptPreviewCollapsed]);
+
+  useEffect(() => {
+    if (!isPromptPreviewFullscreen) return;
+    promptPreviewFullscreenScrollRef.current?.scrollTo({ top: 0 });
+  }, [isPromptPreviewFullscreen, promptPreview]);
+
   const getScoreLabel = (score: number): string => {
     if (score >= 90) return t('scoreExcellent');
     if (score >= 70) return t('scoreGood');
@@ -737,14 +996,18 @@ export function PromptOptimizer({
   const handleTemplateChange = (templateId: string) => {
     setSelectedTemplate(templateId);
     const template = BUILTIN_META_PROMPTS.find((item) => item.id === templateId);
-    if (!template) return;
+    if (cacheKey) {
+      savePromptOptimizerPreference(cacheKey, { templateId });
+    }
 
-    const settings = getOptimizationSettings();
-    saveOptimizationSettings({
-      ...settings,
-      analysisPrompt: template.prompt,
-      selectedTemplate: templateId,
-    });
+    if (template) {
+      const settings = getOptimizationSettings();
+      saveOptimizationSettings({
+        ...settings,
+        analysisPrompt: template.prompt,
+        selectedTemplate: templateId,
+      });
+    }
   };
 
   const runOptimizeOnce = async (
@@ -879,6 +1142,33 @@ export function PromptOptimizer({
       setIsPromptPreviewCollapsed(false);
     }
     setIsPromptPreviewFullscreen((prev) => !prev);
+  };
+
+  const handleVerificationFileProcessingChange = (rawValue: string) => {
+    const nextOverride = rawValue && isFileProcessingMode(rawValue) ? rawValue : null;
+    setVerificationFileProcessingOverride(nextOverride);
+  };
+
+  const handleVerificationOcrProviderChange = (rawValue: string) => {
+    const nextOverride = rawValue && isOcrProvider(rawValue) ? rawValue : null;
+    setVerificationOcrProviderOverride(nextOverride);
+  };
+
+  const getOcrProviderLabel = (provider: OcrProvider): string => {
+    switch (provider) {
+      case 'paddle':
+        return 'PaddleOCR';
+      case 'paddle_vl':
+        return tEvaluation('ocrProviderPaddleVl');
+      case 'paddle_vl_1_5':
+        return tEvaluation('ocrProviderPaddleVl15');
+      case 'datalab':
+        return tEvaluation('ocrProviderDatalab');
+      case 'mineru':
+        return tEvaluation('ocrProviderMineru');
+      default:
+        return provider;
+    }
   };
 
   const buildEvaluationCases = (): VerificationCase[] => {
@@ -1034,7 +1324,9 @@ export function PromptOptimizer({
       );
       const refreshedEvaluationCases = buildEvaluationCases().map((item) => {
         const prevItem = prevEvaluationById.get(item.id);
-        return prevItem ? { ...item, selected: prevItem.selected } : item;
+        return prevItem
+          ? { ...item, selected: prevItem.selected, attachments: prevItem.attachments }
+          : item;
       });
       return [...refreshedEvaluationCases, ...manualCases];
     });
@@ -1154,6 +1446,7 @@ export function PromptOptimizer({
         caseId: item.id,
         caseName: item.name,
         output: '',
+        attachments: normalizeAttachments(item.attachments),
         expectedOutput: item.expectedOutput,
         beforeScore: item.beforeScore,
         beforePassed: item.beforePassed,
@@ -1184,17 +1477,41 @@ export function PromptOptimizer({
     const useJudgeEvaluation = Boolean(judgeModelId && enabledCriteria.length > 0);
     const testCaseById = new Map((evaluationDetail?.testCases || []).map((item) => [item.id, item]));
     const evaluationConfig = (evaluationDetail?.config || {}) as Record<string, unknown>;
+    const evaluationFileProcessing =
+      verificationFileProcessingOverride ?? resolveEvaluationFileProcessing(evaluationConfig);
+    const evaluationOcrProvider =
+      verificationOcrProviderOverride ?? resolveEvaluationOcrProvider(evaluationConfig);
     const verificationCaseConcurrency = resolveVerificationCaseConcurrency(
       evaluationConfig,
       selectedCases.length
     );
-    const verificationModelId = evaluationDetail?.modelId || selectedModelId;
-    const semanticJudgeModelId = selectedModelId || verificationModelId;
+    // Verification prioritizes the current analysis model; evaluation model is fallback only.
+    const verificationModelId = selectedModelId || evaluationDetail?.modelId || '';
 
     if (!verificationModelId) {
       setError(t('selectAnalyzeModelFirst'));
       setIsVerifying(false);
       return null;
+    }
+    const semanticJudgeModelId = verificationModelId;
+
+    const verificationModel = models.find((item) => item.id === verificationModelId);
+    const includeAttachmentRefs =
+      resolveEffectiveAttachmentMode(evaluationFileProcessing, verificationModel?.supportsVision ?? true) !==
+      'none';
+
+    if (testCaseById.size > 0) {
+      setVerificationCases((prev) =>
+        prev.map((item) => {
+          if (item.source !== 'evaluation' || !item.testCaseId) return item;
+          const resolvedCase = testCaseById.get(item.testCaseId);
+          if (!resolvedCase) return item;
+          return {
+            ...item,
+            attachments: normalizeAttachments(resolvedCase.attachments),
+          };
+        })
+      );
     }
 
     setVerificationMode(useJudgeEvaluation ? 'judge' : 'fallback');
@@ -1210,18 +1527,29 @@ export function PromptOptimizer({
         const caseInput = evaluationTestCase?.inputText ?? testCase.input;
         const caseVariables = (evaluationTestCase?.inputVariables as Record<string, string>) || testCase.inputVariables || {};
         const expectedOutput = evaluationTestCase?.expectedOutput ?? testCase.expectedOutput;
+        const attachments = normalizeAttachments(evaluationTestCase?.attachments ?? testCase.attachments);
+        updateRunningResult(testCase.id, {
+          attachments,
+          expectedOutput: expectedOutput || undefined,
+        });
         const testMessages = buildCaseMessages(
           promptSnapshot.messages,
           promptSnapshot.content,
           caseInput,
           caseVariables
         );
+        const modelMessages =
+          includeAttachmentRefs && attachments.length > 0
+            ? appendAttachmentsToMessages(testMessages, attachments)
+            : testMessages;
 
         const response = await chatApi.complete({
           modelId: verificationModelId,
-          messages: testMessages,
+          messages: modelMessages,
           saveTrace: false,
           isEvalCase: true,
+          fileProcessing: evaluationFileProcessing,
+          ocrProvider: evaluationOcrProvider,
         }, signal);
 
         let afterScore: number | undefined;
@@ -1297,6 +1625,7 @@ export function PromptOptimizer({
 
         updateRunningResult(testCase.id, {
           output: response.content,
+          attachments,
           expectedOutput: expectedOutput || undefined,
           afterScore,
           afterPassed,
@@ -1311,6 +1640,7 @@ export function PromptOptimizer({
         }
         updateRunningResult(testCase.id, {
           status: 'error',
+          attachments: normalizeAttachments(testCase.attachments),
           errorMessage: verifyError instanceof Error ? verifyError.message : t('executionFailed'),
         });
       }
@@ -1630,27 +1960,6 @@ export function PromptOptimizer({
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-cyan-400 light:text-cyan-600" />
-          <h3 className="text-lg font-medium text-slate-200 light:text-slate-800">
-            {t('aiOptimization')}
-          </h3>
-        </div>
-        <div className="flex items-center">
-          {onOpenSettings && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onOpenSettings}
-              title={t('configureOptimization')}
-            >
-              <Settings className="w-4 h-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
       <div className="grid gap-3 xl:grid-cols-3 mb-4">
         <div className="p-3 bg-slate-800/50 light:bg-slate-100 rounded-lg border border-slate-700 light:border-slate-200">
           <label className="block text-xs text-slate-400 light:text-slate-600 mb-2">
@@ -2142,7 +2451,7 @@ export function PromptOptimizer({
                   </button>
                 </div>
                 {!isPromptPreviewCollapsed ? (
-                  <div className="max-h-[72vh] overflow-y-auto pt-6 pb-3 px-3">
+                  <div ref={promptPreviewScrollRef} className="max-h-[72vh] overflow-y-auto pt-6 pb-3 px-3">
                     <OutputRenderer
                       content={promptPreview || t('emptyPromptPreview')}
                       preferences={{ format: 'auto' }}
@@ -2242,6 +2551,53 @@ export function PromptOptimizer({
                       : t('autoEvaluationPending')}
                 </Badge>
               </div>
+              <div className="mb-3 rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white px-2.5 py-2 text-[11px] text-slate-500 light:text-slate-600 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-slate-400 light:text-slate-700 shrink-0">
+                  <Paperclip className="w-3.5 h-3.5" />
+                  {tEvaluation('fileProcessing')}:
+                </span>
+                <select
+                  value={verificationFileProcessingOverride ?? ''}
+                  onChange={(event) => handleVerificationFileProcessingChange(event.target.value)}
+                  disabled={isVerifying || isAutoPipelineRunning}
+                  className="h-7 min-w-[140px] rounded border border-slate-700 light:border-slate-300 bg-slate-900/60 light:bg-white px-2 text-[11px] text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:opacity-60"
+                >
+                  <option value="">
+                    {`${t('default')} (${tEvaluation(getFileProcessingLabelKey(currentVerificationAttachmentHandling.configuredMode))})`}
+                  </option>
+                  {FILE_PROCESSING_MODES.map((mode) => (
+                    <option key={`verification_file_processing_${mode}`} value={mode}>
+                      {tEvaluation(getFileProcessingLabelKey(mode))}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-slate-400 light:text-slate-700">
+                  {'->'} {tEvaluation(getFileProcessingLabelKey(currentVerificationAttachmentHandling.effectiveMode))}
+                </span>
+                {currentVerificationAttachmentHandling.effectiveMode === 'ocr' && (
+                  <>
+                    <span className="text-slate-400 light:text-slate-700">OCR:</span>
+                    <select
+                      value={verificationOcrProviderOverride ?? ''}
+                      onChange={(event) => handleVerificationOcrProviderChange(event.target.value)}
+                      disabled={isVerifying || isAutoPipelineRunning}
+                      className="h-7 min-w-[150px] rounded border border-slate-700 light:border-slate-300 bg-slate-900/60 light:bg-white px-2 text-[11px] text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:opacity-60"
+                    >
+                      <option value="">
+                        {`${t('default')} (${currentVerificationAttachmentHandling.ocrProvider ? getOcrProviderLabel(currentVerificationAttachmentHandling.ocrProvider) : tEvaluation('ocrProviderFollow')})`}
+                      </option>
+                      {OCR_PROVIDERS.map((provider) => (
+                        <option key={`verification_ocr_provider_${provider}`} value={provider}>
+                          {getOcrProviderLabel(provider)}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <span className="ml-auto">
+                  {t('attachments')}: {currentVerificationAttachmentHandling.attachmentCount}
+                </span>
+              </div>
 
               {verificationResults.length > 0 ? (
                 <>
@@ -2321,6 +2677,7 @@ export function PromptOptimizer({
                             const isExpanded = expandedResultCaseId === result.caseId;
                             const criterionEntries = Object.entries(result.criterionScores || {});
                             const feedbackEntries = Object.entries(result.judgeFeedback || {});
+                            const caseAttachments = result.attachments || [];
                             const feedbackSummary = feedbackEntries
                               .map(([name, feedback]) => {
                                 const label = name === 'semantic_match' ? t('expectedOutput') : name;
@@ -2441,9 +2798,35 @@ export function PromptOptimizer({
                                               (result.status === 'running'
                                                 ? t('verifying')
                                                 : result.errorMessage || '-')}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                      {caseAttachments.length > 0 && (
+                                        <div className="mb-3">
+                                          <div className="text-slate-400 light:text-slate-600 mb-1">{t('attachments')}</div>
+                                          <div className="grid gap-1 sm:grid-cols-2">
+                                            {caseAttachments.map((attachment) => (
+                                              <button
+                                                type="button"
+                                                key={`${result.caseId}_${attachment.fileId}`}
+                                                onClick={() => setPreviewAttachment(attachment)}
+                                                className="rounded border border-slate-700/80 light:border-slate-200 bg-slate-900/20 light:bg-white px-2 py-1.5 flex items-center justify-between gap-2"
+                                              >
+                                                <span
+                                                  className="text-slate-300 light:text-slate-700 truncate"
+                                                  title={attachment.name}
+                                                >
+                                                  {attachment.name}
+                                                </span>
+                                                <span className="text-[11px] text-slate-500 shrink-0">
+                                                  {attachment.type}
+                                                </span>
+                                              </button>
+                                            ))}
                                           </div>
                                         </div>
-                                      </div>
+                                      )}
 
                                       {criterionEntries.length > 0 && (
                                         <div className="mb-3">
@@ -2626,6 +3009,9 @@ export function PromptOptimizer({
                           {typeof item.historicalPassRate === 'number'
                             ? ` ${(item.historicalPassRate * 100).toFixed(0)}%`
                             : ''}
+                          {item.attachments && item.attachments.length > 0
+                            ? ` | ${t('attachments')} ${item.attachments.length}`
+                            : ''}
                         </div>
                       </div>
                       <div className="text-[11px] text-slate-500">
@@ -2778,7 +3164,7 @@ export function PromptOptimizer({
                 <Minimize2 className="w-4 h-4" />
               </button>
             </div>
-            <div className="h-full overflow-auto pt-10 px-3 pb-3">
+            <div ref={promptPreviewFullscreenScrollRef} className="h-full overflow-auto pt-10 px-3 pb-3">
               <OutputRenderer
                 content={promptPreview || t('emptyPromptPreview')}
                 preferences={{ format: 'auto' }}
@@ -2788,6 +3174,12 @@ export function PromptOptimizer({
           </div>
         </div>
       )}
+
+      <AttachmentModal
+        attachment={previewAttachment}
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+      />
     </div>
   );
 }

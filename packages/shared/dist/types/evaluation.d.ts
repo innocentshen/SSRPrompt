@@ -135,6 +135,7 @@ export interface EvaluationRun {
     id: string;
     evaluationId: string;
     status: EvaluationStatus;
+    title: string | null;
     results: Record<string, unknown>;
     errorMessage: string | null;
     totalTokensInput: number;

@@ -31,9 +31,10 @@ import {
   AlertCircle,
   Settings2,
   Globe,
+  Lock,
   Play,
 } from 'lucide-react';
-import { Button, Input, Modal, Badge, Select, Toggle, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector, StopIndicator } from '../components/ui';
+import { Button, Input, Modal, Badge, Select, OutputRenderer, OutputRendererControls, Tabs, Collapsible, ModelSelector, StopIndicator } from '../components/ui';
 import { MessageList, ParameterPanel, VariableEditor, DebugHistory, PromptOptimizer, PromptObserver, StructuredOutputEditor, ThinkingBlock, AttachmentList, AttachmentModal, PromptTestPanel, OcrResultsPanel, ChatTranscript, SuggestionDiffPreview } from '../components/Prompt';
 import { ReasoningSelector } from '../components/Common/ReasoningSelector';
 import type { AutoOptimizeContext, DebugRun } from '../components/Prompt';
@@ -48,6 +49,10 @@ import { inferReasoningSupport } from '../lib/model-capabilities';
 import { getFileInputAccept, isSupportedFileType } from '../lib/file-utils';
 import { formatDateTime } from '../lib/date-utils';
 import { getErrorMessage } from '../lib/error-messages';
+import {
+  getPromptOptimizerPreference,
+  savePromptOptimizerPreference,
+} from '../lib/prompt-optimizer-preferences';
 import { smartReplace, applyPatch } from '../lib/text-utils';
 import { toApiOutputSchema, toFrontendOutputSchema } from '../lib/output-schema';
 import { buildExpiresAtByPreset, generateSharePassword, getShareExpirePreset, type ShareExpirePreset } from '../lib/share-link-settings';
@@ -182,9 +187,6 @@ export function PromptsPage() {
   const [promptMessages, setPromptMessages] = useState<PromptMessage[]>([]);
   const [promptConfig, setPromptConfig] = useState<PromptConfig>(DEFAULT_PROMPT_CONFIG);
   const [promptVariables, setPromptVariables] = useState<PromptVariable[]>([]);
-  const [promptApiEnabled, setPromptApiEnabled] = useState(false);
-  const [promptApiVersionMode, setPromptApiVersionMode] = useState<'latest' | 'fixed'>('latest');
-  const [promptApiFixedVersion, setPromptApiFixedVersion] = useState('');
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [testInput, setTestInput] = useState('');
   const [testOutput, setTestOutput] = useState('');
@@ -236,8 +238,9 @@ export function PromptsPage() {
   const isFinalizingDragRef = useRef(false);
   const selectPromptRequestIdRef = useRef(0);
   const initializedPromptIdRef = useRef<string | null>(null);
-  const [publishPromptModal, setPublishPromptModal] = useState<{ promptId: string; step: 'confirm' | 'done' } | null>(null);
+  const [publishPromptModal, setPublishPromptModal] = useState<{ promptId: string } | null>(null);
   const [publishingPrompt, setPublishingPrompt] = useState(false);
+  const [returnToShareAfterPublishPromptClose, setReturnToShareAfterPublishPromptClose] = useState(false);
   const [privateShareModalOpen, setPrivateShareModalOpen] = useState(false);
   const [privateShareLink, setPrivateShareLink] = useState<ShareLink | null>(null);
   const [privateShareExpirePreset, setPrivateShareExpirePreset] = useState<ShareExpirePreset>('30d');
@@ -245,6 +248,7 @@ export function PromptsPage() {
   const [privateSharePassword, setPrivateSharePassword] = useState('');
   const [privateShareLoading, setPrivateShareLoading] = useState(false);
   const [privateShareSaving, setPrivateShareSaving] = useState(false);
+  const [hasPrivateShareLink, setHasPrivateShareLink] = useState(false);
 
   useEffect(() => {
     if (!editingGroupId) return;
@@ -320,28 +324,15 @@ export function PromptsPage() {
     // In multi-message mode, ignore promptContent diffs because content is derived from messages.
     const isMultiMessage = currentMessages.length > 0 || selectedMessages.length > 0;
     const contentChanged = isMultiMessage ? false : promptContent !== (selectedPrompt.content || '');
-    const selectedApiMode = selectedPrompt.apiVersionMode || 'latest';
-    const selectedApiFixedVersion =
-      selectedApiMode === 'fixed' && selectedPrompt.apiFixedVersion
-        ? String(selectedPrompt.apiFixedVersion)
-        : '';
-    const currentApiFixedVersion = promptApiVersionMode === 'fixed' ? promptApiFixedVersion.trim() : '';
-
     return (
       promptName !== selectedPrompt.name ||
       contentChanged ||
       messagesChanged ||
       JSON.stringify(promptConfig) !== JSON.stringify(selectedConfig) ||
       JSON.stringify(promptVariables) !== JSON.stringify(selectedPrompt.variables || []) ||
-      (selectedModel || '') !== (selectedPrompt.defaultModelId || '') ||
-      promptApiEnabled !== Boolean(selectedPrompt.apiEnabled) ||
-      promptApiVersionMode !== selectedApiMode ||
-      currentApiFixedVersion !== selectedApiFixedVersion
+      (selectedModel || '') !== (selectedPrompt.defaultModelId || '')
     );
   }, [
-    promptApiEnabled,
-    promptApiFixedVersion,
-    promptApiVersionMode,
     promptConfig,
     promptContent,
     promptMessages,
@@ -357,37 +348,46 @@ export function PromptsPage() {
     return prompts.find((p) => p.id === publishPromptModal.promptId) ?? null;
   }, [publishPromptModal, selectedPrompt, prompts]);
 
-  const publishPromptShareUrl = useMemo(() => {
-    if (!publishPromptModal) return '';
-    const url = new URL('/plaza', window.location.origin);
-    url.searchParams.set('promptId', publishPromptModal.promptId);
-    return url.toString();
-  }, [publishPromptModal]);
-
   const privateSharePromptUrl = useMemo(() => {
     if (!privateShareLink) return '';
     const url = new URL(`/share/p/${privateShareLink.token}`, window.location.origin);
     return url.toString();
   }, [privateShareLink]);
 
-  const promptApiInvokeUrl = useMemo(() => {
-    if (!selectedPrompt?.id) return '';
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
-    return `${baseUrl}/open/prompts/${selectedPrompt.id}/invoke`;
-  }, [selectedPrompt?.id]);
+  useEffect(() => {
+    const promptId = selectedPrompt?.id;
+    if (!promptId) {
+      setPrivateShareLink(null);
+      setHasPrivateShareLink(false);
+      return;
+    }
 
-  const promptApiVersionOptions = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...(selectedPrompt?.currentVersion ? [selectedPrompt.currentVersion] : []),
-          ...versions.map((version) => version.version),
-        ])
-      )
-        .sort((a, b) => b - a)
-        .map((version) => ({ value: String(version), label: `v${version}` })),
-    [selectedPrompt?.currentVersion, versions]
-  );
+    let active = true;
+    void (async () => {
+      try {
+        const result = await shareApi.listLinks({
+          resourceType: 'prompt',
+          resourceId: promptId,
+          includeRevoked: false,
+          page: 1,
+          pageSize: 1,
+        });
+
+        if (!active) return;
+        const link = result.data[0] ?? null;
+        setPrivateShareLink(link);
+        setHasPrivateShareLink(link !== null);
+      } catch {
+        if (!active) return;
+        setPrivateShareLink(null);
+        setHasPrivateShareLink(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedPrompt?.id]);
 
   const promptIdFromUrl = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -476,12 +476,12 @@ export function PromptsPage() {
     setPromptMessages(toFrontendMessages(selectedPrompt.messages));
     setPromptConfig(toFrontendConfig(selectedPrompt.config));
     setPromptVariables(selectedPrompt.variables || []);
-    setPromptApiEnabled(Boolean(selectedPrompt.apiEnabled));
-    setPromptApiVersionMode((selectedPrompt.apiVersionMode || 'latest') as 'latest' | 'fixed');
-    setPromptApiFixedVersion(selectedPrompt.apiFixedVersion ? String(selectedPrompt.apiFixedVersion) : '');
+    const optimizerPreference = getPromptOptimizerPreference(selectedPrompt.id);
+    const currentRunModelId = selectedPrompt.defaultModelId || selectedModel || '';
     if (selectedPrompt.defaultModelId) {
       setSelectedModel(selectedPrompt.defaultModelId);
     }
+    setOptimizeModelId(optimizerPreference.modelId || currentRunModelId);
     loadVersions(selectedPrompt.id);
 
     setShowDebugDetail(null);
@@ -490,7 +490,7 @@ export function PromptsPage() {
     setEvalList([]);
     setEvalSummary(null);
     setEvalListLoaded(false);
-    setSelectedOptimizationEvaluationId('');
+    setSelectedOptimizationEvaluationId(optimizerPreference.evaluationId || '');
     setAnalysisResult(null);
 
     const cache = promptTestCacheByPromptId.get(selectedPrompt.id);
@@ -515,19 +515,15 @@ export function PromptsPage() {
       setTestOutput('');
       setTestThinking('');
     }
-  }, [loadVersions, selectedPrompt?.id]);
+  }, [loadVersions, selectedModel, selectedPrompt?.id]);
 
   useEffect(() => {
-    if (promptApiVersionMode !== 'fixed') return;
-    if (promptApiFixedVersion.trim().length > 0) return;
-
-    const fallbackVersion =
-      promptApiVersionOptions[0]?.value ||
-      (selectedPrompt?.currentVersion ? String(selectedPrompt.currentVersion) : '');
-    if (fallbackVersion) {
-      setPromptApiFixedVersion(fallbackVersion);
-    }
-  }, [promptApiFixedVersion, promptApiVersionMode, promptApiVersionOptions, selectedPrompt?.currentVersion]);
+    if (activeTab !== 'optimize' || !selectedPrompt || !selectedModel) return;
+    const optimizerPreference = getPromptOptimizerPreference(selectedPrompt.id);
+    if (optimizerPreference.modelId) return;
+    if (optimizeModelId === selectedModel) return;
+    setOptimizeModelId(selectedModel);
+  }, [activeTab, optimizeModelId, selectedModel, selectedPrompt?.id]);
 
   const handleSelectPrompt = async (promptId: string) => {
     if (loadingPromptId === promptId || selectedPrompt?.id === promptId) return;
@@ -685,19 +681,6 @@ export function PromptsPage() {
       return false;
     }
 
-    const parsedApiFixedVersion =
-      promptApiVersionMode === 'fixed'
-        ? Number.parseInt(promptApiFixedVersion.trim(), 10)
-        : null;
-
-    if (
-      promptApiVersionMode === 'fixed' &&
-      (!parsedApiFixedVersion || Number.isNaN(parsedApiFixedVersion) || parsedApiFixedVersion <= 0)
-    ) {
-      showToast('error', t('apiFixedVersionRequired', { defaultValue: '请设置固定可调用版本' }));
-      return false;
-    }
-
     setSaving(true);
     try {
       const contentToSave =
@@ -721,9 +704,6 @@ export function PromptsPage() {
         config: toApiConfig(promptConfig),
         variables: promptVariables,
         defaultModelId: selectedModel || undefined,
-        apiEnabled: promptApiEnabled,
-        apiVersionMode: promptApiVersionMode,
-        apiFixedVersion: promptApiVersionMode === 'fixed' ? parsedApiFixedVersion : null,
       });
 
       setSelectedPrompt(updatedPrompt as Prompt);
@@ -919,30 +899,21 @@ export function PromptsPage() {
     requestDeletePrompt(selectedPrompt.id);
   };
 
-  const handleCopyPromptShareLink = async (promptId: string) => {
-    try {
-      const url = new URL('/plaza', window.location.origin);
-      url.searchParams.set('promptId', promptId);
-      await navigator.clipboard.writeText(url.toString());
-      showToast('success', tCommon('linkCopied'));
-    } catch {
-      showToast('error', t('copyFailed'));
-    }
-  };
-
-  const handleCreatePublishedPromptLink = async (promptId: string) => {
-    await handleCopyPromptShareLink(promptId);
-    closePublishPromptModal();
-  };
-
-  const openPublishPromptModal = () => {
+  const openPublishPromptModal = (options?: { fromShareModal?: boolean }) => {
     if (!selectedPrompt || selectedPrompt.isPublic) return;
-    setPublishPromptModal({ promptId: selectedPrompt.id, step: 'confirm' });
+    setReturnToShareAfterPublishPromptClose(!!options?.fromShareModal);
+    setPublishPromptModal({ promptId: selectedPrompt.id });
   };
 
-  const closePublishPromptModal = () => {
-    if (publishingPrompt) return;
+  const closePublishPromptModal = (options?: { reopenShare?: boolean; force?: boolean }) => {
+    if (publishingPrompt && !options?.force) return;
+    const shouldReturnToShare =
+      (options?.reopenShare ?? true) && returnToShareAfterPublishPromptClose;
     setPublishPromptModal(null);
+    setReturnToShareAfterPublishPromptClose(false);
+    if (shouldReturnToShare) {
+      void openPrivateShareModal();
+    }
   };
 
   const handleConfirmPublishPrompt = async () => {
@@ -953,8 +924,15 @@ export function PromptsPage() {
       setSelectedPrompt((prev) => (prev && prev.id === updated.id ? (updated as Prompt) : prev));
       setPrompts((prev) => prev.map((p) => (p.id === updated.id ? { ...p, isPublic: true } : p)));
       invalidatePromptsCache(updated);
-      showToast('success', t('promptPublic'));
-      setPublishPromptModal((prev) => (prev ? { ...prev, step: 'done' } : prev));
+      const shareUrl = new URL('/plaza', window.location.origin);
+      shareUrl.searchParams.set('promptId', updated.id);
+      try {
+        await navigator.clipboard.writeText(shareUrl.toString());
+        showToast('success', tCommon('publishedAndLinkCopied', { defaultValue: '已公开，分享链接已自动复制' }));
+      } catch {
+        showToast('success', t('promptPublic'));
+      }
+      closePublishPromptModal({ reopenShare: false, force: true });
     } catch (e) {
       showToast('error', t('updateFailed') + ': ' + getErrorMessage(e));
     } finally {
@@ -979,26 +957,33 @@ export function PromptsPage() {
     if (!selectedPrompt) return;
     setPrivateShareModalOpen(true);
     setPrivateShareLoading(true);
+    setPrivateSharePassword('');
     try {
-      const link = await shareApi.createLink({
+      const result = await shareApi.listLinks({
         resourceType: 'prompt',
         resourceId: selectedPrompt.id,
-        allowCopy: true,
+        includeRevoked: false,
+        page: 1,
+        pageSize: 1,
       });
+      const link = result.data[0] ?? null;
       setPrivateShareLink(link);
-      setPrivateShareExpirePreset(getShareExpirePreset(link.expiresAt));
-      setPrivateSharePasswordMode(link.hasPassword ? 'custom' : 'none');
-      setPrivateSharePassword('');
+      setHasPrivateShareLink(link !== null);
+      setPrivateShareExpirePreset(link ? getShareExpirePreset(link.expiresAt) : '30d');
+      setPrivateSharePasswordMode(link?.hasPassword ? 'custom' : 'none');
     } catch (error) {
       showToast('error', getErrorMessage(error));
-      setPrivateShareModalOpen(false);
+      setPrivateShareLink(null);
+      setHasPrivateShareLink(false);
+      setPrivateShareExpirePreset('30d');
+      setPrivateSharePasswordMode('none');
     } finally {
       setPrivateShareLoading(false);
     }
   };
 
-  const closePrivateShareModal = () => {
-    if (privateShareSaving) return;
+  const closePrivateShareModal = (options?: { force?: boolean }) => {
+    if (privateShareSaving && !options?.force) return;
     setPrivateShareModalOpen(false);
     setPrivateShareLink(null);
     setPrivateShareExpirePreset('30d');
@@ -1007,25 +992,35 @@ export function PromptsPage() {
   };
 
   const handleCreatePrivateShareLink = async () => {
-    if (!privateShareLink) return;
+    if (!selectedPrompt) return;
 
-    if (privateSharePasswordMode === 'custom' && !privateSharePassword.trim() && !privateShareLink.hasPassword) {
+    if (privateSharePasswordMode === 'custom' && !privateSharePassword.trim() && !privateShareLink?.hasPassword) {
       showToast('error', tCommon('privateSharePasswordRequired'));
       return;
     }
 
+    let shouldCloseModal = false;
     setPrivateShareSaving(true);
     try {
-      const updated = await shareApi.updateLink(privateShareLink.id, {
-        allowCopy: true,
-        expiresAt: buildExpiresAtByPreset(privateShareExpirePreset),
-        ...(privateSharePasswordMode === 'none' ? { clearPassword: true } : {}),
-        ...(privateSharePasswordMode !== 'none' && privateSharePassword.trim()
-          ? { password: privateSharePassword.trim() }
-          : {}),
-      });
+      const expiresAt = buildExpiresAtByPreset(privateShareExpirePreset);
+      const password = privateSharePassword.trim();
+      const updated = privateShareLink
+        ? await shareApi.updateLink(privateShareLink.id, {
+            allowCopy: true,
+            expiresAt,
+            ...(privateSharePasswordMode === 'none' ? { clearPassword: true } : {}),
+            ...(privateSharePasswordMode !== 'none' && password ? { password } : {}),
+          })
+        : await shareApi.createLink({
+            resourceType: 'prompt',
+            resourceId: selectedPrompt.id,
+            allowCopy: true,
+            expiresAt,
+            ...(privateSharePasswordMode !== 'none' && password ? { password } : {}),
+          });
 
       setPrivateShareLink(updated);
+      setHasPrivateShareLink(true);
       setPrivateShareExpirePreset(getShareExpirePreset(updated.expiresAt));
       setPrivateSharePasswordMode(updated.hasPassword ? 'custom' : 'none');
       setPrivateSharePassword('');
@@ -1033,12 +1028,56 @@ export function PromptsPage() {
       const shareUrl = new URL(`/share/p/${updated.token}`, window.location.origin).toString();
       await navigator.clipboard.writeText(shareUrl);
       showToast('success', tCommon('privateShareCreatedAndCopied'));
+      shouldCloseModal = true;
     } catch (error) {
       showToast('error', getErrorMessage(error));
     } finally {
       setPrivateShareSaving(false);
+      if (shouldCloseModal) {
+        closePrivateShareModal({ force: true });
+      }
     }
   };
+
+  const handleCopyPrivatePromptShareUrl = async () => {
+    if (!privateSharePromptUrl) return;
+    try {
+      await navigator.clipboard.writeText(privateSharePromptUrl);
+      showToast('success', tCommon('linkCopied'));
+    } catch {
+      showToast('error', t('copyFailed'));
+    }
+  };
+
+  const handleDisablePrivateShareLink = async () => {
+    if (!privateShareLink || privateShareSaving) return;
+    let shouldCloseModal = false;
+    setPrivateShareSaving(true);
+    try {
+      await shareApi.revokeLink(privateShareLink.id);
+      setPrivateShareLink(null);
+      setHasPrivateShareLink(false);
+      setPrivateShareExpirePreset('30d');
+      setPrivateSharePasswordMode('none');
+      setPrivateSharePassword('');
+      showToast('success', tCommon('linkShareDisabled', { defaultValue: '已关闭链接分享' }));
+      shouldCloseModal = true;
+    } catch (error) {
+      showToast('error', getErrorMessage(error));
+    } finally {
+      setPrivateShareSaving(false);
+      if (shouldCloseModal) {
+        closePrivateShareModal({ force: true });
+      }
+    }
+  };
+
+  const shareChoiceButtonClass = (active: boolean) =>
+    `px-3 py-2 rounded-xl border text-sm font-medium transition-all ${
+      active
+        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 shadow-sm light:border-cyan-300 light:bg-cyan-50 light:text-cyan-700'
+        : 'border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:bg-slate-800 light:border-slate-200 light:bg-white light:text-slate-600 light:hover:border-slate-300 light:hover:bg-slate-50'
+    }`;
 
   const handleRestoreVersion = async (version: PromptVersion) => {
     // Restore snapshot fields when available
@@ -1256,6 +1295,13 @@ export function PromptsPage() {
     }
   };
 
+  const handleOptimizeModelChange = useCallback((modelId: string) => {
+    setOptimizeModelId(modelId);
+    if (selectedPrompt?.id) {
+      savePromptOptimizerPreference(selectedPrompt.id, { modelId });
+    }
+  }, [selectedPrompt?.id]);
+
   const ensureOptimizationEvaluationContext = useCallback(async (): Promise<EvaluationSummary | null> => {
     if (!selectedPrompt) {
       setEvalList([]);
@@ -1278,11 +1324,24 @@ export function PromptsPage() {
       setEvalList(nextList);
       setEvalListLoaded(true);
 
+      if (nextSelectedId && !nextList.some((item) => item.id === nextSelectedId)) {
+        nextSelectedId = '';
+        setSelectedOptimizationEvaluationId('');
+        savePromptOptimizerPreference(selectedPrompt.id, { evaluationId: '' });
+      }
+
       if (!nextSelectedId && nextList.length > 0) {
         const defaultEvaluation = nextList.find((item) => item.runCount > 0) || nextList[0];
         nextSelectedId = defaultEvaluation?.id || '';
         setSelectedOptimizationEvaluationId(nextSelectedId);
+        savePromptOptimizerPreference(selectedPrompt.id, { evaluationId: nextSelectedId });
       }
+    }
+
+    if (nextSelectedId && !nextList.some((item) => item.id === nextSelectedId)) {
+      nextSelectedId = '';
+      setSelectedOptimizationEvaluationId('');
+      savePromptOptimizerPreference(selectedPrompt.id, { evaluationId: '' });
     }
 
     if (!nextSelectedId) {
@@ -1389,6 +1448,9 @@ export function PromptsPage() {
   // Phase 3: Handle evaluation selection change
   const handleEvaluationSelect = async (evaluationId: string) => {
     setSelectedOptimizationEvaluationId(evaluationId);
+    if (selectedPrompt?.id) {
+      savePromptOptimizerPreference(selectedPrompt.id, { evaluationId });
+    }
     if (!selectedPrompt || !evaluationId) {
       setEvalSummary(null);
       return;
@@ -2213,53 +2275,33 @@ export function PromptsPage() {
                   type="text"
                   value={promptName}
                   onChange={(e) => setPromptName(e.target.value)}
-                  className="text-lg font-medium text-white light:text-slate-900 bg-transparent border-none focus:outline-none"
+                  className="min-w-[112px] max-w-[380px] text-lg font-medium text-white light:text-slate-900 bg-transparent border-none focus:outline-none"
+                  style={{ width: `${Math.min(28, Math.max(8, (promptName || '').trim().length + 2))}ch` }}
                 />
-                <Badge variant="info">v{selectedPrompt.currentVersion}</Badge>
                 {hasUnsavedChanges && <Badge variant="warning">{t('unsaved')}</Badge>}
                 <button
-                  onClick={() => {
-                    if (!selectedPrompt.isPublic) {
-                      openPublishPromptModal();
-                      return;
-                    }
-                    void handleSetPromptPrivate();
-                  }}
+                  type="button"
+                  onClick={() => void openPrivateShareModal()}
                   disabled={saving || publishingPrompt}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
-                    selectedPrompt.isPublic
-                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-700'
-                      : 'border-slate-600/70 bg-slate-800/70 text-slate-200 hover:bg-slate-700 light:border-slate-300 light:bg-slate-100 light:text-slate-600 light:hover:bg-slate-200'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  title={selectedPrompt.isPublic ? t('clickToPrivate') : t('clickToPublic')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700/60 light:border-slate-200 bg-slate-900/50 light:bg-slate-50 px-2 py-1 transition-colors hover:border-cyan-400/50 hover:bg-slate-800/80 light:hover:border-cyan-300 light:hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Globe className="w-3.5 h-3.5" />
-                  {selectedPrompt.isPublic ? t('public') : t('private')}
-                </button>
-                <div className="inline-flex items-center gap-1">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void openPrivateShareModal()}
-                    disabled={saving || publishingPrompt}
-                    className="h-8 px-3"
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+                      selectedPrompt.isPublic
+                        ? 'bg-emerald-500/20 text-emerald-200 light:bg-emerald-100 light:text-emerald-700'
+                        : 'bg-cyan-500/20 text-cyan-200 light:bg-cyan-100 light:text-cyan-700'
+                    }`}
                   >
-                    <Link className="w-4 h-4" />
-                    <span>{tCommon('privateShare')}</span>
-                  </Button>
-                  {selectedPrompt.isPublic && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void handleCopyPromptShareLink(selectedPrompt.id)}
-                      disabled={saving || publishingPrompt}
-                      className="h-8 px-3"
-                    >
-                      <Link className="w-4 h-4" />
-                      <span>{tCommon('shareLink')}</span>
-                    </Button>
+                    {selectedPrompt.isPublic ? <Globe className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                    <span>{selectedPrompt.isPublic ? t('public') : tCommon('onlyMeVisible', { defaultValue: '仅我可见' })}</span>
+                  </span>
+                  {hasPrivateShareLink && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-1 text-xs font-medium text-amber-200 light:bg-amber-100 light:text-amber-700">
+                      <Link className="w-3.5 h-3.5" />
+                      <span>{tCommon('linkAccessEnabled', { defaultValue: '已开启链接分享' })}</span>
+                    </span>
                   )}
-                </div>
+                </button>
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setShowCompare(true)}>
@@ -2382,64 +2424,6 @@ export function PromptsPage() {
                           onSelect={setSelectedModel}
                           placeholder={t("configureModelFirst")}
                         />
-                      </div>
-
-                      <div className="p-3 bg-slate-800/50 light:bg-white rounded-lg border border-slate-700 light:border-slate-200 space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-xs text-slate-300 light:text-slate-700 font-medium">
-                              {t('promptApiAccessTitle', { defaultValue: 'API 调用' })}
-                            </p>
-                            <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
-                              {t('promptApiEnablePromptHint', { defaultValue: '仅开启后，外部系统才可通过统一 URL 调用该 Prompt。' })}
-                            </p>
-                          </div>
-                          <Toggle enabled={promptApiEnabled} onChange={setPromptApiEnabled} size="sm" />
-                        </div>
-
-                        {promptApiEnabled && (
-                          <div className="space-y-2">
-                            <Select
-                              label={t('promptApiVersionMode', { defaultValue: '默认调用版本' })}
-                              value={promptApiVersionMode}
-                              onChange={(e) => setPromptApiVersionMode(e.target.value as 'latest' | 'fixed')}
-                              options={[
-                                { value: 'latest', label: t('promptApiVersionLatest', { defaultValue: '最新版本（latest）' }) },
-                                { value: 'fixed', label: t('promptApiVersionFixed', { defaultValue: '固定版本' }) },
-                              ]}
-                            />
-                            {promptApiVersionMode === 'fixed' && (
-                              <Select
-                                label={t('promptApiFixedVersion', { defaultValue: '固定版本号' })}
-                                value={promptApiFixedVersion}
-                                onChange={(e) => setPromptApiFixedVersion(e.target.value)}
-                                options={
-                                  promptApiVersionOptions.length > 0
-                                    ? promptApiVersionOptions
-                                    : [
-                                        {
-                                          value: selectedPrompt?.currentVersion ? String(selectedPrompt.currentVersion) : '',
-                                          label: selectedPrompt?.currentVersion ? `v${selectedPrompt.currentVersion}` : 'v1',
-                                        },
-                                      ]
-                                }
-                              />
-                            )}
-                            <div className="rounded-md border border-slate-700 light:border-slate-200 bg-slate-950/60 light:bg-slate-100 px-2 py-1.5">
-                              <p className="text-[11px] text-slate-500 light:text-slate-600 mb-1">
-                                {t('promptApiInvokeUrl', { defaultValue: '调用 URL（示例）' })}
-                              </p>
-                              <code className="text-[11px] text-cyan-300 light:text-cyan-700 break-all">
-                                {promptApiInvokeUrl || '-'}
-                              </code>
-                              <p className="text-[11px] text-slate-500 light:text-slate-600 mt-1">
-                                {t('promptApiInvokeSpecHint', {
-                                  defaultValue: '调用规范（入参/回参/SSE 示例）见：设置 -> Prompt API',
-                                })}
-                              </p>
-                            </div>
-                          </div>
-                        )}
                       </div>
 
                       {/* Parameter panel */}
@@ -2596,7 +2580,7 @@ export function PromptsPage() {
                     models={models}
                     providers={providers}
                     selectedModelId={optimizeModelId}
-                    onModelChange={setOptimizeModelId}
+                    onModelChange={handleOptimizeModelChange}
                     onApplySuggestion={(suggestion) => {
                       if (!suggestion.originalText || !suggestion.suggestedText) {
                         return { applied: false };
@@ -2810,7 +2794,7 @@ export function PromptsPage() {
       <Modal
         isOpen={privateShareModalOpen}
         onClose={closePrivateShareModal}
-        title={tCommon('privateShareSettings')}
+        title={tCommon('shareSettings', { defaultValue: '分享设置' })}
         size="lg"
       >
         {privateShareLoading ? (
@@ -2825,31 +2809,101 @@ export function PromptsPage() {
               </div>
             </div>
           </div>
-        ) : !privateShareLink ? (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
-            <div className="flex items-start gap-2 text-sm text-rose-200 light:text-rose-700">
-              <AlertCircle className="mt-0.5 h-4 w-4" />
-              <div>
-                <p className="font-medium">{tCommon('privateShareCreateFailed')}</p>
-                <p className="mt-1 text-xs text-rose-200/80 light:text-rose-700/80">{tCommon('privateShareCreateFailedHint')}</p>
-              </div>
-            </div>
-          </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-xl border border-cyan-500/20 bg-gradient-to-r from-cyan-500/10 via-cyan-500/5 to-transparent p-4">
-              <p className="text-xs uppercase tracking-wider text-cyan-300 light:text-cyan-700">{tCommon('privateShareNoticeTitle')}</p>
-              <p className="mt-1 text-sm text-slate-200 light:text-slate-800">{tCommon('privateShareNoticeDesc')}</p>
+            <div className="space-y-3 rounded-2xl border border-slate-700/60 light:border-slate-200 bg-gradient-to-br from-slate-900/60 to-slate-900/30 light:from-white light:to-slate-50 p-5">
+              <p className="text-sm font-semibold text-slate-100 light:text-slate-900">
+                {tCommon('visibilityScope', { defaultValue: '可见范围' })}
+              </p>
+              <div className="inline-flex items-center rounded-xl border border-slate-700/70 light:border-slate-200 bg-slate-900/50 light:bg-slate-100 p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedPrompt || selectedPrompt.isPublic) return;
+                    closePrivateShareModal();
+                    openPublishPromptModal({ fromShareModal: true });
+                  }}
+                  disabled={!selectedPrompt || selectedPrompt.isPublic || publishingPrompt || saving || privateShareSaving}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                    selectedPrompt?.isPublic
+                      ? 'bg-emerald-500/20 text-emerald-200 light:bg-emerald-100 light:text-emerald-700'
+                      : 'text-slate-300 hover:text-slate-100 hover:bg-slate-800 light:text-slate-600 light:hover:text-slate-800 light:hover:bg-white'
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>{t('public')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedPrompt || !selectedPrompt.isPublic) return;
+                    void handleSetPromptPrivate();
+                  }}
+                  disabled={!selectedPrompt || !selectedPrompt.isPublic || publishingPrompt || saving || privateShareSaving}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                    !selectedPrompt?.isPublic
+                      ? 'bg-cyan-500/20 text-cyan-200 light:bg-cyan-100 light:text-cyan-700'
+                      : 'text-slate-300 hover:text-slate-100 hover:bg-slate-800 light:text-slate-600 light:hover:text-slate-800 light:hover:bg-white'
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>{tCommon('onlyMeVisible', { defaultValue: '仅我可见' })}</span>
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 light:text-slate-600">
+                {selectedPrompt?.isPublic
+                  ? tCommon('publicVisibilityHint', { defaultValue: '公开后将进入广场，其他人可查看并复用。' })
+                  : tCommon('privateVisibilityHint', { defaultValue: '仅你自己可见，不会出现在公开广场。' })}
+              </p>
             </div>
 
-            <div className="space-y-4 rounded-xl border border-slate-700/70 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 p-4">
-              <Input
-                label={tCommon('shareLink')}
-                value={privateSharePromptUrl}
-                readOnly
-                className="font-mono text-xs md:text-sm"
-                onFocus={(event) => event.currentTarget.select()}
-              />
+            <div className="space-y-4 rounded-2xl border border-slate-700/60 light:border-slate-200 bg-gradient-to-br from-slate-900/60 to-slate-900/30 light:from-white light:to-slate-50 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100 light:text-slate-900">
+                    {tCommon('linkAccess', { defaultValue: '链接访问' })}
+                  </p>
+                  <p className="text-xs text-slate-500 light:text-slate-600">
+                    {tCommon('linkAccessHint', { defaultValue: '开启后可通过链接访问；可设置有效期和密码。' })}
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
+                    privateShareLink
+                      ? 'bg-emerald-500/20 text-emerald-200 light:bg-emerald-100 light:text-emerald-700'
+                      : 'bg-slate-700/80 text-slate-200 light:bg-slate-200 light:text-slate-700'
+                  }`}
+                >
+                  {privateShareLink
+                    ? tCommon('linkAccessEnabled', { defaultValue: '已开启链接分享' })
+                    : tCommon('linkAccessDisabled', { defaultValue: '未开启链接分享' })}
+                </span>
+              </div>
+
+              {privateShareLink ? (
+                <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+                  <Input
+                    label={tCommon('shareLink')}
+                    value={privateSharePromptUrl}
+                    readOnly
+                    className="font-mono text-xs md:text-sm"
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleCopyPrivatePromptShareUrl()}
+                    className="h-10 px-3 shadow-sm border-slate-600/80 hover:border-cyan-400/50 light:border-slate-300 light:hover:border-cyan-300"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>{tCommon('copy')}</span>
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-600/70 light:border-slate-300 bg-slate-900/30 light:bg-white p-4 text-sm text-slate-300 light:text-slate-700">
+                  {tCommon('linkAccessDisabledHint', { defaultValue: '当前未开启链接访问。点击下方按钮即可创建链接。' })}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <p className="text-sm font-medium text-slate-200 light:text-slate-800">{tCommon('privateShareExpiry')}</p>
@@ -2865,11 +2919,7 @@ export function PromptsPage() {
                       key={item.key}
                       type="button"
                       onClick={() => setPrivateShareExpirePreset(item.key)}
-                      className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-                        privateShareExpirePreset === item.key
-                          ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
-                          : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
-                      }`}
+                      className={shareChoiceButtonClass(privateShareExpirePreset === item.key)}
                     >
                       {item.label}
                     </button>
@@ -2886,11 +2936,7 @@ export function PromptsPage() {
                       setPrivateSharePasswordMode('none');
                       setPrivateSharePassword('');
                     }}
-                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-                      privateSharePasswordMode === 'none'
-                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
-                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
-                    }`}
+                    className={shareChoiceButtonClass(privateSharePasswordMode === 'none')}
                   >
                     {tCommon('privateSharePasswordNone')}
                   </button>
@@ -2900,29 +2946,21 @@ export function PromptsPage() {
                       setPrivateSharePasswordMode('random');
                       setPrivateSharePassword(generateSharePassword(4));
                     }}
-                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-                      privateSharePasswordMode === 'random'
-                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
-                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
-                    }`}
+                    className={shareChoiceButtonClass(privateSharePasswordMode === 'random')}
                   >
                     {tCommon('privateSharePasswordRandom')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setPrivateSharePasswordMode('custom')}
-                    className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-                      privateSharePasswordMode === 'custom'
-                        ? 'border-cyan-400 bg-cyan-500/15 text-cyan-200 light:border-cyan-500 light:bg-cyan-50 light:text-cyan-700'
-                        : 'border-slate-700 light:border-slate-300 text-slate-300 light:text-slate-700 hover:border-cyan-500/50'
-                    }`}
+                    className={shareChoiceButtonClass(privateSharePasswordMode === 'custom')}
                   >
                     {tCommon('privateSharePasswordCustom')}
                   </button>
                 </div>
                 {privateSharePasswordMode !== 'none' && (
                   <Input
-                    label={privateShareLink.hasPassword ? tCommon('privateSharePasswordWithKeep') : tCommon('privateSharePassword')}
+                    label={privateShareLink?.hasPassword ? tCommon('privateSharePasswordWithKeep') : tCommon('privateSharePassword')}
                     type="text"
                     value={privateSharePassword}
                     onChange={(event) => setPrivateSharePassword(event.target.value.toUpperCase())}
@@ -2935,10 +2973,24 @@ export function PromptsPage() {
               </div>
             </div>
 
-            <div className="flex justify-end pt-1">
+            <div className="flex justify-end gap-2 pt-1">
+              {privateShareLink && (
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleDisablePrivateShareLink()}
+                  disabled={privateShareSaving}
+                  className="min-w-[132px] border-rose-500/40 text-rose-300 hover:bg-rose-500/15 hover:border-rose-400 light:border-rose-200 light:text-rose-600 light:hover:bg-rose-50"
+                >
+                  <span>{tCommon('disableLinkShare', { defaultValue: '关闭链接分享' })}</span>
+                </Button>
+              )}
               <Button className="min-w-[132px]" onClick={() => void handleCreatePrivateShareLink()} loading={privateShareSaving}>
                 <Link className="w-4 h-4" />
-                <span>{tCommon('privateShareCreateLink')}</span>
+                <span>
+                  {privateShareLink
+                    ? tCommon('saveAndCopyLink', { defaultValue: '保存并复制链接' })
+                    : tCommon('enableAndCopyLink', { defaultValue: '开启并复制链接' })}
+                </span>
               </Button>
             </div>
           </div>
@@ -2951,7 +3003,7 @@ export function PromptsPage() {
         title={t('publishPrompt')}
         size="md"
       >
-        {publishPromptModal && publishPromptModal.step === 'confirm' && (
+        {publishPromptModal && (
           <div className="space-y-4">
             {!publishPromptModalPrompt ? (
               <div className="text-sm text-slate-500 light:text-slate-600">{tCommon('loading')}</div>
@@ -2984,7 +3036,7 @@ export function PromptsPage() {
                 )}
 
                 <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
-                  <Button variant="ghost" onClick={closePublishPromptModal}>
+                  <Button variant="ghost" onClick={() => closePublishPromptModal()}>
                     {tCommon('cancel')}
                   </Button>
                   <Button onClick={() => void handleConfirmPublishPrompt()} loading={publishingPrompt}>
@@ -2993,29 +3045,6 @@ export function PromptsPage() {
                 </div>
               </>
             )}
-          </div>
-        )}
-
-        {publishPromptModal && publishPromptModal.step === 'done' && (
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm text-slate-200 light:text-slate-800">{t('publishPromptDone')}</p>
-              <p className="text-xs text-slate-500 light:text-slate-600 mt-1">{t('publishPromptDoneHint')}</p>
-            </div>
-            <Input
-              label={tCommon('shareLink')}
-              value={publishPromptShareUrl}
-              readOnly
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-700 light:border-slate-200">
-              <Button
-                onClick={() => void handleCreatePublishedPromptLink(publishPromptModal.promptId)}
-              >
-                <Link className="w-4 h-4" />
-                <span>{tCommon('privateShareCreateLink')}</span>
-              </Button>
-            </div>
           </div>
         )}
       </Modal>

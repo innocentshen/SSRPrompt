@@ -1119,6 +1119,7 @@ export class RunsService {
     userId: string,
     evaluationId: string,
     data?: {
+      title?: string | null;
       modelParameters?: Record<string, unknown>;
       testCaseIds?: string[];
     },
@@ -1148,6 +1149,7 @@ export class RunsService {
     }
 
     const totalCases = selectedTestCaseIds.length;
+    const normalizedTitle = typeof data?.title === 'string' ? data.title.trim() : null;
 
     // Build runConfig snapshot
     const runConfig: Record<string, unknown> = {
@@ -1168,6 +1170,7 @@ export class RunsService {
     const nextStatus = options?.status ?? 'running';
     const run = await runsRepository.create(evaluationId, {
       status: nextStatus,
+      title: normalizedTitle && normalizedTitle.length > 0 ? normalizedTitle : null,
       results: { totalCases, completedCases: 0 } as Prisma.JsonObject,
       modelParameters: data?.modelParameters as Prisma.JsonObject,
       runConfig: runConfig as Prisma.JsonObject,
@@ -1193,6 +1196,7 @@ export class RunsService {
     userId: string,
     evaluationId: string,
     data?: {
+      title?: string | null;
       modelParameters?: Record<string, unknown>;
       testCaseIds?: string[];
     }
@@ -1281,12 +1285,120 @@ export class RunsService {
   }
 
   /**
+   * Retry only errored test cases in the same run.
+   */
+  async retryErroredCases(userId: string, runId: string): Promise<EvaluationRun> {
+    const run = await prisma.evaluationRun.findUnique({
+      where: { id: runId },
+      include: {
+        evaluation: {
+          select: {
+            id: true,
+            userId: true,
+            testCases: {
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    if (!run || !run.evaluation) {
+      throw new AppError(404, 'NOT_FOUND', 'Run not found');
+    }
+    if (run.evaluation.userId !== userId) {
+      throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+    }
+    if (run.status === 'pending' || run.status === 'running') {
+      throw new AppError(409, 'CONFLICT', 'Run is already in progress');
+    }
+
+    const runConfig =
+      run.runConfig && typeof run.runConfig === 'object' && !Array.isArray(run.runConfig)
+        ? (run.runConfig as Prisma.JsonObject)
+        : {};
+    const scopedFromConfig = Array.isArray(runConfig.testCaseIds)
+      ? (runConfig.testCaseIds as unknown[])
+          .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
+    const availableTestCaseIds = new Set(run.evaluation.testCases.map((testCase) => testCase.id));
+    const scopeTestCaseIds = Array.from(
+      new Set(
+        scopedFromConfig.length > 0
+          ? scopedFromConfig
+          : run.evaluation.testCases.map((testCase) => testCase.id)
+      )
+    ).filter((id) => availableTestCaseIds.has(id));
+    if (scopeTestCaseIds.length === 0) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'No test cases in this run');
+    }
+
+    const erroredResults = await prisma.testCaseResult.findMany({
+      where: {
+        runId,
+        testCaseId: { in: scopeTestCaseIds },
+        errorMessage: { not: null },
+      },
+      select: {
+        testCaseId: true,
+        errorMessage: true,
+      },
+    });
+    const retryCaseIds = Array.from(
+      new Set(
+        erroredResults
+          .filter((item) => typeof item.errorMessage === 'string' && item.errorMessage.trim().length > 0)
+          .map((item) => item.testCaseId)
+      )
+    );
+    if (retryCaseIds.length === 0) {
+      throw new AppError(400, 'VALIDATION_ERROR', 'No errored test cases to retry');
+    }
+
+    const existingRunResults = (run.results || {}) as Record<string, unknown>;
+    const totalCases =
+      typeof existingRunResults.totalCases === 'number' && Number.isFinite(existingRunResults.totalCases)
+        ? existingRunResults.totalCases
+        : scopeTestCaseIds.length;
+
+    const updated = await runsRepository.update(runId, {
+      status: 'pending',
+      errorMessage: null,
+      completedAt: null,
+      runConfig: {
+        ...runConfig,
+        queueTask: 'evaluation.run',
+        retryCaseIds,
+      } as Prisma.JsonObject,
+      results: {
+        ...existingRunResults,
+        totalCases,
+      } as Prisma.JsonObject,
+    });
+
+    try {
+      await prisma.evaluation.update({
+        where: { id: run.evaluation.id },
+        data: { status: 'pending', completedAt: null },
+      });
+    } catch (error) {
+      console.error('Failed to update evaluation status for retry errored cases:', error);
+    }
+
+    enqueueEvaluationRun(userId, runId).catch((error) => {
+      console.error('Failed to enqueue retry-errored-cases run:', error);
+    });
+
+    return transformResponse(updated);
+  }
+
+  /**
    * Update a run
    */
   async update(
     userId: string,
     id: string,
     data: {
+      title?: string | null;
       status?: 'pending' | 'running' | 'completed' | 'failed';
       results?: Record<string, unknown>;
       errorMessage?: string | null;
@@ -1303,6 +1415,10 @@ export class RunsService {
     await this.evaluationsService.assertOwner(userId, run.evaluationId);
 
     const updateData: Prisma.EvaluationRunUpdateInput = {};
+    if (data.title !== undefined) {
+      const normalizedTitle = typeof data.title === 'string' ? data.title.trim() : '';
+      updateData.title = normalizedTitle.length > 0 ? normalizedTitle : null;
+    }
     if (data.status !== undefined) updateData.status = data.status;
     if (data.results !== undefined) updateData.results = data.results as Prisma.JsonObject;
     if (data.errorMessage !== undefined) updateData.errorMessage = data.errorMessage;

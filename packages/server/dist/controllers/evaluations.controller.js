@@ -37,6 +37,22 @@ export const evaluationsController = {
         res.json({ data: evaluation });
     },
     /**
+     * GET /prompts/:id/evaluations - Get evaluations for a prompt
+     */
+    async getByPromptId(req, res) {
+        const promptId = req.params.id;
+        const evaluations = await evaluationsService.getEvaluationsByPromptId(req.user.userId, promptId);
+        res.json({ data: evaluations });
+    },
+    /**
+     * GET /prompts/:id/evaluations/:evaluationId/summary - Get evaluation summary
+     */
+    async getSummary(req, res) {
+        const { evaluationId } = req.params;
+        const summary = await evaluationsService.getEvaluationSummary(req.user.userId, evaluationId);
+        res.json({ data: summary });
+    },
+    /**
      * POST /evaluations - Create evaluation
      */
     async create(req, res) {
@@ -232,6 +248,13 @@ export const runsController = {
      */
     async retryScores(req, res) {
         const run = await runsService.retryScores(req.user.userId, req.params.id);
+        res.json({ data: run });
+    },
+    /**
+     * POST /runs/:id/retry-errored-cases - Retry errored test cases in current run
+     */
+    async retryErroredCases(req, res) {
+        const run = await runsService.retryErroredCases(req.user.userId, req.params.id);
         res.json({ data: run });
     },
     /**

@@ -49,6 +49,7 @@ export type JudgeEvaluationStats = {
 
 export type RunAnalysisSummary = {
   runId: string;
+  runTitle: string | null;
   status: EvaluationStatus;
   startedAt: string;
   completedAt: string | null;
@@ -456,6 +457,7 @@ function summarizeRun(
 
   return {
     runId: run.id,
+    runTitle: run.title?.trim() || null,
     status: run.status,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
@@ -1079,6 +1081,44 @@ const ANALYSIS_MARKDOWN_LABELS: Record<'en' | 'zh-CN' | 'zh-TW' | 'ja', Analysis
   },
 };
 
+function getAnalysisRunScopeLabel(report: EvaluationAnalysisReport): string {
+  const labels: string[] = [];
+
+  const appendLabelFromSummary = (summary: unknown) => {
+    if (!summary || typeof summary !== 'object') return;
+    const record = summary as Record<string, unknown>;
+    const runTitle = typeof record.runTitle === 'string' ? record.runTitle.trim() : '';
+    const runId = typeof record.runId === 'string' ? record.runId : '';
+    if (runTitle) {
+      labels.push(runTitle);
+      return;
+    }
+    if (runId) {
+      labels.push(runId);
+    }
+  };
+
+  const analysisData =
+    report.analysisData && typeof report.analysisData === 'object'
+      ? (report.analysisData as Record<string, unknown>)
+      : {};
+  const runSummaries = analysisData.runSummaries;
+  if (Array.isArray(runSummaries)) {
+    runSummaries.forEach(appendLabelFromSummary);
+  }
+
+  const singleRunSummary = analysisData.run;
+  if (labels.length === 0 && singleRunSummary) {
+    appendLabelFromSummary(singleRunSummary);
+  }
+
+  if (labels.length === 0) {
+    return report.runIds.join(', ');
+  }
+
+  return Array.from(new Set(labels)).join(', ');
+}
+
 export function buildEvaluationAnalysisMarkdown(
   report: EvaluationAnalysisReport,
   evaluationName: string
@@ -1086,7 +1126,7 @@ export function buildEvaluationAnalysisMarkdown(
   const sanitizedSummaryMarkdown = sanitizeAnalysisMarkdown(report.summaryMarkdown);
   const labels = ANALYSIS_MARKDOWN_LABELS[resolveAnalysisLocale(report.locale)];
   const scopeLabel = report.scope === 'single' ? labels.singleRun : labels.multiRun;
-  const runScope = report.runIds.join(', ');
+  const runScope = getAnalysisRunScopeLabel(report);
   const headerLines = [
     `# ${labels.title}`,
     '',

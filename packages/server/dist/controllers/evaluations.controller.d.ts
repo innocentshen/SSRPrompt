@@ -12,6 +12,14 @@ export declare const evaluationsController: {
      */
     getById(req: Request, res: Response): Promise<void>;
     /**
+     * GET /prompts/:id/evaluations - Get evaluations for a prompt
+     */
+    getByPromptId(req: Request, res: Response): Promise<void>;
+    /**
+     * GET /prompts/:id/evaluations/:evaluationId/summary - Get evaluation summary
+     */
+    getSummary(req: Request, res: Response): Promise<void>;
+    /**
      * POST /evaluations - Create evaluation
      */
     create(req: Request, res: Response): Promise<void>;
@@ -89,6 +97,10 @@ export declare const runsController: {
      * POST /runs/:id/retry-scores - Retry AI scoring for an existing run
      */
     retryScores(req: Request, res: Response): Promise<void>;
+    /**
+     * POST /runs/:id/retry-errored-cases - Retry errored test cases in current run
+     */
+    retryErroredCases(req: Request, res: Response): Promise<void>;
     /**
      * PUT /runs/:id - Update run
      */

@@ -238,6 +238,60 @@ export function EvaluationResultsView({
   };
 
   const enabledCriteria = criteria.filter((criterion) => criterion.enabled);
+  const friendlyActiveErrorMessage = useMemo(() => {
+    const raw = activeResult?.errorMessage?.trim() || '';
+    if (!raw) return '';
+
+    const normalized = raw.toLowerCase();
+    const getLocalizedNetworkDetail = (detail: string): string => {
+      const normalizedDetail = detail.trim().toLowerCase();
+      if (!normalizedDetail) return detail;
+
+      const isCommonNetworkDetail =
+        normalizedDetail.includes('headers timeout') ||
+        normalizedDetail.includes('body timeout') ||
+        normalizedDetail.includes('request timeout') ||
+        normalizedDetail.includes('timed out') ||
+        normalizedDetail.includes('socket hang up') ||
+        /\b(etimedout|econnrefused|econnreset|enotfound|eai_again)\b/.test(normalizedDetail);
+
+      return isCommonNetworkDetail ? tCommon('errors.NETWORK_ERROR') : detail;
+    };
+
+    const providerCallPrefix = 'failed to call the model provider.';
+    if (normalized.startsWith(providerCallPrefix)) {
+      const detailMatch = raw.match(/\bdetail:\s*(.+)$/i);
+      if (detailMatch?.[1]) {
+        return t('friendlyNetworkErrorMessage', {
+          detail: getLocalizedNetworkDetail(detailMatch[1].trim()),
+          defaultValue: '调用模型服务失败（网络连接异常）。请检查网络、DNS、代理和服务可达性。详情：{{detail}}',
+        });
+      }
+      return t('friendlyFetchFailedMessage', {
+        defaultValue:
+          '调用模型服务失败。请检查 API Key、模型服务地址、网络连接或代理设置。',
+      });
+    }
+
+    if (normalized === 'fetch failed') {
+      return t(
+        'friendlyFetchFailedMessage',
+        {
+          defaultValue:
+            '调用模型服务失败。请检查 API Key、模型服务地址、网络连接或代理设置。',
+        }
+      );
+    }
+
+    if (/\b(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT)\b/i.test(raw)) {
+      return t('friendlyNetworkErrorMessage', {
+        detail: getLocalizedNetworkDetail(raw),
+        defaultValue: '调用模型服务失败（网络连接异常）。请检查网络、DNS、代理和服务可达性。详情：{{detail}}',
+      });
+    }
+
+    return raw;
+  }, [activeResult?.errorMessage, t, tCommon]);
 
   const passedCount = results.filter((result) => result.passed).length;
   const failedCount = results.length - passedCount;
@@ -481,10 +535,10 @@ export function EvaluationResultsView({
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
-                {activeResult.errorMessage && (
+                {friendlyActiveErrorMessage && (
                   <div className="p-3 bg-rose-950/30 light:bg-rose-50 rounded border border-rose-900/50 light:border-rose-200">
                     <p className="text-xs text-rose-400 light:text-rose-600 mb-1">{t('errorMessage')}</p>
-                    <div className="text-sm text-rose-300 light:text-rose-700">{activeResult.errorMessage}</div>
+                    <div className="text-sm text-rose-300 light:text-rose-700">{friendlyActiveErrorMessage}</div>
                   </div>
                 )}
 

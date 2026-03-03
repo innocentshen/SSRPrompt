@@ -34,6 +34,30 @@ function isStoredAttachments(value) {
         return typeof record.fileId === 'string' && typeof record.name === 'string' && typeof record.type === 'string';
     });
 }
+function normalizeCaseConcurrency(value) {
+    const parsed = typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+            ? Number(value)
+            : Number.NaN;
+    if (!Number.isFinite(parsed) || parsed <= 0)
+        return null;
+    return Math.max(1, Math.floor(parsed));
+}
+function getDefaultCaseConcurrencyFromEnv() {
+    const configured = normalizeCaseConcurrency(process.env.EVALUATION_CASE_CONCURRENCY);
+    return configured ?? 1;
+}
+function withEvaluationExecutionDefaults(evaluation) {
+    const defaultCaseConcurrency = getDefaultCaseConcurrencyFromEnv();
+    const nextConfig = evaluation.config && typeof evaluation.config === 'object' && !Array.isArray(evaluation.config)
+        ? { ...evaluation.config }
+        : {};
+    nextConfig.case_concurrency = defaultCaseConcurrency;
+    delete nextConfig.execution_mode;
+    evaluation.config = nextConfig;
+    return evaluation;
+}
 async function materializeAttachmentsForUser(fromUserId, toUserId, rawAttachments) {
     if (!rawAttachments || !Array.isArray(rawAttachments) || rawAttachments.length === 0)
         return [];
@@ -150,7 +174,7 @@ export class EvaluationsService {
                     }
                 }
             }
-            return transformResponse(evaluation);
+            return withEvaluationExecutionDefaults(transformResponse(evaluation));
         }
         // Lazy-migrate legacy base64 attachments to stored files for owner views.
         if (evaluation.userId === userId && evaluation.testCases && evaluation.testCases.length > 0) {
@@ -182,7 +206,7 @@ export class EvaluationsService {
                 testCase.attachments = migrated;
             }
         }
-        return transformResponse(evaluation);
+        return withEvaluationExecutionDefaults(transformResponse(evaluation));
     }
     async downloadAttachment(requesterUserId, evaluationId, fileId, range) {
         const evaluation = await evaluationsRepository.findByIdWithRelations(requesterUserId, evaluationId);
@@ -435,6 +459,281 @@ export class EvaluationsService {
     async updateOrder(userId, updates) {
         await evaluationsRepository.updateOrder(userId, updates);
     }
+    /**
+     * Get evaluations associated with a specific prompt.
+     * Returns lightweight list for the evaluation selector.
+     */
+    async getEvaluationsByPromptId(userId, promptId) {
+        const evaluations = await evaluationsRepository.findByPromptId(userId, promptId);
+        return evaluations.map((ev) => ({
+            id: ev.id,
+            name: ev.name,
+            modelName: ev.model?.name || ev.model?.modelId || 'Unknown',
+            judgeModelName: ev.judgeModel?.name || ev.judgeModel?.modelId || 'Unknown',
+            runCount: ev._count.runs,
+            latestRunAt: ev.runs[0]?.createdAt ? new Date(ev.runs[0].createdAt).toISOString() : null,
+            avgPassRate: 0, // Will be populated by getSummary if needed
+        }));
+    }
+    /**
+     * Get aggregated evaluation summary for a specific evaluation.
+     * Computes: average pass rate, criterion scores, latency, token usage,
+     * top failure cases, and recent trend delta.
+     */
+    async getEvaluationSummary(userId, evaluationId) {
+        const runs = await evaluationsRepository.findCompletedRunsByEvaluationId(userId, evaluationId);
+        if (runs.length === 0) {
+            // Initialization state: return evaluation metadata and test cases even before the first run.
+            const evaluation = await this.findById(userId, evaluationId);
+            const criteriaNames = (evaluation.criteria || [])
+                .filter((criterion) => criterion.enabled)
+                .map((criterion) => criterion.name);
+            const testCaseStats = (evaluation.testCases || []).map((testCase) => ({
+                testCaseId: testCase.id,
+                testCaseName: testCase.name,
+                inputText: testCase.inputText,
+                inputVariables: testCase.inputVariables || {},
+                expectedOutput: testCase.expectedOutput,
+                passCount: 0,
+                totalCount: 0,
+                latestPassed: false,
+                latestScore: 0,
+                latestModelOutput: '',
+            }));
+            return {
+                evaluationId,
+                evaluationName: evaluation.name,
+                modelName: evaluation.model?.name || evaluation.model?.modelId || 'Unknown',
+                judgeModelName: evaluation.judgeModel?.name || evaluation.judgeModel?.modelId || 'Unknown',
+                totalRuns: 0,
+                latestRunAt: null,
+                avgPassRate: 0,
+                avgCriterionScores: {},
+                avgLatencyMs: 0,
+                avgTokens: 0,
+                topFailures: [],
+                criteriaNames,
+                testCaseStats,
+            };
+        }
+        // All runs share the same evaluation - use the first one for metadata
+        const evaluation = runs[0].evaluation;
+        const evaluationName = evaluation.name;
+        const modelName = evaluation.model?.name || evaluation.model?.modelId || 'Unknown';
+        const judgeModelName = evaluation.judgeModel?.name || evaluation.judgeModel?.modelId || 'Unknown';
+        const criteriaNames = evaluation.criteria
+            .filter((c) => c.enabled)
+            .map((c) => c.name);
+        // Build test case name lookup
+        const testCaseNameMap = new Map();
+        const testCaseExpectedMap = new Map();
+        for (const tc of evaluation.testCases) {
+            testCaseNameMap.set(tc.id, tc.name);
+            testCaseExpectedMap.set(tc.id, tc.expectedOutput);
+        }
+        // Aggregate pass rates per run
+        const runPassRates = [];
+        let totalLatencyMs = 0;
+        let totalTokens = 0;
+        let totalResultCount = 0;
+        // Criterion score accumulation
+        const criterionScoreSums = {};
+        const criterionScoreCounts = {};
+        // Failure tracking per test case
+        const failureMap = new Map();
+        for (const run of runs) {
+            const results = run.testCaseResults;
+            if (results.length === 0)
+                continue;
+            const passedCount = results.filter((r) => r.passed).length;
+            runPassRates.push(passedCount / results.length);
+            for (const result of results) {
+                totalResultCount++;
+                totalLatencyMs += result.latencyMs;
+                totalTokens += result.tokensInput + result.tokensOutput;
+                // Accumulate criterion scores (handle Decimal types)
+                const scores = result.scores;
+                if (scores) {
+                    for (const [key, val] of Object.entries(scores)) {
+                        const numVal = typeof val === 'object' && val !== null
+                            ? Number(transformDecimal(val))
+                            : Number(val);
+                        if (!isNaN(numVal)) {
+                            criterionScoreSums[key] = (criterionScoreSums[key] || 0) + numVal;
+                            criterionScoreCounts[key] = (criterionScoreCounts[key] || 0) + 1;
+                        }
+                    }
+                }
+                // Track failures
+                if (!result.passed) {
+                    const existing = failureMap.get(result.testCaseId);
+                    if (existing) {
+                        existing.failCount++;
+                        existing.totalCount++;
+                        // Update latest output/feedback (runs are ordered desc, so first occurrence is latest)
+                    }
+                    else {
+                        failureMap.set(result.testCaseId, {
+                            failCount: 1,
+                            totalCount: 1,
+                            latestModelOutput: result.modelOutput || '',
+                            latestAiFeedback: result.aiFeedback || {},
+                            latestScores: transformDecimal(scores) || {},
+                        });
+                    }
+                }
+                else {
+                    // Track total count for passed results too
+                    const existing = failureMap.get(result.testCaseId);
+                    if (existing) {
+                        existing.totalCount++;
+                    }
+                }
+            }
+        }
+        // Calculate averages
+        const avgPassRate = runPassRates.length > 0
+            ? runPassRates.reduce((a, b) => a + b, 0) / runPassRates.length
+            : 0;
+        const avgCriterionScores = {};
+        for (const [key, sum] of Object.entries(criterionScoreSums)) {
+            avgCriterionScores[key] = sum / (criterionScoreCounts[key] || 1);
+        }
+        const avgLatencyMs = totalResultCount > 0 ? totalLatencyMs / totalResultCount : 0;
+        const avgTokens = totalResultCount > 0 ? totalTokens / totalResultCount : 0;
+        // Sort failures by fail count descending, take top 10
+        const topFailures = Array.from(failureMap.entries())
+            .sort(([, a], [, b]) => b.failCount - a.failCount)
+            .slice(0, 10)
+            .map(([testCaseId, data]) => ({
+            testCaseId,
+            testCaseName: testCaseNameMap.get(testCaseId) || 'Unknown',
+            failCount: data.failCount,
+            totalCount: data.totalCount,
+            latestModelOutput: data.latestModelOutput,
+            latestAiFeedback: data.latestAiFeedback,
+            expectedOutput: testCaseExpectedMap.get(testCaseId) || null,
+            latestScores: data.latestScores,
+        }));
+        // Build testCaseStats for ALL test cases (for the verification panel)
+        // Track per-testCase pass/fail across all runs
+        const testCaseAggMap = new Map();
+        // Process runs in order (newest first) to get "latest" values from first occurrence
+        for (const run of runs) {
+            for (const result of run.testCaseResults) {
+                const existing = testCaseAggMap.get(result.testCaseId);
+                if (existing) {
+                    existing.totalCount++;
+                    if (result.passed)
+                        existing.passCount++;
+                }
+                else {
+                    // First occurrence = latest run (runs are sorted desc)
+                    const scores = result.scores;
+                    const scoreValues = scores ? Object.values(scores).map(v => typeof v === 'object' && v !== null ? Number(transformDecimal(v)) : Number(v)).filter(n => !isNaN(n)) : [];
+                    const avgScore = scoreValues.length > 0
+                        ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
+                        : 0;
+                    testCaseAggMap.set(result.testCaseId, {
+                        passCount: result.passed ? 1 : 0,
+                        totalCount: 1,
+                        latestPassed: result.passed,
+                        latestScore: avgScore,
+                        latestModelOutput: result.modelOutput || '',
+                    });
+                }
+            }
+        }
+        const testCaseStats = evaluation.testCases.map((tc) => {
+            const stats = testCaseAggMap.get(tc.id);
+            return {
+                testCaseId: tc.id,
+                testCaseName: tc.name,
+                inputText: tc.inputText,
+                inputVariables: tc.inputVariables || {},
+                expectedOutput: tc.expectedOutput,
+                passCount: stats?.passCount ?? 0,
+                totalCount: stats?.totalCount ?? 0,
+                latestPassed: stats?.latestPassed ?? true,
+                latestScore: stats?.latestScore ?? 0,
+                latestModelOutput: stats?.latestModelOutput ?? '',
+            };
+        });
+        // Calculate recent delta (compare two most recent runs)
+        let recentDelta;
+        if (runs.length >= 2) {
+            const latestRun = runs[0];
+            const previousRun = runs[1];
+            const latestResults = latestRun.testCaseResults;
+            const previousResults = previousRun.testCaseResults;
+            if (latestResults.length > 0 && previousResults.length > 0) {
+                const latestPassRate = latestResults.filter((r) => r.passed).length / latestResults.length;
+                const prevPassRate = previousResults.filter((r) => r.passed).length / previousResults.length;
+                const criterionChanges = {};
+                // Calculate per-criterion score changes
+                const latestCriterionAvgs = {};
+                const prevCriterionAvgs = {};
+                for (const r of latestResults) {
+                    const scores = r.scores;
+                    if (scores) {
+                        for (const [key, val] of Object.entries(scores)) {
+                            const numVal = Number(typeof val === 'object' && val !== null ? transformDecimal(val) : val);
+                            if (!isNaN(numVal)) {
+                                if (!latestCriterionAvgs[key])
+                                    latestCriterionAvgs[key] = { sum: 0, count: 0 };
+                                latestCriterionAvgs[key].sum += numVal;
+                                latestCriterionAvgs[key].count++;
+                            }
+                        }
+                    }
+                }
+                for (const r of previousResults) {
+                    const scores = r.scores;
+                    if (scores) {
+                        for (const [key, val] of Object.entries(scores)) {
+                            const numVal = Number(typeof val === 'object' && val !== null ? transformDecimal(val) : val);
+                            if (!isNaN(numVal)) {
+                                if (!prevCriterionAvgs[key])
+                                    prevCriterionAvgs[key] = { sum: 0, count: 0 };
+                                prevCriterionAvgs[key].sum += numVal;
+                                prevCriterionAvgs[key].count++;
+                            }
+                        }
+                    }
+                }
+                for (const key of Object.keys(latestCriterionAvgs)) {
+                    const latestAvg = latestCriterionAvgs[key].sum / latestCriterionAvgs[key].count;
+                    const prevAvg = prevCriterionAvgs[key]
+                        ? prevCriterionAvgs[key].sum / prevCriterionAvgs[key].count
+                        : 0;
+                    criterionChanges[key] = latestAvg - prevAvg;
+                }
+                recentDelta = {
+                    passRateChange: latestPassRate - prevPassRate,
+                    criterionChanges,
+                };
+            }
+        }
+        const latestRunAt = runs[0]?.createdAt
+            ? new Date(runs[0].createdAt).toISOString()
+            : null;
+        return {
+            evaluationId,
+            evaluationName,
+            modelName,
+            judgeModelName,
+            totalRuns: runs.length,
+            latestRunAt,
+            avgPassRate,
+            avgCriterionScores,
+            avgLatencyMs,
+            avgTokens,
+            topFailures,
+            recentDelta,
+            criteriaNames,
+            testCaseStats,
+        };
+    }
 }
 /**
  * Test Cases Service
@@ -582,6 +881,23 @@ export class RunsService {
             value: new EvaluationsService()
         });
     }
+    async getRunProgressStats(runId) {
+        const grouped = await prisma.testCaseResult.groupBy({
+            by: ['passed'],
+            where: { runId },
+            _count: { _all: true },
+        });
+        let completedCases = 0;
+        let passedCases = 0;
+        for (const row of grouped) {
+            const count = row._count._all;
+            completedCases += count;
+            if (row.passed) {
+                passedCases += count;
+            }
+        }
+        return { completedCases, passedCases };
+    }
     /**
      * Create a new run
      */
@@ -605,8 +921,6 @@ export class RunsService {
             });
         }
         const totalCases = selectedTestCaseIds.length;
-        const caseConcurrency = Number(process.env.EVALUATION_CASE_CONCURRENCY || '1');
-        const executionMode = Number.isFinite(caseConcurrency) && caseConcurrency > 1 ? 'parallel' : 'sequential';
         // Build runConfig snapshot
         const runConfig = {
             promptId: evaluation.promptId,
@@ -617,7 +931,6 @@ export class RunsService {
             judgeModelId: evaluation.judgeModelId,
             judgeModelName: evaluation.judgeModel?.name || null,
             passThreshold: evaluation.config?.pass_threshold,
-            executionMode,
             fileProcessing: evaluation.config?.file_processing || 'auto',
             ocrProvider: evaluation.config?.ocr_provider,
             testCaseIds: selectedTestCaseIds,
@@ -723,10 +1036,100 @@ export class RunsService {
         return transformResponse(updated);
     }
     /**
+     * Retry only errored test cases in the same run.
+     */
+    async retryErroredCases(userId, runId) {
+        const run = await prisma.evaluationRun.findUnique({
+            where: { id: runId },
+            include: {
+                evaluation: {
+                    select: {
+                        id: true,
+                        userId: true,
+                        testCases: {
+                            select: { id: true },
+                        },
+                    },
+                },
+            },
+        });
+        if (!run || !run.evaluation) {
+            throw new AppError(404, 'NOT_FOUND', 'Run not found');
+        }
+        if (run.evaluation.userId !== userId) {
+            throw new AppError(403, 'FORBIDDEN', 'Not authorized');
+        }
+        if (run.status === 'pending' || run.status === 'running') {
+            throw new AppError(409, 'CONFLICT', 'Run is already in progress');
+        }
+        const runConfig = run.runConfig && typeof run.runConfig === 'object' && !Array.isArray(run.runConfig)
+            ? run.runConfig
+            : {};
+        const scopedFromConfig = Array.isArray(runConfig.testCaseIds)
+            ? runConfig.testCaseIds
+                .filter((item) => typeof item === 'string' && item.trim().length > 0)
+            : [];
+        const availableTestCaseIds = new Set(run.evaluation.testCases.map((testCase) => testCase.id));
+        const scopeTestCaseIds = Array.from(new Set(scopedFromConfig.length > 0
+            ? scopedFromConfig
+            : run.evaluation.testCases.map((testCase) => testCase.id))).filter((id) => availableTestCaseIds.has(id));
+        if (scopeTestCaseIds.length === 0) {
+            throw new AppError(400, 'VALIDATION_ERROR', 'No test cases in this run');
+        }
+        const erroredResults = await prisma.testCaseResult.findMany({
+            where: {
+                runId,
+                testCaseId: { in: scopeTestCaseIds },
+                errorMessage: { not: null },
+            },
+            select: {
+                testCaseId: true,
+                errorMessage: true,
+            },
+        });
+        const retryCaseIds = Array.from(new Set(erroredResults
+            .filter((item) => typeof item.errorMessage === 'string' && item.errorMessage.trim().length > 0)
+            .map((item) => item.testCaseId)));
+        if (retryCaseIds.length === 0) {
+            throw new AppError(400, 'VALIDATION_ERROR', 'No errored test cases to retry');
+        }
+        const existingRunResults = (run.results || {});
+        const totalCases = typeof existingRunResults.totalCases === 'number' && Number.isFinite(existingRunResults.totalCases)
+            ? existingRunResults.totalCases
+            : scopeTestCaseIds.length;
+        const updated = await runsRepository.update(runId, {
+            status: 'pending',
+            errorMessage: null,
+            completedAt: null,
+            runConfig: {
+                ...runConfig,
+                queueTask: 'evaluation.run',
+                retryCaseIds,
+            },
+            results: {
+                ...existingRunResults,
+                totalCases,
+            },
+        });
+        try {
+            await prisma.evaluation.update({
+                where: { id: run.evaluation.id },
+                data: { status: 'pending', completedAt: null },
+            });
+        }
+        catch (error) {
+            console.error('Failed to update evaluation status for retry errored cases:', error);
+        }
+        enqueueEvaluationRun(userId, runId).catch((error) => {
+            console.error('Failed to enqueue retry-errored-cases run:', error);
+        });
+        return transformResponse(updated);
+    }
+    /**
      * Update a run
      */
     async update(userId, id, data) {
-        const run = await runsRepository.findByIdWithResults(id);
+        const run = await runsRepository.findById(id);
         if (!run) {
             throw new AppError(404, 'NOT_FOUND', 'Run not found');
         }
@@ -792,7 +1195,7 @@ export class RunsService {
      * Delete a run
      */
     async delete(userId, id) {
-        const run = await runsRepository.findByIdWithResults(id);
+        const run = await runsRepository.findById(id);
         if (!run) {
             throw new AppError(404, 'NOT_FOUND', 'Run not found');
         }
@@ -841,19 +1244,23 @@ export class RunsService {
      * Get run results
      */
     async getResults(userId, id) {
-        const run = await runsRepository.findByIdWithResults(id);
+        const run = await runsRepository.findById(id);
         if (!run) {
             throw new AppError(404, 'NOT_FOUND', 'Run not found');
         }
         // Verify evaluation ownership
-        await this.evaluationsService.findById(userId, run.evaluationId);
-        return run.testCaseResults.map((r) => transformResponse(r));
+        await this.evaluationsService.assertOwner(userId, run.evaluationId);
+        const results = await testCaseResultsRepository.findByRunId(id);
+        return results.map((r) => transformResponse(r));
     }
     /**
      * Add result to a run
      */
     async addResult(userId, runId, data) {
-        const run = await runsRepository.findByIdWithResults(runId);
+        const run = await prisma.evaluationRun.findUnique({
+            where: { id: runId },
+            select: { id: true, evaluationId: true, results: true, runConfig: true },
+        });
         if (!run) {
             throw new AppError(404, 'NOT_FOUND', 'Run not found');
         }
@@ -866,10 +1273,6 @@ export class RunsService {
         if (testCase.evaluationId !== run.evaluationId) {
             throw new AppError(400, 'VALIDATION_ERROR', 'Test case does not belong to this evaluation');
         }
-        const existing = await prisma.testCaseResult.findFirst({
-            where: { runId, testCaseId: data.testCaseId },
-            select: { id: true },
-        });
         const safeUpdate = {};
         if (data.modelOutput !== undefined)
             safeUpdate.modelOutput = data.modelOutput;
@@ -889,12 +1292,15 @@ export class RunsService {
             safeUpdate.passed = data.passed;
         if (data.errorMessage !== undefined)
             safeUpdate.errorMessage = data.errorMessage;
-        const result = existing
-            ? await prisma.testCaseResult.update({
-                where: { id: existing.id },
-                data: safeUpdate,
-            })
-            : await testCaseResultsRepository.create({
+        const result = await prisma.testCaseResult.upsert({
+            where: {
+                runId_testCaseId: {
+                    runId,
+                    testCaseId: data.testCaseId,
+                },
+            },
+            update: safeUpdate,
+            create: {
                 evaluation: { connect: { id: run.evaluationId } },
                 testCase: { connect: { id: data.testCaseId } },
                 run: { connect: { id: runId } },
@@ -907,11 +1313,11 @@ export class RunsService {
                 tokensOutput: data.tokensOutput || 0,
                 passed: data.passed || false,
                 errorMessage: data.errorMessage,
-            });
+            },
+        });
         // Maintain progress counters on the run record for accurate UI progress bars.
         try {
-            const completedCases = await prisma.testCaseResult.count({ where: { runId } });
-            const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+            const { completedCases, passedCases } = await this.getRunProgressStats(runId);
             const existingRunResults = (run.results || {});
             const config = run.runConfig;
             const configTestCaseIds = Array.isArray(config?.testCaseIds) ? config.testCaseIds : [];
@@ -1032,8 +1438,7 @@ export class RunsService {
             where: { runId, testCaseId: { in: testCaseIds } },
         });
         try {
-            const completedCases = await prisma.testCaseResult.count({ where: { runId } });
-            const passedCases = await prisma.testCaseResult.count({ where: { runId, passed: true } });
+            const { completedCases, passedCases } = await this.getRunProgressStats(runId);
             const existingRunResults = (run.results || {});
             const config = run.runConfig;
             const configTestCaseIds = Array.isArray(config?.testCaseIds) ? config.testCaseIds : [];

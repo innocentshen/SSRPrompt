@@ -86,6 +86,24 @@ router.post('/:id/retry-scores', asyncHandler(runsController.retryScores));
 
 /**
  * @swagger
+ * /runs/{id}/retry-errored-cases:
+ *   post:
+ *     tags: [Runs]
+ *     summary: Retry errored test cases in the same run
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+router.post('/:id/retry-errored-cases', asyncHandler(runsController.retryErroredCases));
+
+/**
+ * @swagger
  * /runs/{id}/results:
  *   get:
  *     tags: [Runs]

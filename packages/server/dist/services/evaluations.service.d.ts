@@ -82,6 +82,89 @@ export declare class EvaluationsService {
         id: string;
         orderIndex: number;
     }[]): Promise<void>;
+    /**
+     * Get evaluations associated with a specific prompt.
+     * Returns lightweight list for the evaluation selector.
+     */
+    getEvaluationsByPromptId(userId: string, promptId: string): Promise<{
+        id: string;
+        name: string;
+        modelName: string;
+        judgeModelName: string;
+        runCount: number;
+        latestRunAt: string | null;
+        avgPassRate: number;
+    }[]>;
+    /**
+     * Get aggregated evaluation summary for a specific evaluation.
+     * Computes: average pass rate, criterion scores, latency, token usage,
+     * top failure cases, and recent trend delta.
+     */
+    getEvaluationSummary(userId: string, evaluationId: string): Promise<{
+        evaluationId: string;
+        evaluationName: string;
+        modelName: string;
+        judgeModelName: string;
+        totalRuns: number;
+        latestRunAt: null;
+        avgPassRate: number;
+        avgCriterionScores: {};
+        avgLatencyMs: number;
+        avgTokens: number;
+        topFailures: never[];
+        criteriaNames: string[];
+        testCaseStats: {
+            testCaseId: string;
+            testCaseName: string;
+            inputText: string;
+            inputVariables: Record<string, string>;
+            expectedOutput: string | null;
+            passCount: number;
+            totalCount: number;
+            latestPassed: boolean;
+            latestScore: number;
+            latestModelOutput: string;
+        }[];
+        recentDelta?: undefined;
+    } | {
+        evaluationId: string;
+        evaluationName: string;
+        modelName: string;
+        judgeModelName: string;
+        totalRuns: number;
+        latestRunAt: string | null;
+        avgPassRate: number;
+        avgCriterionScores: Record<string, number>;
+        avgLatencyMs: number;
+        avgTokens: number;
+        topFailures: {
+            testCaseId: string;
+            testCaseName: string;
+            failCount: number;
+            totalCount: number;
+            latestModelOutput: string;
+            latestAiFeedback: Record<string, string>;
+            expectedOutput: string | null;
+            latestScores: Record<string, number>;
+        }[];
+        recentDelta: {
+            passRateChange: number;
+            criterionChanges: Record<string, number>;
+        } | undefined;
+        criteriaNames: string[];
+        testCaseStats: {
+            testCaseId: string;
+            testCaseName: string;
+            inputText: string;
+            inputVariables: Record<string, string>;
+            expectedOutput: string | null;
+            passCount: number;
+            totalCount: number;
+            latestPassed: boolean;
+            latestScore: number;
+            latestModelOutput: string;
+        }[];
+    }>;
 }
 /**
  * Test Cases Service
@@ -152,6 +235,7 @@ export declare class CriteriaService {
  */
 export declare class RunsService {
     private evaluationsService;
+    private getRunProgressStats;
     /**
      * Create a new run
      */
@@ -172,6 +256,10 @@ export declare class RunsService {
      * Enqueue retrying AI scores for an existing run.
      */
     retryScores(userId: string, runId: string): Promise<EvaluationRun>;
+    /**
+     * Retry only errored test cases in the same run.
+     */
+    retryErroredCases(userId: string, runId: string): Promise<EvaluationRun>;
     /**
      * Update a run
      */

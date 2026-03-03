@@ -145,9 +145,10 @@ export const runsApi = {
    */
   create: (
     evaluationId: string,
-    options?: { modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
+    options?: { title?: string | null; modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
   ) =>
     apiClient.post<EvaluationRun>(`/evaluations/${evaluationId}/runs`, {
+      title: options?.title,
       modelParameters: options?.modelParameters,
       testCaseIds: options?.testCaseIds,
     }),
@@ -157,9 +158,10 @@ export const runsApi = {
    */
   execute: (
     evaluationId: string,
-    options?: { modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
+    options?: { title?: string | null; modelParameters?: Record<string, unknown>; testCaseIds?: string[] }
   ) =>
     apiClient.post<EvaluationRun>(`/evaluations/${evaluationId}/runs/execute`, {
+      title: options?.title,
       modelParameters: options?.modelParameters,
       testCaseIds: options?.testCaseIds,
     }),
@@ -170,6 +172,7 @@ export const runsApi = {
   update: (
     id: string,
     data: {
+      title?: string | null;
       status?: 'pending' | 'running' | 'completed' | 'failed';
       results?: Record<string, unknown>;
       errorMessage?: string | null;
@@ -197,6 +200,11 @@ export const runsApi = {
    * Retry run scores in background worker
    */
   retryScores: (id: string) => apiClient.post<EvaluationRun>(`/runs/${id}/retry-scores`),
+
+  /**
+   * Retry errored test cases in current run
+   */
+  retryErroredCases: (id: string) => apiClient.post<EvaluationRun>(`/runs/${id}/retry-errored-cases`),
 
   /**
    * Get run results

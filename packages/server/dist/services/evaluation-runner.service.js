@@ -13,6 +13,7 @@ const DEFAULT_PROMPT_CONFIG = {
 };
 const RUN_CONCURRENCY = Number(process.env.EVALUATION_RUN_CONCURRENCY || '2');
 const CASE_CONCURRENCY = Number(process.env.EVALUATION_CASE_CONCURRENCY || '2');
+const CASE_AUTO_RETRY_TIMES = Math.max(0, Math.floor(Number(process.env.EVALUATION_CASE_AUTO_RETRY_TIMES || '1') || 0));
 const RESULT_BATCH_SIZE = Number(process.env.EVALUATION_RESULT_BATCH_SIZE || '10');
 const EVALUATION_ATTACHMENT_MAX_BYTES = Math.max(1, Number(process.env.EVALUATION_ATTACHMENT_MAX_BYTES || String(20 * 1024 * 1024)));
 const OCR_PROVIDER_PRIORITY = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
@@ -21,6 +22,50 @@ class RunAbortError extends Error {
         super(message);
         this.name = 'RunAbortError';
     }
+}
+function formatFetchFailureDetail(error) {
+    const cause = error.cause;
+    if (!cause)
+        return null;
+    if (cause instanceof Error) {
+        return cause.message?.trim() || cause.name;
+    }
+    if (typeof cause === 'string') {
+        const text = cause.trim();
+        return text || null;
+    }
+    if (typeof cause !== 'object') {
+        const text = String(cause).trim();
+        return text || null;
+    }
+    const record = cause;
+    const parts = [];
+    if (typeof record.code === 'string' && record.code.trim())
+        parts.push(`code=${record.code.trim()}`);
+    if (typeof record.syscall === 'string' && record.syscall.trim())
+        parts.push(`syscall=${record.syscall.trim()}`);
+    if (typeof record.hostname === 'string' && record.hostname.trim())
+        parts.push(`host=${record.hostname.trim()}`);
+    if (typeof record.address === 'string' && record.address.trim())
+        parts.push(`address=${record.address.trim()}`);
+    if (typeof record.port === 'number' && Number.isFinite(record.port))
+        parts.push(`port=${record.port}`);
+    if (typeof record.message === 'string' && record.message.trim())
+        parts.push(record.message.trim());
+    return parts.length > 0 ? parts.join(', ') : null;
+}
+function getFriendlyExecutionErrorMessage(error) {
+    if (error instanceof RunAbortError)
+        return error.message;
+    if (!(error instanceof Error))
+        return 'Unknown error';
+    const message = error.message?.trim() || 'Unknown error';
+    if (message.toLowerCase() !== 'fetch failed') {
+        return message;
+    }
+    const detail = formatFetchFailureDetail(error);
+    const base = 'Failed to call the model provider. Please check provider API key, endpoint URL, and network/proxy settings.';
+    return detail ? `${base} Detail: ${detail}` : base;
 }
 function parseMessagesFromContent(content) {
     if (!content)
@@ -144,7 +189,7 @@ function extractStructuredTextScore(content) {
         return normalizeJudgeScore(text);
     }
     const patterns = [
-        /\bscore\b\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
+        /["']?\bscore\b["']?\s*(?:[:：=]|is)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/i,
         /(?:评分|分数|得分)\s*(?:[:：=]|为)\s*([+-]?\d+(?:\.\d+)?(?:\s*(?:\/|／)\s*(?:10|100))?%?)/,
     ];
     for (const pattern of patterns) {
@@ -154,6 +199,24 @@ function extractStructuredTextScore(content) {
         const score = normalizeJudgeScore(match[1]);
         if (score !== null)
             return score;
+    }
+    return null;
+}
+function extractStructuredTextReason(content) {
+    const text = content.trim();
+    if (!text)
+        return null;
+    const quotedReason = text.match(/["']?(?:reason|feedback|comment|理由|说明)["']?\s*(?:[:：=]|is|为)\s*(["'])([\s\S]*?)\1/i);
+    if (quotedReason?.[2]) {
+        const value = quotedReason[2].trim();
+        if (value)
+            return value;
+    }
+    const plainReason = text.match(/["']?(?:reason|feedback|comment|理由|说明)["']?\s*(?:[:：=]|is|为)\s*([^\n\r}]+)/i);
+    if (plainReason?.[1]) {
+        const value = plainReason[1].replace(/,\s*$/, '').trim();
+        if (value)
+            return value;
     }
     return null;
 }
@@ -189,7 +252,7 @@ function collectJsonCandidates(content) {
         if (block)
             pushCandidate(block);
     }
-    const scoreObjectRegex = /\{[\s\S]*?"(?:score|评分|分数)"[\s\S]*?\}/g;
+    const scoreObjectRegex = /\{[\s\S]*?["']?(?:score|评分|分数)["']?[\s\S]*?\}/g;
     for (const match of trimmed.matchAll(scoreObjectRegex)) {
         if (match[0])
             pushCandidate(match[0]);
@@ -228,13 +291,14 @@ function parseJudgeEvaluationResponse(content) {
             continue;
         }
     }
+    const textReason = extractStructuredTextReason(normalizedContent);
     const textScore = extractStructuredTextScore(normalizedContent);
     if (textScore !== null) {
-        return { score: textScore, reason: normalizedContent || 'Evaluation failed' };
+        return { score: textScore, reason: textReason || normalizedContent || 'Evaluation failed' };
     }
     return {
         score: 0,
-        reason: normalizedContent || 'Evaluation failed',
+        reason: textReason || normalizedContent || 'Evaluation failed',
     };
 }
 function computeWeightedPass(scores, criteria, threshold) {
@@ -494,9 +558,19 @@ export async function executeEvaluationRun(runId, options = {}) {
     const modelParams = resolvedModelParams ?? resolveModelParameters(evalConfig, promptSnapshot);
     const fileProcessing = runConfig.fileProcessing || evalConfig.file_processing || 'auto';
     const ocrProvider = runConfig.ocrProvider || evalConfig.ocr_provider;
-    const runTestCaseIds = (Array.isArray(runConfig.testCaseIds) ? runConfig.testCaseIds : null) ||
-        evaluation.testCases.map((tc) => tc.id);
-    const testCases = evaluation.testCases.filter((tc) => runTestCaseIds.includes(tc.id));
+    const runScopeTestCaseIds = (Array.isArray(runConfig.testCaseIds)
+        ? runConfig.testCaseIds.filter((id) => typeof id === 'string' && id.length > 0)
+        : []);
+    const availableTestCaseIdSet = new Set(evaluation.testCases.map((tc) => tc.id));
+    const effectiveRunScopeTestCaseIds = Array.from(new Set((runScopeTestCaseIds.length > 0 ? runScopeTestCaseIds : evaluation.testCases.map((tc) => tc.id))
+        .filter((id) => availableTestCaseIdSet.has(id))));
+    const retryCaseIds = (Array.isArray(runConfig.retryCaseIds)
+        ? runConfig.retryCaseIds.filter((id) => typeof id === 'string' && id.length > 0)
+        : []);
+    const effectiveRetryCaseIds = Array.from(new Set(retryCaseIds.length > 0 ? retryCaseIds : effectiveRunScopeTestCaseIds));
+    const runScopeSet = new Set(effectiveRunScopeTestCaseIds);
+    const retryCaseIdsInScope = effectiveRetryCaseIds.filter((id) => runScopeSet.has(id));
+    const testCases = evaluation.testCases.filter((tc) => retryCaseIdsInScope.includes(tc.id));
     if (testCases.length === 0) {
         throw new AppError(400, 'VALIDATION_ERROR', 'No test cases to run');
     }
@@ -542,21 +616,42 @@ export async function executeEvaluationRun(runId, options = {}) {
     const effectiveOcrProvider = ocrProvider ?? resolvedOcrProvider ?? undefined;
     const caseConcurrency = Number.isFinite(CASE_CONCURRENCY) && CASE_CONCURRENCY > 0 ? CASE_CONCURRENCY : 1;
     const passThreshold = evalConfig.pass_threshold ?? 0.6;
-    // Reset stale results so reruns/retries of the same run remain deterministic.
-    await prisma.testCaseResult.deleteMany({
-        where: { runId },
-    });
+    const isPartialRetryRun = retryCaseIds.length > 0;
+    if (isPartialRetryRun) {
+        // In-place retry: remove only target cases and keep other case results in this run.
+        await prisma.testCaseResult.deleteMany({
+            where: { runId, testCaseId: { in: retryCaseIdsInScope } },
+        });
+    }
+    else {
+        // Full run: clear all stale results for determinism.
+        await prisma.testCaseResult.deleteMany({
+            where: { runId },
+        });
+    }
+    const initialCompletedCases = isPartialRetryRun
+        ? await prisma.testCaseResult.count({
+            where: { runId, testCaseId: { in: effectiveRunScopeTestCaseIds } },
+        })
+        : 0;
     await prisma.evaluationRun.update({
         where: { id: runId },
-        data: { status: 'running', errorMessage: null, completedAt: null, results: { totalCases: testCases.length, completedCases: 0 } },
+        data: {
+            status: 'running',
+            errorMessage: null,
+            completedAt: null,
+            results: {
+                totalCases: effectiveRunScopeTestCaseIds.length,
+                completedCases: initialCompletedCases,
+            },
+        },
     });
     await prisma.evaluation.update({
         where: { id: evaluation.id },
         data: { status: 'running', completedAt: null },
     });
     const resultsBatch = [];
-    const allScores = {};
-    let completedCases = 0;
+    let completedCases = initialCompletedCases;
     let totalTokensInput = 0;
     let totalTokensOutput = 0;
     let llmTimeMs = 0;
@@ -580,7 +675,7 @@ export async function executeEvaluationRun(runId, options = {}) {
         progressUpdateInFlight = (async () => {
             await prisma.evaluationRun.update({
                 where: { id: runId },
-                data: { results: { totalCases: testCases.length, completedCases } },
+                data: { results: { totalCases: effectiveRunScopeTestCaseIds.length, completedCases } },
             });
         })();
         try {
@@ -717,9 +812,6 @@ export async function executeEvaluationRun(runId, options = {}) {
                     const parsed = parseJudgeEvaluationResponse(evalResponse.content);
                     scores[criterion.name] = parsed.score;
                     aiFeedback[criterion.name] = parsed.reason;
-                    if (!allScores[criterion.name])
-                        allScores[criterion.name] = [];
-                    allScores[criterion.name].push(parsed.score);
                 }
                 catch (error) {
                     if (error instanceof RunAbortError)
@@ -747,6 +839,27 @@ export async function executeEvaluationRun(runId, options = {}) {
             errorMessage: null,
         });
     };
+    const executeTestCaseWithRetry = async (testCase) => {
+        const maxAttempts = CASE_AUTO_RETRY_TIMES + 1;
+        let attempts = 0;
+        let lastError = null;
+        while (attempts < maxAttempts) {
+            attempts += 1;
+            try {
+                await executeTestCase(testCase);
+                return;
+            }
+            catch (error) {
+                if (error instanceof RunAbortError)
+                    throw error;
+                lastError = error;
+                if (attempts < maxAttempts) {
+                    console.warn(`[evaluation-runner] run ${runId} case ${testCase.id} failed on attempt ${attempts}/${maxAttempts}, retrying`, error);
+                }
+            }
+        }
+        throw (lastError instanceof Error ? lastError : new Error('Unknown error'));
+    };
     try {
         const workerCount = Math.max(1, Math.min(caseConcurrency, testCases.length));
         if (workerCount > 1) {
@@ -758,7 +871,7 @@ export async function executeEvaluationRun(runId, options = {}) {
                     if (!testCase)
                         return;
                     try {
-                        await executeTestCase(testCase);
+                        await executeTestCaseWithRetry(testCase);
                     }
                     catch (error) {
                         if (error instanceof RunAbortError)
@@ -773,7 +886,7 @@ export async function executeEvaluationRun(runId, options = {}) {
                             tokensInput: 0,
                             tokensOutput: 0,
                             passed: false,
-                            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                            errorMessage: getFriendlyExecutionErrorMessage(error),
                         });
                     }
                 }
@@ -783,7 +896,7 @@ export async function executeEvaluationRun(runId, options = {}) {
             for (const testCase of testCases) {
                 await ensureNotAborted();
                 try {
-                    await executeTestCase(testCase);
+                    await executeTestCaseWithRetry(testCase);
                 }
                 catch (error) {
                     if (error instanceof RunAbortError)
@@ -798,28 +911,51 @@ export async function executeEvaluationRun(runId, options = {}) {
                         tokensInput: 0,
                         tokensOutput: 0,
                         passed: false,
-                        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                        errorMessage: getFriendlyExecutionErrorMessage(error),
                     });
                 }
             }
         }
         await flushResults();
         await updateProgress(true);
-        const overallScores = {};
-        for (const [name, list] of Object.entries(allScores)) {
-            overallScores[name] = list.reduce((a, b) => a + b, 0) / list.length;
-        }
-        const passedCases = await prisma.testCaseResult.count({
-            where: { runId, passed: true },
+        const finalResults = await prisma.testCaseResult.findMany({
+            where: { runId, testCaseId: { in: effectiveRunScopeTestCaseIds } },
+            select: {
+                scores: true,
+                passed: true,
+                tokensInput: true,
+                tokensOutput: true,
+                latencyMs: true,
+                ocrLatencyMs: true,
+            },
         });
+        const completedResultCases = finalResults.length;
+        const passedCases = finalResults.filter((result) => result.passed).length;
+        totalTokensInput = finalResults.reduce((sum, result) => sum + (result.tokensInput || 0), 0);
+        totalTokensOutput = finalResults.reduce((sum, result) => sum + (result.tokensOutput || 0), 0);
+        llmTimeMs = finalResults.reduce((sum, result) => sum + (result.latencyMs || 0), 0);
+        ocrTimeMs = finalResults.reduce((sum, result) => sum + (result.ocrLatencyMs || 0), 0);
+        const overallScores = {};
+        if (enabledCriteria.length > 0 && completedResultCases > 0) {
+            for (const criterion of enabledCriteria) {
+                const scoreSum = finalResults.reduce((sum, result) => {
+                    const scoreValue = result.scores?.[criterion.name];
+                    return sum + (typeof scoreValue === 'number' ? scoreValue : 0);
+                }, 0);
+                overallScores[criterion.name] = scoreSum / completedResultCases;
+            }
+        }
+        completedCases = completedResultCases;
+        const totalCases = effectiveRunScopeTestCaseIds.length;
+        const rate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0;
         const evalResults = {
             scores: overallScores,
-            totalCases: testCases.length,
+            totalCases,
             completedCases,
             passedCases,
             llmTimeMs,
             ocrTimeMs,
-            summary: `Total ${testCases.length}, Passed ${passedCases}, Rate ${Math.round((passedCases / testCases.length) * 100)}%`,
+            summary: `Total ${totalCases}, Passed ${passedCases}, Rate ${rate}%`,
         };
         await prisma.evaluationRun.update({
             where: { id: runId },
@@ -847,7 +983,7 @@ export async function executeEvaluationRun(runId, options = {}) {
         catch (flushError) {
             console.error('Failed to flush results after run error:', flushError);
         }
-        const message = error instanceof RunAbortError ? 'Run aborted' : error.message;
+        const message = getFriendlyExecutionErrorMessage(error);
         await prisma.evaluationRun.update({
             where: { id: runId },
             data: {
@@ -1099,7 +1235,7 @@ export async function executeRetryEvaluationRunScores(runId, options = {}) {
                             tokensInput: item.tokensInput || 0,
                             tokensOutput: item.tokensOutput || 0,
                             passed: false,
-                            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                            errorMessage: getFriendlyExecutionErrorMessage(error),
                         });
                     }
                 }
@@ -1124,7 +1260,7 @@ export async function executeRetryEvaluationRunScores(runId, options = {}) {
                         tokensInput: result.tokensInput || 0,
                         tokensOutput: result.tokensOutput || 0,
                         passed: false,
-                        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                        errorMessage: getFriendlyExecutionErrorMessage(error),
                     });
                 }
             }
@@ -1196,7 +1332,7 @@ export async function executeRetryEvaluationRunScores(runId, options = {}) {
         catch (flushError) {
             console.error('Failed to flush retry-score results after run error:', flushError);
         }
-        const message = error instanceof RunAbortError ? 'Run aborted' : error.message;
+        const message = getFriendlyExecutionErrorMessage(error);
         await prisma.evaluationRun.update({
             where: { id: runId },
             data: {

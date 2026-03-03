@@ -16,6 +16,8 @@ import type {
   UpdateShareLinkDto,
 } from '@ssrprompt/shared';
 
+type ListShareLinksParams = ListShareLinksQueryDto & { resourceId?: string };
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
 
 function getAuthHeader(): string {
@@ -26,10 +28,11 @@ function getAuthHeader(): string {
 export const shareApi = {
   createLink: (data: CreateShareLinkDto) => apiClient.post<ShareLink>('/share-links', data),
 
-  listLinks: (params?: ListShareLinksQueryDto) =>
+  listLinks: (params?: ListShareLinksParams) =>
     apiClient.get<ShareLinkPage>('/share-links', {
       params: {
         resourceType: params?.resourceType,
+        resourceId: params?.resourceId,
         includeRevoked: params?.includeRevoked,
         page: params?.page,
         pageSize: params?.pageSize,

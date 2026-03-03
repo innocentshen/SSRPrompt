@@ -37,6 +37,7 @@ export declare const UpdateShareLinkSchema: z.ZodObject<{
 }>;
 export declare const ListShareLinksQuerySchema: z.ZodObject<{
     resourceType: z.ZodOptional<z.ZodEnum<["prompt", "evaluation"]>>;
+    resourceId: z.ZodOptional<z.ZodString>;
     includeRevoked: z.ZodEffects<z.ZodOptional<z.ZodString>, boolean, string | undefined>;
     page: z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>;
     pageSize: z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>;
@@ -45,8 +46,10 @@ export declare const ListShareLinksQuerySchema: z.ZodObject<{
     page: number;
     pageSize: number;
     resourceType?: "prompt" | "evaluation" | undefined;
+    resourceId?: string | undefined;
 }, {
     resourceType?: "prompt" | "evaluation" | undefined;
+    resourceId?: string | undefined;
     includeRevoked?: string | undefined;
     page?: string | undefined;
     pageSize?: string | undefined;

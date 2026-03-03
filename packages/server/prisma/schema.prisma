@@ -244,6 +244,7 @@ model EvaluationRun {
   id                String           @id @default(uuid())
   evaluationId      String           @map("evaluation_id")
   status            EvaluationStatus @default(pending)
+  title             String?
   results           Json             @default("{}")
   errorMessage      String?          @map("error_message")
   totalTokensInput  Int              @default(0) @map("total_tokens_input")

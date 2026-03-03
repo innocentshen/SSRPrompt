@@ -59,6 +59,7 @@ export interface UpdateShareLinkDto {
 
 export interface ListShareLinksQueryDto {
   resourceType?: ShareResourceType;
+  resourceId?: string;
   includeRevoked?: boolean;
   page?: number;
   pageSize?: number;

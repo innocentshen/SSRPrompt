@@ -369,10 +369,12 @@ export class ShareLinksService {
     const page = query.page || 1;
     const limit = query.pageSize || 20;
     const skip = (page - 1) * limit;
+    const resourceId = (query as { resourceId?: string }).resourceId;
 
     const where: Prisma.ShareLinkWhereInput = {
       userId,
       ...(query.resourceType ? { resourceType: query.resourceType as ShareResourceType } : {}),
+      ...(resourceId ? { resourceId } : {}),
       ...(query.includeRevoked ? {} : { revokedAt: null }),
     };
 

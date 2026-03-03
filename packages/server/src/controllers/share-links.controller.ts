@@ -31,7 +31,14 @@ export const shareLinksController = {
   async list(req: Request, res: Response): Promise<void> {
     const userId = req.user!.userId;
     const query = ListShareLinksQuerySchema.parse(req.query);
-    const result = await shareLinksService.list(userId, query);
+    const rawResourceId = req.query.resourceId;
+    const resourceId = typeof rawResourceId === 'string'
+      ? z.string().uuid().parse(rawResourceId)
+      : undefined;
+    const result = await shareLinksService.list(
+      userId,
+      { ...query, ...(resourceId ? { resourceId } : {}) } as typeof query & { resourceId?: string }
+    );
     res.json({ data: result });
   },
 
