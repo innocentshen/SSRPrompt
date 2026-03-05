@@ -165,6 +165,7 @@ export function OcrSettings() {
   const [clearSystemDatalabKey, setClearSystemDatalabKey] = useState(false);
   const [clearSystemMineruKey, setClearSystemMineruKey] = useState(false);
   const [systemEditingProvider, setSystemEditingProvider] = useState<OcrProvider>('paddle');
+  const [showSystemProviderConfig, setShowSystemProviderConfig] = useState(false);
 
   useEffect(() => {
     fetchSettings().catch(() => {});
@@ -253,6 +254,11 @@ export function OcrSettings() {
   }, [isAdmin, showToast, t]);
 
   const enabled = providerEnabled[provider] ?? false;
+
+  useEffect(() => {
+    setSystemEditingProvider(provider);
+  }, [provider]);
+
   const filteredOcrProviders = useMemo(() => {
     const query = providerQuery.trim().toLowerCase();
     if (!query) return OCR_PROVIDER_ITEMS;
@@ -676,6 +682,15 @@ export function OcrSettings() {
                     <p className="text-xs text-slate-500 light:text-slate-600">
                       {t('providerParamsTitle', { defaultValue: 'Provider Parameters' })}
                     </p>
+                    {isAdmin && (
+                      <Button
+                        variant="secondary"
+                        onClick={() => setShowSystemProviderConfig((prev) => !prev)}
+                        title={t('systemOcrProviderConfigTitle')}
+                      >
+                        {showSystemProviderConfig ? tCommon('collapse') : t('systemOcrProviderConfigTitle')}
+                      </Button>
+                    )}
                     <Button variant="secondary" onClick={() => setTestOpen(true)} disabled={!settings || isLoading}>
                       <FlaskConical className="w-4 h-4 mr-1" />
                       {t('testProvider')}
@@ -1222,7 +1237,7 @@ export function OcrSettings() {
           </div>
         )}
 
-        {isAdmin && (
+        {isAdmin && showSystemProviderConfig && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
