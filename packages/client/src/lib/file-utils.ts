@@ -127,7 +127,7 @@ export function getFileContentForAI(file: FileAttachment): { type: 'text'; conte
 }
 
 export function getFileInputAccept(): string {
-  return 'image/*,application/pdf,.txt,.md,.json,.csv,.xml,.yaml,.yml';
+  return '.png,.jpg,.jpeg,.gif,.webp,image/*,.pdf,application/pdf,.txt,.md,.json,.csv,.xml,.yaml,.yml';
 }
 
 export function isSupportedFileType(file: File | { type: string; name?: string }): boolean {
