@@ -4,6 +4,7 @@ import { Save, FlaskConical, Loader2, Search } from 'lucide-react';
 import { Button, Checkbox, Input, Modal, Toggle, useToast } from '../ui';
 import { useOcrSettingsStore } from '../../store/useOcrSettingsStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useGlobalStore } from '../../store/useGlobalStore';
 import { ocrApi } from '../../api/ocr';
 import type {
   OcrProvider,
@@ -21,6 +22,7 @@ function providerLabel(provider: OcrProvider, t: (k: string) => string): string 
   if (provider === 'paddle_vl') return 'PaddleOCR-VL';
   if (provider === 'paddle_vl_1_5') return 'PaddleOCR-VL-1.5';
   if (provider === 'mineru') return 'MinerU';
+  if (provider === 'multimodal_model') return t('ocrProviderMultimodalModel');
   return t('datalabExperimental');
 }
 
@@ -31,7 +33,8 @@ function credentialLabel(source: OcrCredentialSource, t: (k: string) => string):
 type TriStateBoolean = 'default' | 'true' | 'false';
 type ProviderEnabledState = Record<OcrProvider, boolean>;
 
-const OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+const OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
+const SYSTEM_OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
 
 function createProviderEnabledState(
   initial?: Partial<Record<OcrProvider, boolean>>,
@@ -44,6 +47,7 @@ function createProviderEnabledState(
     paddle_vl_1_5: false,
     datalab: false,
     mineru: false,
+    multimodal_model: false,
   };
   for (const provider of OCR_PROVIDER_ITEMS) {
     if (typeof initial?.[provider] === 'boolean') {
@@ -81,6 +85,7 @@ export function OcrSettings() {
   const { showToast } = useToast();
   const { settings, isLoading, fetchSettings, saveSettings } = useOcrSettingsStore();
   const { user } = useAuthStore();
+  const { models, providers, fetchProvidersAndModels } = useGlobalStore();
   const isAdmin = user?.roles?.includes('admin') ?? false;
 
   const [provider, setProvider] = useState<OcrProvider>('paddle');
@@ -146,6 +151,15 @@ export function OcrSettings() {
   const [paddleVlPrettifyMarkdown, setPaddleVlPrettifyMarkdown] = useState<TriStateBoolean>('default');
   const [paddleVlVisualize, setPaddleVlVisualize] = useState<TriStateBoolean>('default');
 
+  const [multimodalModelId, setMultimodalModelId] = useState('');
+  const [multimodalPrompt, setMultimodalPrompt] = useState('');
+  const [multimodalTemperature, setMultimodalTemperature] = useState('0');
+  const [multimodalTopP, setMultimodalTopP] = useState('');
+  const [multimodalMaxTokens, setMultimodalMaxTokens] = useState('');
+  const [multimodalFrequencyPenalty, setMultimodalFrequencyPenalty] = useState('');
+  const [multimodalPresencePenalty, setMultimodalPresencePenalty] = useState('');
+  const [multimodalPdfToImages, setMultimodalPdfToImages] = useState(false);
+
   const [systemSettings, setSystemSettings] = useState<OcrSystemProviderSettings | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
   const [systemSaving, setSystemSaving] = useState(false);
@@ -170,6 +184,10 @@ export function OcrSettings() {
   useEffect(() => {
     fetchSettings().catch(() => {});
   }, [fetchSettings]);
+
+  useEffect(() => {
+    fetchProvidersAndModels().catch(() => {});
+  }, [fetchProvidersAndModels]);
 
   useEffect(() => {
     if (!settings) return;
@@ -233,6 +251,15 @@ export function OcrSettings() {
     setPaddleVlShowFormulaNumber(toTriState(settings.paddle_vl?.showFormulaNumber));
     setPaddleVlPrettifyMarkdown(toTriState(settings.paddle_vl?.prettifyMarkdown));
     setPaddleVlVisualize(toTriState(settings.paddle_vl?.visualize));
+
+    setMultimodalModelId(settings.multimodal?.modelId || '');
+    setMultimodalPrompt(settings.multimodal?.prompt || '');
+    setMultimodalTemperature(settings.multimodal?.temperature != null ? String(settings.multimodal.temperature) : '0');
+    setMultimodalTopP(settings.multimodal?.topP != null ? String(settings.multimodal.topP) : '');
+    setMultimodalMaxTokens(settings.multimodal?.maxTokens != null ? String(settings.multimodal.maxTokens) : '');
+    setMultimodalFrequencyPenalty(settings.multimodal?.frequencyPenalty != null ? String(settings.multimodal.frequencyPenalty) : '');
+    setMultimodalPresencePenalty(settings.multimodal?.presencePenalty != null ? String(settings.multimodal.presencePenalty) : '');
+    setMultimodalPdfToImages(settings.multimodal?.pdfToImages ?? false);
   }, [settings]);
 
   useEffect(() => {
@@ -254,9 +281,13 @@ export function OcrSettings() {
   }, [isAdmin, showToast, t]);
 
   const enabled = providerEnabled[provider] ?? false;
+  const isMultimodalProvider = provider === 'multimodal_model';
 
   useEffect(() => {
-    setSystemEditingProvider(provider);
+    if (provider === 'multimodal_model') {
+      setShowSystemProviderConfig(false);
+    }
+    setSystemEditingProvider(provider === 'multimodal_model' ? 'paddle' : provider);
   }, [provider]);
 
   const filteredOcrProviders = useMemo(() => {
@@ -264,6 +295,22 @@ export function OcrSettings() {
     if (!query) return OCR_PROVIDER_ITEMS;
     return OCR_PROVIDER_ITEMS.filter((item) => providerLabel(item, t).toLowerCase().includes(query));
   }, [providerQuery, t]);
+
+  const enabledProviderIds = useMemo(
+    () => new Set(providers.filter((item) => item.enabled).map((item) => item.id)),
+    [providers]
+  );
+  const multimodalModels = useMemo(
+    () =>
+      models
+        .filter((item) => item.supportsVision && enabledProviderIds.has(item.providerId))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [enabledProviderIds, models]
+  );
+  const selectedMultimodalModel = useMemo(
+    () => multimodalModels.find((item) => item.id === multimodalModelId) ?? null,
+    [multimodalModelId, multimodalModels]
+  );
 
   const effectiveBaseUrl = useMemo(() => {
     if (!settings) return baseUrl || '';
@@ -363,7 +410,19 @@ export function OcrSettings() {
         extraFormats: mineruExtraFormats,
         pageRanges: mineruPageRanges.trim() ? mineruPageRanges.trim() : null,
       };
-      if (credentialSource === 'custom') {
+
+      payload.multimodal = {
+        modelId: multimodalModelId || null,
+        prompt: multimodalPrompt.trim() ? multimodalPrompt.trim() : null,
+        temperature: toOptionalNumber(multimodalTemperature),
+        topP: toOptionalNumber(multimodalTopP),
+        maxTokens: toOptionalNumber(multimodalMaxTokens),
+        frequencyPenalty: toOptionalNumber(multimodalFrequencyPenalty),
+        presencePenalty: toOptionalNumber(multimodalPresencePenalty),
+        pdfToImages: multimodalPdfToImages,
+      };
+
+      if (!isMultimodalProvider && credentialSource === 'custom') {
         payload.baseUrl = baseUrl || null;
         const trimmed = apiKey.trim();
         if (trimmed) payload.apiKey = trimmed;
@@ -432,7 +491,7 @@ export function OcrSettings() {
     }
   };
 
-  const systemProviderItems: OcrProvider[] = OCR_PROVIDER_ITEMS;
+  const systemProviderItems: OcrProvider[] = SYSTEM_OCR_PROVIDER_ITEMS;
 
   const renderSystemProviderEditor = () => {
     if (systemEditingProvider === 'paddle') {
@@ -623,9 +682,11 @@ export function OcrSettings() {
                     <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-300 light:text-slate-700">
                       {providerLabel(provider, t)}
                     </span>
-                    <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-400 light:text-slate-600">
-                      {credentialLabel(credentialSource, t)}
-                    </span>
+                    {!isMultimodalProvider && (
+                      <span className="px-2 py-1 rounded-md bg-slate-800 light:bg-slate-100 border border-slate-700 light:border-slate-300 text-xs text-slate-400 light:text-slate-600">
+                        {credentialLabel(credentialSource, t)}
+                      </span>
+                    )}
                     <Toggle enabled={enabled} onChange={(value) => setProviderEnabled((prev) => ({ ...prev, [provider]: value }))} label={t('enable')} />
                   </div>
                 </div>
@@ -639,38 +700,44 @@ export function OcrSettings() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-1">
-                      {t('credentialSource')}
-                    </label>
-                    <select
-                      value={credentialSource}
-                      onChange={(e) => setCredentialSource(e.target.value as OcrCredentialSource)}
-                      className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
-                    >
-                      <option value="system">{t('credentialSystem')}</option>
-                      <option value="custom">{t('credentialCustom')}</option>
-                    </select>
+                {isMultimodalProvider ? (
+                  <div className="rounded-lg border border-cyan-900/60 light:border-cyan-200 bg-cyan-950/30 light:bg-cyan-50/80 p-4 text-sm text-slate-300 light:text-slate-700">
+                    {t('multimodalModelUsesConfiguredLlm')}
                   </div>
-                  <Input
-                    label={t('baseUrl')}
-                    value={effectiveBaseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    disabled={credentialSource === 'system'}
-                    placeholder={t('baseUrlPlaceholder')}
-                  />
-                  <div className="md:col-span-2">
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-300 light:text-slate-700 mb-1">
+                        {t('credentialSource')}
+                      </label>
+                      <select
+                        value={credentialSource}
+                        onChange={(e) => setCredentialSource(e.target.value as OcrCredentialSource)}
+                        className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+                      >
+                        <option value="system">{t('credentialSystem')}</option>
+                        <option value="custom">{t('credentialCustom')}</option>
+                      </select>
+                    </div>
                     <Input
-                      label={t('apiKey')}
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
+                      label={t('baseUrl')}
+                      value={effectiveBaseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
                       disabled={credentialSource === 'system'}
-                      placeholder={apiKeyHint || t('apiKeyPlaceholder')}
-                      type="password"
+                      placeholder={t('baseUrlPlaceholder')}
                     />
+                    <div className="md:col-span-2">
+                      <Input
+                        label={t('apiKey')}
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        disabled={credentialSource === 'system'}
+                        placeholder={apiKeyHint || t('apiKeyPlaceholder')}
+                        type="password"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-white p-5 flex flex-col gap-4 min-h-0">
@@ -682,7 +749,7 @@ export function OcrSettings() {
                     <p className="text-xs text-slate-500 light:text-slate-600">
                       {t('providerParamsTitle', { defaultValue: 'Provider Parameters' })}
                     </p>
-                    {isAdmin && (
+                    {isAdmin && !isMultimodalProvider && (
                       <Button
                         variant="secondary"
                         onClick={() => setShowSystemProviderConfig((prev) => !prev)}
@@ -699,6 +766,122 @@ export function OcrSettings() {
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
+
+        {provider === 'multimodal_model' && (
+          <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
+                {t('multimodalModelParamsTitle')}
+              </h3>
+              <p className="text-xs text-slate-500 light:text-slate-600">
+                {t('multimodalModelParamsDesc')}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                  {t('multimodalModelId')}
+                </label>
+                <select
+                  value={multimodalModelId}
+                  onChange={(e) => setMultimodalModelId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all"
+                >
+                  <option value="">{t('multimodalModelPlaceholder')}</option>
+                  {multimodalModels.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-500 light:text-slate-600">
+                  {selectedMultimodalModel
+                    ? t('multimodalModelSelectedHint', { model: selectedMultimodalModel.name })
+                    : t('multimodalModelUsesConfiguredLlm')}
+                </p>
+                {multimodalModels.length === 0 && (
+                  <p className="text-xs text-amber-400 light:text-amber-700">
+                    {t('multimodalModelNoVisionModels')}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-300 light:text-slate-700">
+                  {t('multimodalModelPrompt')}
+                </label>
+                <textarea
+                  value={multimodalPrompt}
+                  onChange={(e) => setMultimodalPrompt(e.target.value)}
+                  placeholder={t('multimodalModelPromptPlaceholder')}
+                  className="w-full min-h-[180px] px-3 py-2 bg-slate-800 light:bg-white border border-slate-700 light:border-slate-300 rounded-lg text-sm text-slate-200 light:text-slate-800 placeholder-slate-500 light:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all resize-y"
+                />
+                <p className="text-xs text-slate-500 light:text-slate-600">
+                  {t('multimodalModelPromptHint')}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/40 light:bg-slate-50 px-4 py-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-200 light:text-slate-800">
+                      {t('multimodalPdfToImages')}
+                    </p>
+                    <p className="text-xs text-slate-500 light:text-slate-600">
+                      {t('multimodalPdfToImagesHint')}
+                    </p>
+                  </div>
+                  <Toggle enabled={multimodalPdfToImages} onChange={setMultimodalPdfToImages} />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Input
+                label={t('multimodalModelTemperature')}
+                value={multimodalTemperature}
+                onChange={(e) => setMultimodalTemperature(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                type="number"
+                hint={defaultValueHint('0')}
+              />
+              <Input
+                label={t('multimodalModelTopP')}
+                value={multimodalTopP}
+                onChange={(e) => setMultimodalTopP(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                type="number"
+                hint={defaultValueHint(t('optionDefault'))}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Input
+                label={t('multimodalModelMaxTokens')}
+                value={multimodalMaxTokens}
+                onChange={(e) => setMultimodalMaxTokens(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                type="number"
+                hint={defaultValueHint(t('defaultUnlimited'))}
+              />
+              <Input
+                label={t('multimodalModelFrequencyPenalty')}
+                value={multimodalFrequencyPenalty}
+                onChange={(e) => setMultimodalFrequencyPenalty(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                type="number"
+              />
+              <Input
+                label={t('multimodalModelPresencePenalty')}
+                value={multimodalPresencePenalty}
+                onChange={(e) => setMultimodalPresencePenalty(e.target.value)}
+                placeholder={t('paramOptionalPlaceholder')}
+                type="number"
+              />
+            </div>
+          </div>
+        )}
 
         {provider === 'datalab' && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
@@ -1237,7 +1420,7 @@ export function OcrSettings() {
           </div>
         )}
 
-        {isAdmin && showSystemProviderConfig && (
+        {isAdmin && !isMultimodalProvider && showSystemProviderConfig && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">
@@ -1316,6 +1499,15 @@ export function OcrSettings() {
         credentialSource={credentialSource}
         baseUrl={baseUrl}
         apiKey={apiKey}
+        multimodalModelId={multimodalModelId}
+        multimodalPrompt={multimodalPrompt}
+        multimodalTemperature={multimodalTemperature}
+        multimodalTopP={multimodalTopP}
+        multimodalMaxTokens={multimodalMaxTokens}
+        multimodalFrequencyPenalty={multimodalFrequencyPenalty}
+        multimodalPresencePenalty={multimodalPresencePenalty}
+        multimodalPdfToImages={multimodalPdfToImages}
+        multimodalModelName={selectedMultimodalModel?.name || ''}
         tCommon={tCommon}
       />
     </>
@@ -1388,6 +1580,15 @@ function OcrTestModal({
   credentialSource,
   baseUrl,
   apiKey,
+  multimodalModelId,
+  multimodalPrompt,
+  multimodalTemperature,
+  multimodalTopP,
+  multimodalMaxTokens,
+  multimodalFrequencyPenalty,
+  multimodalPresencePenalty,
+  multimodalPdfToImages,
+  multimodalModelName,
   tCommon,
 }: {
   isOpen: boolean;
@@ -1396,6 +1597,15 @@ function OcrTestModal({
   credentialSource: OcrCredentialSource;
   baseUrl: string;
   apiKey: string;
+  multimodalModelId: string;
+  multimodalPrompt: string;
+  multimodalTemperature: string;
+  multimodalTopP: string;
+  multimodalMaxTokens: string;
+  multimodalFrequencyPenalty: string;
+  multimodalPresencePenalty: string;
+  multimodalPdfToImages: boolean;
+  multimodalModelName: string;
   tCommon: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const { t } = useTranslation('settings');
@@ -1415,7 +1625,23 @@ function OcrTestModal({
       const override = {
         provider,
         credentialSource,
-        ...(credentialSource === 'custom' ? { baseUrl: baseUrl || null, apiKey: apiKey.trim() || null } : {}),
+        ...(provider !== 'multimodal_model' && credentialSource === 'custom'
+          ? { baseUrl: baseUrl || null, apiKey: apiKey.trim() || null }
+          : {}),
+        ...(provider === 'multimodal_model'
+          ? {
+              multimodal: {
+                modelId: multimodalModelId || null,
+                prompt: multimodalPrompt.trim() || null,
+                temperature: toOptionalNumber(multimodalTemperature),
+                topP: toOptionalNumber(multimodalTopP),
+                maxTokens: toOptionalNumber(multimodalMaxTokens),
+                frequencyPenalty: toOptionalNumber(multimodalFrequencyPenalty),
+                presencePenalty: toOptionalNumber(multimodalPresencePenalty),
+                pdfToImages: multimodalPdfToImages,
+              },
+            }
+          : {}),
       };
       const r = await ocrApi.test(file, override);
       setResult(r);
@@ -1441,7 +1667,14 @@ function OcrTestModal({
       <div className="space-y-4">
         <div className="text-sm text-slate-400 light:text-slate-600">
           <div>{t('ocrProvider')}: {providerLabel(provider, t)}</div>
-          <div>{t('credentialSource')}: {credentialLabel(credentialSource, t)}</div>
+          {provider === 'multimodal_model' ? (
+            <>
+              <div>{t('multimodalModelId')}: {multimodalModelName || t('multimodalModelPlaceholder')}</div>
+              <div>{t('multimodalPdfToImages')}: {multimodalPdfToImages ? tCommon('enabled') : tCommon('disabled')}</div>
+            </>
+          ) : (
+            <div>{t('credentialSource')}: {credentialLabel(credentialSource, t)}</div>
+          )}
         </div>
 
         <input

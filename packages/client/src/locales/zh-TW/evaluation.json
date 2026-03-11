@@ -394,5 +394,6 @@
   "analysisTaskCollapse": "摺疊",
   "analysisTaskExpand": "展開",
   "analysisTaskDismiss": "關閉",
-  "analysisTaskIdleHint": "任務狀態已更新"
+  "analysisTaskIdleHint": "任務狀態已更新",
+  "ocrProviderMultimodalModel": "多模態模型"
 }

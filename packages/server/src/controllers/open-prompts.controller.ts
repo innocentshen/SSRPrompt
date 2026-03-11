@@ -86,7 +86,7 @@ const InvokePromptSchema = z.object({
     .optional(),
   responseFormat: z.record(z.unknown()).optional(),
   fileProcessing: z.enum(['auto', 'vision', 'ocr', 'none']).optional(),
-  ocrProvider: z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru']).optional(),
+  ocrProvider: z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model']).optional(),
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {

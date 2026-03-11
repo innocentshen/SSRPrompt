@@ -1,13 +1,22 @@
 import { prisma } from '../config/database.js';
 import { getS3Client, isS3Configured } from '../config/s3.js';
+import { chatCompletion, getModelWithProvider } from './chat.service.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { filesService } from './files.service.js';
+import {
+  assertNonEmptyOcrOutput,
+  buildMultimodalOcrUserParts,
+  buildMultimodalOcrUserPartsFromPageImages,
+  getMultimodalPrompt,
+  supportsMultimodalPdfInput,
+} from './ocr-helpers.js';
+import { pdfToImagesService } from './pdf-to-images.service.js';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppError } from '@ssrprompt/shared';
 import { Prisma } from '@prisma/client';
 import { unzipSync } from 'fflate';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   OcrProvider,
@@ -23,6 +32,7 @@ import type {
   DatalabOcrMode,
   PaddleOcrParams,
   PaddleVlOcrParams,
+  MultimodalOcrParams,
 } from '@ssrprompt/shared';
 
 type EffectiveOcrConfig = {
@@ -35,12 +45,13 @@ type EffectiveOcrConfig = {
   datalab: DatalabOcrParams;
   paddle: PaddleOcrParams;
   paddle_vl: PaddleVlOcrParams;
+  multimodal: MultimodalOcrParams;
 };
 
 type OcrProviderEnabledMap = Record<OcrProvider, boolean>;
 
 const OCR_TEST_PREVIEW_LIMIT = 100_000;
-const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
 
 function normalizeBaseUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -138,6 +149,17 @@ const PADDLE_VL_DEFAULT_PARAMS: PaddleVlOcrParams = {
   showFormulaNumber: null,
   prettifyMarkdown: null,
   visualize: null,
+};
+
+const MULTIMODAL_DEFAULT_PARAMS: MultimodalOcrParams = {
+  modelId: null,
+  prompt: null,
+  temperature: 0,
+  topP: null,
+  maxTokens: null,
+  frequencyPenalty: null,
+  presencePenalty: null,
+  pdfToImages: false,
 };
 
 function normalizeMineruParams(_userId: string, raw: unknown): MineruOcrParams {
@@ -289,6 +311,35 @@ function normalizePaddleVlParams(raw: unknown): PaddleVlOcrParams {
   };
 }
 
+function normalizeMultimodalParams(raw: unknown): MultimodalOcrParams {
+  const defaults = MULTIMODAL_DEFAULT_PARAMS;
+  if (!raw || typeof raw !== 'object') return defaults;
+
+  const record = raw as Record<string, unknown>;
+  const multimodalRaw = record.multimodal;
+  if (!multimodalRaw || typeof multimodalRaw !== 'object') return defaults;
+  const multimodal = multimodalRaw as Record<string, unknown>;
+
+  const toNumber = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const toString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+
+  return {
+    modelId: toString(multimodal.modelId) ?? defaults.modelId,
+    prompt: toString(multimodal.prompt) ?? defaults.prompt,
+    temperature: toNumber(multimodal.temperature) ?? defaults.temperature,
+    topP: toNumber(multimodal.topP) ?? defaults.topP,
+    maxTokens: toNumber(multimodal.maxTokens) ?? defaults.maxTokens,
+    frequencyPenalty: toNumber(multimodal.frequencyPenalty) ?? defaults.frequencyPenalty,
+    presencePenalty: toNumber(multimodal.presencePenalty) ?? defaults.presencePenalty,
+    pdfToImages: typeof multimodal.pdfToImages === 'boolean' ? multimodal.pdfToImages : defaults.pdfToImages,
+  };
+}
+
 function normalizeProviderEnabledMap(
   rawProviderParams: unknown,
   selectedProvider: OcrProvider,
@@ -300,6 +351,7 @@ function normalizeProviderEnabledMap(
     paddle_vl_1_5: false,
     datalab: false,
     mineru: false,
+    multimodal_model: false,
   };
   defaults[selectedProvider] = legacyEnabled;
 
@@ -314,6 +366,46 @@ function normalizeProviderEnabledMap(
       next[provider] = rawValue;
     }
   }
+  return next;
+}
+
+function mergeMultimodalParams(base: MultimodalOcrParams, override?: Partial<MultimodalOcrParams>): MultimodalOcrParams {
+  if (!override) return base;
+  const next = { ...base };
+
+  if (Object.prototype.hasOwnProperty.call(override, 'modelId')) {
+    next.modelId = typeof override.modelId === 'string' && override.modelId.trim() ? override.modelId.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'prompt')) {
+    next.prompt = typeof override.prompt === 'string' && override.prompt.trim() ? override.prompt.trim() : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'temperature')) {
+    next.temperature = typeof override.temperature === 'number' && Number.isFinite(override.temperature)
+      ? override.temperature
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'topP')) {
+    next.topP = typeof override.topP === 'number' && Number.isFinite(override.topP) ? override.topP : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'maxTokens')) {
+    next.maxTokens = typeof override.maxTokens === 'number' && Number.isFinite(override.maxTokens)
+      ? Math.trunc(override.maxTokens)
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'frequencyPenalty')) {
+    next.frequencyPenalty = typeof override.frequencyPenalty === 'number' && Number.isFinite(override.frequencyPenalty)
+      ? override.frequencyPenalty
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'presencePenalty')) {
+    next.presencePenalty = typeof override.presencePenalty === 'number' && Number.isFinite(override.presencePenalty)
+      ? override.presencePenalty
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(override, 'pdfToImages')) {
+    next.pdfToImages = typeof override.pdfToImages === 'boolean' ? override.pdfToImages : false;
+  }
+
   return next;
 }
 
@@ -1195,6 +1287,173 @@ async function mineruExtract(
   }
 }
 
+function computeOcrConfigHash(effective: EffectiveOcrConfig): string {
+  const payload = (() => {
+    if (effective.provider === 'datalab') {
+      return {
+        provider: effective.provider,
+        baseUrl: effective.baseUrl,
+        params: effective.datalab,
+      };
+    }
+    if (effective.provider === 'mineru') {
+      return {
+        provider: effective.provider,
+        baseUrl: effective.baseUrl,
+        params: effective.mineru,
+      };
+    }
+    if (effective.provider === 'multimodal_model') {
+      return {
+        provider: effective.provider,
+        modelId: effective.multimodal.modelId,
+        prompt: getMultimodalPrompt(effective.multimodal),
+        temperature: effective.multimodal.temperature,
+        topP: effective.multimodal.topP,
+        maxTokens: effective.multimodal.maxTokens,
+        frequencyPenalty: effective.multimodal.frequencyPenalty,
+        presencePenalty: effective.multimodal.presencePenalty,
+        pdfToImages: effective.multimodal.pdfToImages,
+      };
+    }
+    return {
+      provider: effective.provider,
+      baseUrl: effective.baseUrl,
+      params: effective.provider === 'paddle' ? effective.paddle : effective.paddle_vl,
+    };
+  })();
+
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function ensureSupportedOcrMimeType(mimeType: string): void {
+  if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) return;
+  throw new AppError(400, 'VALIDATION_ERROR', 'Only PDF and image files are supported for OCR');
+}
+
+async function multimodalModelExtract(
+  userId: string,
+  params: MultimodalOcrParams,
+  file: { buffer: Buffer; mimeType: string; filename: string }
+): Promise<{ pages: string[]; fullText: string; pageCount?: number }> {
+  if (!params.modelId) {
+    throw new AppError(400, 'INVALID_REQUEST', 'Multimodal OCR extraction model is not configured');
+  }
+
+  const { model, provider, apiKey } = await getModelWithProvider(userId, params.modelId);
+  if (!model.supportsVision) {
+    throw new AppError(400, 'INVALID_REQUEST', 'Selected multimodal OCR model does not support vision');
+  }
+
+  const shouldRasterizePdf = file.mimeType === 'application/pdf' && params.pdfToImages;
+  if (
+    file.mimeType === 'application/pdf' &&
+    !shouldRasterizePdf &&
+    !supportsMultimodalPdfInput(provider.type, model.modelId)
+  ) {
+    throw new AppError(
+      400,
+      'INVALID_REQUEST',
+      'Selected multimodal OCR model does not support direct PDF inputs. Enable PDF-to-image conversion or choose a PDF-capable model.'
+    );
+  }
+
+  let pageCount: number | undefined;
+  let content: ReturnType<typeof buildMultimodalOcrUserParts>;
+  if (shouldRasterizePdf) {
+    const rasterized = await pdfToImagesService.rasterize(file.buffer);
+    pageCount = rasterized.images.length;
+    content = buildMultimodalOcrUserPartsFromPageImages(
+      params,
+      rasterized.images.map((image) => ({
+        mimeType: image.mimeType,
+        dataUrl: `data:${image.mimeType};base64,${image.buffer.toString('base64')}`,
+      }))
+    );
+  } else {
+    content = buildMultimodalOcrUserParts(params, file, provider.type);
+  }
+
+  const result = await chatCompletion(
+    provider,
+    model,
+    apiKey,
+    [
+      {
+        role: 'user',
+        content,
+      },
+    ],
+    {
+      temperature: params.temperature ?? undefined,
+      top_p: params.topP ?? undefined,
+      max_tokens: params.maxTokens ?? undefined,
+      frequency_penalty: params.frequencyPenalty ?? undefined,
+      presence_penalty: params.presencePenalty ?? undefined,
+      stream: false,
+    }
+  );
+
+  const fullText = result.content.trim();
+  return {
+    pages: fullText ? [fullText] : [],
+    fullText,
+    pageCount,
+  };
+}
+
+async function extractWithEffectiveConfig(
+  userId: string,
+  effective: EffectiveOcrConfig,
+  file: { buffer: Buffer; mimeType: string; filename: string },
+  dataId: string
+): Promise<{ pages: string[]; fullText: string; pageCount?: number }> {
+  ensureSupportedOcrMimeType(file.mimeType);
+
+  if (effective.provider === 'paddle') {
+    return paddleOcrExtract(
+      { baseUrl: effective.baseUrl!, apiKey: effective.apiKey },
+      { buffer: file.buffer, mimeType: file.mimeType },
+      effective.paddle
+    );
+  }
+
+  if (effective.provider === 'paddle_vl' || effective.provider === 'paddle_vl_1_5') {
+    return paddleOcrVlExtract(
+      { baseUrl: effective.baseUrl!, apiKey: effective.apiKey },
+      { buffer: file.buffer, mimeType: file.mimeType },
+      effective.paddle_vl
+    );
+  }
+
+  if (effective.provider === 'mineru') {
+    return mineruExtract(
+      {
+        baseUrl: effective.baseUrl!,
+        apiKey: effective.apiKey!,
+        userToken: effective.mineru.userToken || userId,
+      },
+      effective.mineru,
+      {
+        buffer: file.buffer,
+        mimeType: file.mimeType,
+        filename: file.filename,
+        dataId: toMineruDataId(dataId),
+      }
+    );
+  }
+
+  if (effective.provider === 'multimodal_model') {
+    return multimodalModelExtract(userId, effective.multimodal, file);
+  }
+
+  return datalabExtract(
+    { baseUrl: effective.baseUrl!, apiKey: effective.apiKey! },
+    effective.datalab,
+    file
+  );
+}
+
 export class OcrService {
   private async getSettingRow(userId: string) {
     return prisma.ocrProviderSetting.findUnique({ where: { userId } });
@@ -1252,6 +1511,7 @@ export class OcrService {
       paddle: Partial<PaddleOcrParams>;
       paddle_vl: Partial<PaddleVlOcrParams>;
       mineru: Partial<MineruOcrParams>;
+      multimodal: Partial<MultimodalOcrParams>;
     }>
   ): Promise<EffectiveOcrConfig> {
     const system = await this.getSystemDefaults();
@@ -1294,6 +1554,9 @@ export class OcrService {
     const paddleVlFromRow = normalizePaddleVlParams(providerParams);
     const paddle_vl = mergePaddleVlParams(paddleVlFromRow, override?.paddle_vl);
 
+    const multimodalFromRow = normalizeMultimodalParams(providerParams);
+    const multimodal = mergeMultimodalParams(multimodalFromRow, override?.multimodal);
+
     if (credentialSource === 'system') {
       const defaults = provider === 'datalab'
         ? system.datalab
@@ -1301,7 +1564,9 @@ export class OcrService {
           ? system.mineru
           : (provider === 'paddle_vl'
             ? system.paddle_vl
-            : (provider === 'paddle_vl_1_5' ? system.paddle_vl_1_5 : system.paddle)));
+            : (provider === 'paddle_vl_1_5'
+              ? system.paddle_vl_1_5
+              : (provider === 'multimodal_model' ? { baseUrl: null, apiKey: null } : system.paddle))));
       return {
         enabled,
         provider,
@@ -1312,6 +1577,7 @@ export class OcrService {
         paddle,
         paddle_vl,
         mineru,
+        multimodal,
       };
     }
 
@@ -1333,6 +1599,7 @@ export class OcrService {
       paddle,
       paddle_vl,
       mineru,
+      multimodal,
     };
   }
 
@@ -1345,9 +1612,11 @@ export class OcrService {
 
     const effective = await this.resolveEffectiveConfig(userId, { provider });
 
-    const hasApiKey = effective.credentialSource === 'system'
-      ? !!effective.apiKey
-      : !!(row?.apiKey);
+    const hasApiKey = provider === 'multimodal_model'
+      ? false
+      : (effective.credentialSource === 'system'
+        ? !!effective.apiKey
+        : !!(row?.apiKey));
 
     return {
       enabled: providerEnabled[provider],
@@ -1361,12 +1630,14 @@ export class OcrService {
       paddle: effective.paddle,
       paddle_vl: effective.paddle_vl,
       mineru: effective.mineru,
+      multimodal: effective.multimodal,
       systemDefaults: {
         paddle: { baseUrl: system.paddle.baseUrl },
         paddle_vl: { baseUrl: system.paddle_vl.baseUrl },
         paddle_vl_1_5: { baseUrl: system.paddle_vl_1_5.baseUrl },
         datalab: { baseUrl: system.datalab.baseUrl },
         mineru: { baseUrl: system.mineru.baseUrl },
+        multimodal_model: { baseUrl: null },
       },
     };
   }
@@ -1465,11 +1736,26 @@ export class OcrService {
       hasProviderParamsUpdate = true;
     }
 
+    if (data.multimodal) {
+      const current = normalizeMultimodalParams(existingParams);
+      nextProviderParams.multimodal = mergeMultimodalParams(current, data.multimodal);
+      hasProviderParamsUpdate = true;
+    }
+
+    if (nextProvider === 'multimodal_model') {
+      const current = normalizeMultimodalParams(nextProviderParams);
+      nextProviderParams.multimodal = {
+        ...current,
+        prompt: current.prompt?.trim() || null,
+      };
+      hasProviderParamsUpdate = true;
+    }
+
     if (hasProviderParamsUpdate) {
       update.providerParams = nextProviderParams as Prisma.JsonObject;
     }
 
-    if (nextCredentialSource === 'custom') {
+    if (nextCredentialSource === 'custom' && nextProvider !== 'multimodal_model') {
       if (data.baseUrl !== undefined) {
         update.baseUrl = normalizeBaseUrl(data.baseUrl);
       }
@@ -1496,7 +1782,7 @@ export class OcrService {
           throw new AppError(400, 'VALIDATION_ERROR', 'API key is required for MinerU');
         }
       }
-    } else {
+    } else if (nextCredentialSource === 'system') {
       // System credentials: keep DB clean (do not persist keys or base URL).
       update.baseUrl = null;
       update.apiKey = null;
@@ -1599,11 +1885,17 @@ export class OcrService {
   async test(
     userId: string,
     file: { buffer: Buffer; mimeType: string; filename: string },
-    override?: Partial<{ provider: OcrProvider; credentialSource: OcrCredentialSource; baseUrl: string | null; apiKey: string | null }>
+    override?: Partial<{
+      provider: OcrProvider;
+      credentialSource: OcrCredentialSource;
+      baseUrl: string | null;
+      apiKey: string | null;
+      multimodal: Partial<MultimodalOcrParams>;
+    }>
   ): Promise<OcrTestResult> {
     const effective = await this.resolveEffectiveConfig(userId, override);
 
-    if (!effective.baseUrl) {
+    if (effective.provider !== 'multimodal_model' && !effective.baseUrl) {
       return {
         success: false,
         provider: effective.provider,
@@ -1639,113 +1931,31 @@ export class OcrService {
       };
     }
 
+    if (effective.provider === 'multimodal_model' && !effective.multimodal.modelId) {
+      return {
+        success: false,
+        provider: effective.provider,
+        latencyMs: 0,
+        error: 'Multimodal OCR extraction model is not configured',
+      };
+    }
+
     const started = Date.now();
     try {
-      if (effective.provider === 'paddle') {
-        const { pages, fullText } = await paddleOcrExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer: file.buffer, mimeType: file.mimeType },
-          effective.paddle
-        );
-
-        const latencyMs = Date.now() - started;
-        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
-
-        return {
-          success: true,
-          provider: 'paddle',
-          latencyMs,
-          pageCount: pages.length || undefined,
-          charCount: fullText.length,
-          previewText,
-          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
-        };
-      }
-
-      if (effective.provider === 'paddle_vl') {
-        const { pages, fullText } = await paddleOcrVlExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer: file.buffer, mimeType: file.mimeType },
-          effective.paddle_vl
-        );
-
-        const latencyMs = Date.now() - started;
-        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
-
-        return {
-          success: true,
-          provider: 'paddle_vl',
-          latencyMs,
-          pageCount: pages.length || undefined,
-          charCount: fullText.length,
-          previewText,
-          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
-        };
-      }
-
-      if (effective.provider === 'paddle_vl_1_5') {
-        const { pages, fullText } = await paddleOcrVlExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer: file.buffer, mimeType: file.mimeType },
-          effective.paddle_vl
-        );
-
-        const latencyMs = Date.now() - started;
-        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
-
-        return {
-          success: true,
-          provider: 'paddle_vl_1_5',
-          latencyMs,
-          pageCount: pages.length || undefined,
-          charCount: fullText.length,
-          previewText,
-          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
-        };
-      }
-
-      if (effective.provider === 'mineru') {
-        const { pages, fullText } = await mineruExtract(
-          {
-            baseUrl: effective.baseUrl,
-            apiKey: effective.apiKey!,
-            userToken: effective.mineru.userToken || userId,
-          },
-          effective.mineru,
-          {
-            buffer: file.buffer,
-            mimeType: file.mimeType,
-            filename: file.filename,
-            dataId: toMineruDataId(`test_${Date.now()}`),
-          }
-        );
-
-        const latencyMs = Date.now() - started;
-        const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
-
-        return {
-          success: true,
-          provider: 'mineru',
-          latencyMs,
-          pageCount: pages.length || undefined,
-          charCount: fullText.length,
-          previewText,
-          pagesPreview: pages.slice(0, 5).map((p) => p.slice(0, 500)),
-        };
-      }
-
-      const { pages, fullText, pageCount } = await datalabExtract(
-        { baseUrl: effective.baseUrl, apiKey: effective.apiKey! },
-        effective.datalab,
-        file
+      const { pages, fullText, pageCount } = await extractWithEffectiveConfig(
+        userId,
+        effective,
+        file,
+        `test_${Date.now()}`
       );
+      assertNonEmptyOcrOutput(fullText);
 
       const latencyMs = Date.now() - started;
       const previewText = fullText.slice(0, OCR_TEST_PREVIEW_LIMIT);
 
       return {
         success: true,
-        provider: 'datalab',
+        provider: effective.provider,
         latencyMs,
         pageCount: pageCount ?? (pages.length || undefined),
         charCount: fullText.length,
@@ -1786,10 +1996,18 @@ export class OcrService {
         fileId: { in: uniqueIds },
         ...(provider ? { provider } : {}),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }],
     });
 
-    return results.map((row) => ({
+    const latestRows = new Map<string, (typeof results)[number]>();
+    for (const row of results) {
+      const key = `${row.fileId}:${row.provider}`;
+      if (!latestRows.has(key)) {
+        latestRows.set(key, row);
+      }
+    }
+
+    return Array.from(latestRows.values()).map((row) => ({
       fileId: row.fileId,
       provider: row.provider as OcrProvider,
       status: row.status as 'success' | 'failed',
@@ -1806,12 +2024,13 @@ export class OcrService {
     override?: Partial<{ provider: OcrProvider }>
   ): Promise<{ provider: OcrProvider; pages: string[]; fullText: string }> {
     const effective = await this.resolveEffectiveConfig(userId, override?.provider ? { provider: override.provider } : undefined);
+    const configHash = computeOcrConfigHash(effective);
 
     if (!effective.enabled) {
       throw new AppError(400, 'INVALID_REQUEST', 'OCR is disabled');
     }
 
-    if (!effective.baseUrl) {
+    if (effective.provider !== 'multimodal_model' && !effective.baseUrl) {
       throw new AppError(400, 'INVALID_REQUEST', 'OCR provider base URL is not configured');
     }
 
@@ -1823,16 +2042,21 @@ export class OcrService {
       throw new AppError(400, 'INVALID_REQUEST', 'MinerU API key is not configured');
     }
 
-    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl' || effective.provider === 'paddle_vl_1_5') && !effective.apiKey && paddleRequiresToken(effective.baseUrl)) {
+    if (effective.provider === 'multimodal_model' && !effective.multimodal.modelId) {
+      throw new AppError(400, 'INVALID_REQUEST', 'Multimodal OCR extraction model is not configured');
+    }
+
+    if ((effective.provider === 'paddle' || effective.provider === 'paddle_vl' || effective.provider === 'paddle_vl_1_5') && !effective.apiKey && effective.baseUrl && paddleRequiresToken(effective.baseUrl)) {
       throw new AppError(400, 'INVALID_REQUEST', 'PaddleOCR token is not configured');
     }
 
     const existing = await prisma.ocrResult.findUnique({
       where: {
-        userId_fileId_provider: {
+        userId_fileId_provider_configHash: {
           userId,
           fileId,
           provider: effective.provider,
+          configHash,
         },
       },
     });
@@ -1845,77 +2069,30 @@ export class OcrService {
     const { meta, buffer } = await filesService.downloadBuffer(userId, fileId);
     const mimeType = meta.mimeType;
     const filename = meta.originalName;
-
-    if (!(mimeType === 'application/pdf' || mimeType.startsWith('image/'))) {
-      throw new AppError(400, 'VALIDATION_ERROR', 'Only PDF and image files are supported for OCR');
-    }
+    ensureSupportedOcrMimeType(mimeType);
 
     try {
-      let pages: string[] = [];
-      let fullText = '';
-
-      if (effective.provider === 'paddle') {
-        const result = await paddleOcrExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer, mimeType },
-          effective.paddle
-        );
-        pages = result.pages;
-        fullText = result.fullText;
-      } else if (effective.provider === 'paddle_vl') {
-        const result = await paddleOcrVlExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer, mimeType },
-          effective.paddle_vl
-        );
-        pages = result.pages;
-        fullText = result.fullText;
-      } else if (effective.provider === 'paddle_vl_1_5') {
-        const result = await paddleOcrVlExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey },
-          { buffer, mimeType },
-          effective.paddle_vl
-        );
-        pages = result.pages;
-        fullText = result.fullText;
-      } else if (effective.provider === 'mineru') {
-        const result = await mineruExtract(
-          {
-            baseUrl: effective.baseUrl,
-            apiKey: effective.apiKey!,
-            userToken: effective.mineru.userToken || userId,
-          },
-          effective.mineru,
-          {
-            buffer,
-            mimeType,
-            filename,
-            dataId: toMineruDataId(fileId),
-          }
-        );
-        pages = result.pages;
-        fullText = result.fullText;
-      } else {
-        const result = await datalabExtract(
-          { baseUrl: effective.baseUrl, apiKey: effective.apiKey! },
-          effective.datalab,
-          { buffer, mimeType, filename }
-        );
-        pages = result.pages;
-        fullText = result.fullText;
-      }
+      const { pages, fullText } = await extractWithEffectiveConfig(
+        userId,
+        effective,
+        { buffer, mimeType, filename },
+        fileId
+      );
+      assertNonEmptyOcrOutput(fullText);
 
       await prisma.ocrResult.upsert({
         where: {
-          userId_fileId_provider: {
+          userId_fileId_provider_configHash: {
             userId,
             fileId,
             provider: effective.provider,
+            configHash,
           },
         },
         update: {
           status: 'success',
           errorMessage: null,
+          configHash,
           fullText,
           pages: pages as Prisma.JsonArray,
         },
@@ -1923,6 +2100,7 @@ export class OcrService {
           user: { connect: { id: userId } },
           file: { connect: { id: fileId } },
           provider: effective.provider,
+          configHash,
           status: 'success',
           errorMessage: null,
           fullText,
@@ -1936,15 +2114,17 @@ export class OcrService {
 
       await prisma.ocrResult.upsert({
         where: {
-          userId_fileId_provider: {
+          userId_fileId_provider_configHash: {
             userId,
             fileId,
             provider: effective.provider,
+            configHash,
           },
         },
         update: {
           status: 'failed',
           errorMessage: message,
+          configHash,
           fullText: '',
           pages: Prisma.DbNull,
         },
@@ -1952,6 +2132,7 @@ export class OcrService {
           user: { connect: { id: userId } },
           file: { connect: { id: fileId } },
           provider: effective.provider,
+          configHash,
           status: 'failed',
           errorMessage: message,
           fullText: '',

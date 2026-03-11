@@ -35,6 +35,7 @@ interface EvaluationResultsViewProps {
   criteria: EvaluationCriterion[];
   pricing?: { inputPricePerM: number; outputPricePerM: number } | null;
   ocrProvider?: OcrProvider | null;
+  fileProcessing?: string | null;
   downloadAttachmentBlob?: (fileId: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
   canViewOcrResults?: boolean;
   onRetryOutput?: (testCaseId: string) => void;
@@ -60,6 +61,7 @@ export function EvaluationResultsView({
   criteria,
   pricing = null,
   ocrProvider,
+  fileProcessing,
   downloadAttachmentBlob,
   canViewOcrResults = true,
   onRetryOutput,
@@ -169,7 +171,14 @@ export function EvaluationResultsView({
   const activeTestCase = activeResult ? (testCaseMap.get(activeResult.testCaseId) ?? null) : null;
   const activeTestCaseIndex = activeResult ? (testCaseIndexMap.get(activeResult.testCaseId) ?? 0) : 0;
   const activeAttachments = activeTestCase?.attachments ?? [];
-  const showOcrResults = !!activeResult && activeResult.ocrLatencyMs > 0 && activeAttachments.length > 0;
+  const activeOcrEligibleAttachments = useMemo(
+    () => activeAttachments.filter((attachment) => attachment.type.startsWith('image/') || attachment.type === 'application/pdf'),
+    [activeAttachments]
+  );
+  const showOcrResults = !!activeResult && activeOcrEligibleAttachments.length > 0 && (
+    fileProcessing === 'ocr' ||
+    activeResult.ocrLatencyMs > 0
+  );
   const canEditExpectedOutput = !!onUpdateExpectedOutput && !!activeTestCase;
 
   useEffect(() => {
@@ -665,6 +674,15 @@ export function EvaluationResultsView({
                   </div>
                 </div>
 
+                {showOcrResults && canViewOcrResults && (
+                  <OcrResultsPanel
+                    attachments={activeAttachments}
+                    provider={ocrProvider}
+                    refreshToken={retryOutputRefreshTick}
+                    defaultOpen={true}
+                  />
+                )}
+
                 {enabledCriteria.length > 0 && Object.keys(activeResult.scores || {}).length > 0 && (
                   <Collapsible
                     title={t('scoreDetails')}
@@ -752,13 +770,6 @@ export function EvaluationResultsView({
                       </div>
                     )}
 
-                    {showOcrResults && canViewOcrResults && (
-                      <OcrResultsPanel
-                        attachments={activeAttachments}
-                        provider={ocrProvider}
-                        refreshToken={retryOutputRefreshTick}
-                      />
-                    )}
                   </div>
                 </Collapsible>
               </div>

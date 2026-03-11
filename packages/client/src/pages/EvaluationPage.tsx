@@ -293,6 +293,8 @@ function getOcrProviderLabel(t: (key: string) => string, ocrProvider?: string | 
       return t('ocrProviderDatalab');
     case 'mineru':
       return t('ocrProviderMineru');
+    case 'multimodal_model':
+      return t('ocrProviderMultimodalModel');
     default:
       return ocrProvider;
   }
@@ -5026,6 +5028,7 @@ export function EvaluationPage() {
                             criteria={criteria}
                             pricing={selectedRunPricing}
                             ocrProvider={selectedRunOcrProvider}
+                            fileProcessing={selectedRunConfig?.fileProcessing ?? selectedEvaluation?.config.file_processing ?? null}
                             downloadAttachmentBlob={downloadAttachmentBlob}
                             canViewOcrResults={isSelectedEvaluationOwner}
                             onRetryOutput={isSelectedEvaluationOwner ? handleRetryOutput : undefined}

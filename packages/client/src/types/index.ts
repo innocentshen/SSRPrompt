@@ -63,6 +63,7 @@ export type {
   DatalabOcrParams,
   MineruModelVersion,
   MineruOcrParams,
+  MultimodalOcrParams,
   OcrProviderSettings,
   UpdateOcrProviderSettingsDto,
   OcrSystemProviderSettings,

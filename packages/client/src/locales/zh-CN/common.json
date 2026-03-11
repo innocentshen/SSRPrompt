@@ -78,8 +78,7 @@
   "reasoningMedium": "斟酌",
   "reasoningMediumDesc": "平衡速度和深度",
   "reasoningHigh": "沉思",
-  "reasoningHighDesc": "深度推理分析"
-,
+  "reasoningHighDesc": "深度推理分析",
   "ocrResults": "OCR结果",
   "ocrResultsLoading": "加载OCR结果中...",
   "ocrResultsMissing": "未找到OCR结果",
@@ -145,5 +144,6 @@
     "DATABASE_ERROR": "数据库错误。",
     "ENCRYPTION_ERROR": "加密错误。",
     "INTERNAL_ERROR": "服务器错误，请稍后重试。"
-  }
+  },
+  "ocrProviderMultimodalModel": "多模态模型"
 }

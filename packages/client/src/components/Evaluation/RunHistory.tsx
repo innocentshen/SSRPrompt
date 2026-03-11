@@ -104,6 +104,8 @@ function getOcrProviderLabel(t: (key: string) => string, ocrProvider?: string | 
       return t('ocrProviderDatalab');
     case 'mineru':
       return t('ocrProviderMineru');
+    case 'multimodal_model':
+      return t('ocrProviderMultimodalModel');
     default:
       return ocrProvider;
   }

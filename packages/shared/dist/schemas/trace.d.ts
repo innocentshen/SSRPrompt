@@ -18,14 +18,14 @@ export declare const CreateTraceSchema: z.ZodObject<{
         type: z.ZodString;
         size: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }>, "many">>;
     thinkingContent: z.ZodOptional<z.ZodString>;
@@ -38,12 +38,12 @@ export declare const CreateTraceSchema: z.ZodObject<{
     tokensOutput: number;
     latencyMs: number;
     metadata: Record<string, unknown>;
-    promptId?: string | undefined;
     modelId?: string | undefined;
+    promptId?: string | undefined;
     attachments?: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[] | undefined;
     output?: string | undefined;
@@ -53,12 +53,12 @@ export declare const CreateTraceSchema: z.ZodObject<{
 }, {
     input: string;
     status?: "success" | "error" | undefined;
-    promptId?: string | undefined;
     modelId?: string | undefined;
+    promptId?: string | undefined;
     attachments?: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[] | undefined;
     source?: "feature" | "api" | undefined;

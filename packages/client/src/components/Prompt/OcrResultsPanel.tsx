@@ -18,7 +18,7 @@ function isOcrEligible(file: FileAttachment): boolean {
   return file.type.startsWith('image/') || file.type === 'application/pdf';
 }
 
-function providerLabel(provider?: string | null): string {
+function providerLabel(provider: string | null | undefined, t: (key: string) => string): string {
   if (!provider) return '';
   switch (provider) {
     case 'paddle':
@@ -31,6 +31,8 @@ function providerLabel(provider?: string | null): string {
       return 'Datalab';
     case 'mineru':
       return 'MinerU';
+    case 'multimodal_model':
+      return t('ocrProviderMultimodalModel');
     default:
       return provider;
   }
@@ -120,7 +122,7 @@ export function OcrResultsPanel({
       title={t('ocrResults')}
       defaultOpen={defaultOpen}
       icon={<ScanText className="w-4 h-4 text-slate-400" />}
-      action={provider ? <span className="text-xs text-slate-500 light:text-slate-600">{providerLabel(provider)}</span> : null}
+      action={provider ? <span className="text-xs text-slate-500 light:text-slate-600">{providerLabel(provider, t)}</span> : null}
       className={containerClassName}
       contentClassName={contentClassName}
     >
@@ -164,7 +166,7 @@ export function OcrResultsPanel({
                       <div key={copyKey} className="mt-2 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 text-xs text-slate-500 light:text-slate-600">
-                            <span>{providerLabel(item.provider)}</span>
+                            <span>{providerLabel(item.provider, t)}</span>
                             <Badge variant={isSuccess ? 'success' : 'error'}>
                               {isSuccess ? t('success') : t('ocrResultsFailed')}
                             </Badge>
@@ -175,7 +177,7 @@ export function OcrResultsPanel({
                                 type="button"
                                 onClick={() =>
                                   setExpandedOcr({
-                                    title: `${file.name} - ${providerLabel(item.provider)}`,
+                                    title: `${file.name} - ${providerLabel(item.provider, t)}`,
                                     text: item.fullText || '',
                                   })
                                 }

@@ -232,7 +232,7 @@ const MANUAL_PASS_THRESHOLD_MAX_PERCENT = 100;
 const MANUAL_PASS_THRESHOLD_DEFAULT_PERCENT = 80;
 const DEFAULT_VERIFICATION_CASE_CONCURRENCY = 1;
 const FILE_PROCESSING_MODES: FileProcessingMode[] = ['auto', 'vision', 'ocr', 'none'];
-const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+const OCR_PROVIDERS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
 
 type PromptOptimizerCacheState = {
   view: OptimizerView;
@@ -1166,6 +1166,8 @@ export function PromptOptimizer({
         return tEvaluation('ocrProviderDatalab');
       case 'mineru':
         return tEvaluation('ocrProviderMineru');
+      case 'multimodal_model':
+        return tEvaluation('ocrProviderMultimodalModel');
       default:
         return provider;
     }

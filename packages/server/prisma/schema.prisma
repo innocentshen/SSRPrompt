@@ -571,6 +571,7 @@ model OcrResult {
   userId       String    @map("user_id")
   fileId       String    @map("file_id")
   provider     OcrProvider
+  configHash   String    @default("") @map("config_hash")
   status       OcrStatus @default(success)
   errorMessage String?   @map("error_message")
   fullText     String    @map("full_text")
@@ -583,7 +584,8 @@ model OcrResult {
   @@index([userId])
   @@index([fileId])
   @@index([provider])
-  @@unique([userId, fileId, provider])
+  @@index([configHash])
+  @@unique([userId, fileId, provider, configHash])
   @@map("ocr_results")
 }
 
@@ -664,6 +666,7 @@ enum OcrProvider {
   paddle_vl_1_5
   datalab
   mineru
+  multimodal_model
 }
 
 enum OcrCredentialSource {

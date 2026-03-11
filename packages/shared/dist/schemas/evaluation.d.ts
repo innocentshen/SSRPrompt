@@ -5,14 +5,14 @@ export declare const FileAttachmentSchema: z.ZodObject<{
     type: z.ZodString;
     size: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
+    type: string;
     fileId: string;
     name: string;
-    type: string;
     size?: number | undefined;
 }, {
+    type: string;
     fileId: string;
     name: string;
-    type: string;
     size?: number | undefined;
 }>;
 export declare const ModelParametersSchema: z.ZodObject<{
@@ -57,7 +57,7 @@ export declare const EvaluationConfigSchema: z.ZodObject<{
     }>>;
     inherited_from_prompt: z.ZodOptional<z.ZodBoolean>;
     file_processing: z.ZodOptional<z.ZodEnum<["auto", "vision", "ocr", "none"]>>;
-    ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru"]>>;
+    ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru", "multimodal_model"]>>;
 }, "strip", z.ZodTypeAny, {
     pass_threshold?: number | undefined;
     model_parameters?: {
@@ -69,7 +69,7 @@ export declare const EvaluationConfigSchema: z.ZodObject<{
     } | undefined;
     inherited_from_prompt?: boolean | undefined;
     file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-    ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+    ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
 }, {
     pass_threshold?: number | undefined;
     model_parameters?: {
@@ -81,7 +81,7 @@ export declare const EvaluationConfigSchema: z.ZodObject<{
     } | undefined;
     inherited_from_prompt?: boolean | undefined;
     file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-    ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+    ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
 }>;
 export declare const CreateEvaluationSchema: z.ZodObject<{
     name: z.ZodString;
@@ -111,7 +111,7 @@ export declare const CreateEvaluationSchema: z.ZodObject<{
         }>>;
         inherited_from_prompt: z.ZodOptional<z.ZodBoolean>;
         file_processing: z.ZodOptional<z.ZodEnum<["auto", "vision", "ocr", "none"]>>;
-        ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru"]>>;
+        ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru", "multimodal_model"]>>;
     }, "strip", z.ZodTypeAny, {
         pass_threshold?: number | undefined;
         model_parameters?: {
@@ -123,7 +123,7 @@ export declare const CreateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     }, {
         pass_threshold?: number | undefined;
         model_parameters?: {
@@ -135,7 +135,7 @@ export declare const CreateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     }>>>;
     orderIndex: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
@@ -151,16 +151,16 @@ export declare const CreateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     };
-    promptId?: string | undefined;
     modelId?: string | undefined;
+    promptId?: string | undefined;
     judgeModelId?: string | undefined;
     orderIndex?: number | undefined;
 }, {
     name: string;
-    promptId?: string | undefined;
     modelId?: string | undefined;
+    promptId?: string | undefined;
     judgeModelId?: string | undefined;
     config?: {
         pass_threshold?: number | undefined;
@@ -173,7 +173,7 @@ export declare const CreateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     } | undefined;
     orderIndex?: number | undefined;
 }>;
@@ -206,7 +206,7 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
         }>>;
         inherited_from_prompt: z.ZodOptional<z.ZodBoolean>;
         file_processing: z.ZodOptional<z.ZodEnum<["auto", "vision", "ocr", "none"]>>;
-        ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru"]>>;
+        ocr_provider: z.ZodOptional<z.ZodEnum<["paddle", "paddle_vl", "paddle_vl_1_5", "datalab", "mineru", "multimodal_model"]>>;
     }, "strip", z.ZodTypeAny, {
         pass_threshold?: number | undefined;
         model_parameters?: {
@@ -218,7 +218,7 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     }, {
         pass_threshold?: number | undefined;
         model_parameters?: {
@@ -230,7 +230,7 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     }>>;
     results: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     isPublic: z.ZodOptional<z.ZodBoolean>;
@@ -238,10 +238,10 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
     completedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     orderIndex: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
-    name?: string | undefined;
-    status?: "pending" | "running" | "completed" | "failed" | undefined;
-    promptId?: string | null | undefined;
+    status?: "failed" | "pending" | "running" | "completed" | undefined;
     modelId?: string | null | undefined;
+    name?: string | undefined;
+    promptId?: string | null | undefined;
     judgeModelId?: string | null | undefined;
     config?: {
         pass_threshold?: number | undefined;
@@ -254,7 +254,7 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     } | undefined;
     orderIndex?: number | undefined;
     results?: Record<string, unknown> | undefined;
@@ -262,10 +262,10 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
     shareAttachments?: boolean | undefined;
     completedAt?: string | null | undefined;
 }, {
-    name?: string | undefined;
-    status?: "pending" | "running" | "completed" | "failed" | undefined;
-    promptId?: string | null | undefined;
+    status?: "failed" | "pending" | "running" | "completed" | undefined;
     modelId?: string | null | undefined;
+    name?: string | undefined;
+    promptId?: string | null | undefined;
     judgeModelId?: string | null | undefined;
     config?: {
         pass_threshold?: number | undefined;
@@ -278,7 +278,7 @@ export declare const UpdateEvaluationSchema: z.ZodObject<{
         } | undefined;
         inherited_from_prompt?: boolean | undefined;
         file_processing?: "auto" | "vision" | "ocr" | "none" | undefined;
-        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | undefined;
+        ocr_provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
     } | undefined;
     orderIndex?: number | undefined;
     results?: Record<string, unknown> | undefined;
@@ -296,14 +296,14 @@ export declare const CreateTestCaseSchema: z.ZodObject<{
         type: z.ZodString;
         size: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }>, "many">>>;
     expectedOutput: z.ZodOptional<z.ZodString>;
@@ -314,9 +314,9 @@ export declare const CreateTestCaseSchema: z.ZodObject<{
     inputText: string;
     inputVariables: Record<string, string>;
     attachments: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[];
     orderIndex?: number | undefined;
@@ -328,9 +328,9 @@ export declare const CreateTestCaseSchema: z.ZodObject<{
     inputText?: string | undefined;
     inputVariables?: Record<string, string> | undefined;
     attachments?: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[] | undefined;
     expectedOutput?: string | undefined;
@@ -346,14 +346,14 @@ export declare const UpdateTestCaseSchema: z.ZodObject<{
         type: z.ZodString;
         size: z.ZodOptional<z.ZodNumber>;
     }, "strip", z.ZodTypeAny, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }, {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }>, "many">>;
     expectedOutput: z.ZodOptional<z.ZodNullable<z.ZodString>>;
@@ -365,9 +365,9 @@ export declare const UpdateTestCaseSchema: z.ZodObject<{
     inputText?: string | undefined;
     inputVariables?: Record<string, string> | undefined;
     attachments?: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[] | undefined;
     expectedOutput?: string | null | undefined;
@@ -378,9 +378,9 @@ export declare const UpdateTestCaseSchema: z.ZodObject<{
     inputText?: string | undefined;
     inputVariables?: Record<string, string> | undefined;
     attachments?: {
+        type: string;
         fileId: string;
         name: string;
-        type: string;
         size?: number | undefined;
     }[] | undefined;
     expectedOutput?: string | null | undefined;
@@ -393,17 +393,17 @@ export declare const CreateCriterionSchema: z.ZodObject<{
     weight: z.ZodDefault<z.ZodOptional<z.ZodNumber>>;
     enabled: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
 }, "strip", z.ZodTypeAny, {
+    enabled: boolean;
     name: string;
     weight: number;
-    enabled: boolean;
-    description?: string | undefined;
     prompt?: string | undefined;
+    description?: string | undefined;
 }, {
     name: string;
-    description?: string | undefined;
     prompt?: string | undefined;
-    weight?: number | undefined;
     enabled?: boolean | undefined;
+    description?: string | undefined;
+    weight?: number | undefined;
 }>;
 export declare const UpdateCriterionSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -412,17 +412,17 @@ export declare const UpdateCriterionSchema: z.ZodObject<{
     weight: z.ZodOptional<z.ZodNumber>;
     enabled: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
+    prompt?: string | null | undefined;
+    enabled?: boolean | undefined;
     name?: string | undefined;
     description?: string | null | undefined;
-    prompt?: string | null | undefined;
     weight?: number | undefined;
-    enabled?: boolean | undefined;
 }, {
+    prompt?: string | null | undefined;
+    enabled?: boolean | undefined;
     name?: string | undefined;
     description?: string | null | undefined;
-    prompt?: string | null | undefined;
     weight?: number | undefined;
-    enabled?: boolean | undefined;
 }>;
 export type FileAttachmentInput = z.infer<typeof FileAttachmentSchema>;
 export type ModelParametersInput = z.infer<typeof ModelParametersSchema>;

@@ -398,5 +398,6 @@
   "analysisTaskCollapse": "折りたたむ",
   "analysisTaskExpand": "展開",
   "analysisTaskDismiss": "閉じる",
-  "analysisTaskIdleHint": "タスク状態が更新されました"
+  "analysisTaskIdleHint": "タスク状態が更新されました",
+  "ocrProviderMultimodalModel": "マルチモーダルモデル"
 }

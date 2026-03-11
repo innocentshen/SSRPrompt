@@ -144,5 +144,6 @@
     "DATABASE_ERROR": "Database error.",
     "ENCRYPTION_ERROR": "Encryption error.",
     "INTERNAL_ERROR": "Server error. Please retry later."
-  }
+  },
+  "ocrProviderMultimodalModel": "Multimodal Model"
 }

@@ -1,4 +1,4 @@
-export type OcrProvider = 'paddle' | 'paddle_vl' | 'paddle_vl_1_5' | 'datalab' | 'mineru';
+export type OcrProvider = 'paddle' | 'paddle_vl' | 'paddle_vl_1_5' | 'datalab' | 'mineru' | 'multimodal_model';
 export type OcrCredentialSource = 'system' | 'custom';
 export type MineruModelVersion = 'pipeline' | 'vlm';
 export type DatalabOcrMode = 'fast' | 'balanced' | 'accurate';
@@ -59,6 +59,16 @@ export interface PaddleVlOcrParams {
     prettifyMarkdown: boolean | null;
     visualize: boolean | null;
 }
+export interface MultimodalOcrParams {
+    modelId: string | null;
+    prompt: string | null;
+    temperature: number | null;
+    topP: number | null;
+    maxTokens: number | null;
+    frequencyPenalty: number | null;
+    presencePenalty: number | null;
+    pdfToImages: boolean;
+}
 export interface OcrProviderSettings {
     enabled: boolean;
     providerEnabled: Partial<Record<OcrProvider, boolean>>;
@@ -71,23 +81,10 @@ export interface OcrProviderSettings {
     datalab: DatalabOcrParams;
     paddle: PaddleOcrParams;
     paddle_vl: PaddleVlOcrParams;
-    systemDefaults: {
-        paddle: {
-            baseUrl: string | null;
-        };
-        paddle_vl: {
-            baseUrl: string | null;
-        };
-        paddle_vl_1_5: {
-            baseUrl: string | null;
-        };
-        datalab: {
-            baseUrl: string | null;
-        };
-        mineru: {
-            baseUrl: string | null;
-        };
-    };
+    multimodal: MultimodalOcrParams;
+    systemDefaults: Record<OcrProvider, {
+        baseUrl: string | null;
+    }>;
 }
 export interface UpdateOcrProviderSettingsDto {
     enabled?: boolean;
@@ -100,6 +97,7 @@ export interface UpdateOcrProviderSettingsDto {
     paddle?: Partial<PaddleOcrParams>;
     paddle_vl?: Partial<PaddleVlOcrParams>;
     mineru?: Partial<MineruOcrParams>;
+    multimodal?: Partial<MultimodalOcrParams>;
 }
 export interface OcrSystemProviderConfig {
     baseUrl: string | null;

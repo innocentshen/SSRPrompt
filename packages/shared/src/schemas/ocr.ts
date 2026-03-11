@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru']);
+export const OcrProviderSchema = z.enum(['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model']);
 export const OcrCredentialSourceSchema = z.enum(['system', 'custom']);
 
 export const MineruModelVersionSchema = z.enum(['pipeline', 'vlm']);
@@ -69,12 +69,24 @@ export const PaddleVlOcrParamsSchema = z.object({
   visualize: z.boolean().nullable().optional(),
 });
 
+export const MultimodalOcrParamsSchema = z.object({
+  modelId: z.string().uuid().nullable().optional(),
+  prompt: z.string().min(1).nullable().optional(),
+  temperature: z.number().min(0).max(2).nullable().optional(),
+  topP: z.number().min(0).max(1).nullable().optional(),
+  maxTokens: z.number().int().positive().nullable().optional(),
+  frequencyPenalty: z.number().min(-2).max(2).nullable().optional(),
+  presencePenalty: z.number().min(-2).max(2).nullable().optional(),
+  pdfToImages: z.boolean().optional(),
+});
+
 export const OcrProviderEnabledSchema = z.object({
   paddle: z.boolean().optional(),
   paddle_vl: z.boolean().optional(),
   paddle_vl_1_5: z.boolean().optional(),
   datalab: z.boolean().optional(),
   mineru: z.boolean().optional(),
+  multimodal_model: z.boolean().optional(),
 });
 
 export const UpdateOcrProviderSettingsSchema = z.object({
@@ -88,6 +100,7 @@ export const UpdateOcrProviderSettingsSchema = z.object({
   paddle: PaddleOcrParamsSchema.partial().optional(),
   paddle_vl: PaddleVlOcrParamsSchema.partial().optional(),
   mineru: MineruOcrParamsSchema.partial().optional(),
+  multimodal: MultimodalOcrParamsSchema.partial().optional(),
 });
 
 export type UpdateOcrProviderSettingsInput = z.infer<typeof UpdateOcrProviderSettingsSchema>;

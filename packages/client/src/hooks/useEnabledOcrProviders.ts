@@ -2,13 +2,14 @@ import { useEffect, useMemo } from 'react';
 import type { OcrProvider } from '../types';
 import { useOcrSettingsStore } from '../store/useOcrSettingsStore';
 
-export const OCR_PROVIDER_ORDER: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+export const OCR_PROVIDER_ORDER: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
 
 export function getOcrProviderOptionLabel(provider: OcrProvider, t: (key: string) => string): string {
   if (provider === 'paddle') return 'PaddleOCR';
   if (provider === 'paddle_vl') return t('ocrProviderPaddleVl');
   if (provider === 'paddle_vl_1_5') return t('ocrProviderPaddleVl15');
   if (provider === 'datalab') return t('ocrProviderDatalab');
+  if (provider === 'multimodal_model') return t('ocrProviderMultimodalModel');
   return t('ocrProviderMineru');
 }
 

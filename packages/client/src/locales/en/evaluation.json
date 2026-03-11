@@ -398,5 +398,6 @@
   "analysisTaskCollapse": "Collapse",
   "analysisTaskExpand": "Expand",
   "analysisTaskDismiss": "Dismiss",
-  "analysisTaskIdleHint": "Task status updated"
+  "analysisTaskIdleHint": "Task status updated",
+  "ocrProviderMultimodalModel": "Multimodal Model"
 }

@@ -46,7 +46,7 @@ const EVALUATION_ATTACHMENT_MAX_BYTES = Math.max(
   1,
   Number(process.env.EVALUATION_ATTACHMENT_MAX_BYTES || String(20 * 1024 * 1024))
 );
-const OCR_PROVIDER_PRIORITY: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+const OCR_PROVIDER_PRIORITY: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
 
 class RunAbortError extends Error {
   constructor(message = 'Run aborted') {

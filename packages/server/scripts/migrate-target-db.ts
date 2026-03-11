@@ -19,6 +19,10 @@ type CliOptions = {
 const serverRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
+function quoteWindowsArg(value: string) {
+  return /\s/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
 function printHelp() {
   console.log(`Usage:
   pnpm --filter @ssrprompt/server prisma:migrate:target -- --database-url "<DATABASE_URL>" [--resolve-legacy] [--no-status]
@@ -76,13 +80,40 @@ function maskDatabaseUrl(input: string) {
 }
 
 function runPrisma(argumentsList: string[], databaseUrl: string) {
-  const result = spawnSync(pnpmCommand, ['exec', 'prisma', ...argumentsList], {
-    cwd: serverRoot,
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    stdio: 'inherit',
-  });
+  const env = { ...process.env, DATABASE_URL: databaseUrl };
+  const result = process.platform === 'win32'
+    ? spawnSync(
+      process.env.ComSpec ?? 'cmd.exe',
+      ['/d', '/s', '/c', [pnpmCommand, 'exec', 'prisma', ...argumentsList].map(quoteWindowsArg).join(' ')],
+      {
+        cwd: serverRoot,
+        env,
+        encoding: 'utf8',
+      },
+    )
+    : spawnSync(pnpmCommand, ['exec', 'prisma', ...argumentsList], {
+      cwd: serverRoot,
+      env,
+      encoding: 'utf8',
+    });
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
+  if (result.error) {
+    throw result.error;
+  }
+
   if (result.status !== 0) {
-    throw new Error(`Command failed: prisma ${argumentsList.join(' ')}`);
+    const suffix = [
+      typeof result.status === 'number' ? `exit ${result.status}` : null,
+      result.signal ? `signal ${result.signal}` : null,
+    ].filter(Boolean).join(', ');
+    throw new Error(`Command failed${suffix ? ` (${suffix})` : ''}: prisma ${argumentsList.join(' ')}`);
   }
 }
 

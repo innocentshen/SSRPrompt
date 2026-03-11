@@ -78,8 +78,7 @@
   "reasoningMedium": "中",
   "reasoningMediumDesc": "速度と深さのバランス",
   "reasoningHigh": "高",
-  "reasoningHighDesc": "深い推論分析"
-,
+  "reasoningHighDesc": "深い推論分析",
   "ocrResults": "OCR結果",
   "ocrResultsLoading": "OCR結果を読み込み中...",
   "ocrResultsMissing": "OCR結果がありません",
@@ -145,5 +144,6 @@
     "DATABASE_ERROR": "データベースエラーです。",
     "ENCRYPTION_ERROR": "暗号化エラーです。",
     "INTERNAL_ERROR": "サーバーエラーです。しばらくしてから再試行してください。"
-  }
+  },
+  "ocrProviderMultimodalModel": "マルチモーダルモデル"
 }
