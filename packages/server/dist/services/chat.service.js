@@ -273,7 +273,7 @@ function extractGeminiResponseSchema(responseFormat) {
         return undefined;
     return format.json_schema.schema;
 }
-function buildGeminiGenerationConfig(modelId, options, topP) {
+function buildGeminiGenerationConfig(model, options, topP) {
     const generationConfig = {};
     if (typeof options.temperature === 'number')
         generationConfig.temperature = options.temperature;
@@ -285,26 +285,33 @@ function buildGeminiGenerationConfig(modelId, options, topP) {
         generationConfig.frequencyPenalty = options.frequency_penalty;
     if (typeof options.presence_penalty === 'number')
         generationConfig.presencePenalty = options.presence_penalty;
+    const modelId = model.modelId;
     const lowerModelId = modelId.toLowerCase();
     const isGemini3 = lowerModelId.includes('gemini-3');
-    const isGemini3Flash = isGemini3 && lowerModelId.includes('flash');
     const isGemini3Pro31 = isGemini3 &&
         (lowerModelId.includes('3.1-pro') || lowerModelId.includes('3-1-pro') || lowerModelId.includes('3_1_pro'));
     const isGemini3Pro = isGemini3 && !isGemini3Pro31 && lowerModelId.includes('pro');
-    // Product decision:
-    // - Default effort => low (and include thoughts)
-    // - none => keep model output but do not return thought text
-    const requestedEffort = options.reasoning?.enabled === false
-        ? 'none'
-        : (options.reasoning?.effort ?? 'default');
-    const effectiveEffort = requestedEffort === 'default' ? 'low' : requestedEffort;
-    const includeThoughts = requestedEffort !== 'none';
+    const effort = options.reasoning?.effort;
+    const shouldSendThinkingConfig = model.supportsReasoning &&
+        options.reasoning?.enabled === true &&
+        effort !== 'none' &&
+        effort !== 'default' &&
+        typeof effort === 'string';
+    // Keep Gemini aligned with other providers: if the user did not explicitly
+    // enable reasoning, omit thinkingConfig instead of sending a "disabled" shape.
+    if (!shouldSendThinkingConfig) {
+        const responseSchema = extractGeminiResponseSchema(options.responseFormat);
+        if (responseSchema) {
+            generationConfig.responseMimeType = 'application/json';
+            generationConfig.responseJsonSchema = responseSchema;
+        }
+        return generationConfig;
+    }
+    const effectiveEffort = effort;
+    const includeThoughts = true;
     if (isGemini3) {
         let thinkingLevel;
-        if (effectiveEffort === 'none') {
-            thinkingLevel = isGemini3Flash ? 'minimal' : 'low';
-        }
-        else if (effectiveEffort === 'medium' && isGemini3Pro) {
+        if (effectiveEffort === 'medium' && isGemini3Pro) {
             // Gemini 3 Pro does not support medium.
             thinkingLevel = 'low';
         }
@@ -320,13 +327,11 @@ function buildGeminiGenerationConfig(modelId, options, topP) {
         };
     }
     else {
-        const thinkingBudget = effectiveEffort === 'none'
-            ? 0
-            : effectiveEffort === 'low'
-                ? 1024
-                : effectiveEffort === 'medium'
-                    ? 4096
-                    : 8192;
+        const thinkingBudget = effectiveEffort === 'low'
+            ? 1024
+            : effectiveEffort === 'medium'
+                ? 4096
+                : 8192;
         generationConfig.thinkingConfig = {
             includeThoughts,
             thinkingBudget,
@@ -389,7 +394,7 @@ export function buildRequestBody(provider, model, messages, options) {
     }
     if (provider.type === 'gemini') {
         const { systemInstruction, contents } = transformForGemini(messages);
-        const generationConfig = buildGeminiGenerationConfig(model.modelId, options, topP);
+        const generationConfig = buildGeminiGenerationConfig(model, options, topP);
         return {
             contents,
             ...(systemInstruction ? { systemInstruction } : {}),
