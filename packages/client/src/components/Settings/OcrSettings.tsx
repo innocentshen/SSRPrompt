@@ -35,6 +35,7 @@ type ProviderEnabledState = Record<OcrProvider, boolean>;
 
 const OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru', 'multimodal_model'];
 const SYSTEM_OCR_PROVIDER_ITEMS: OcrProvider[] = ['paddle', 'paddle_vl', 'paddle_vl_1_5', 'datalab', 'mineru'];
+const SYSTEM_OCR_PROVIDER_CONFIG_VISIBLE = import.meta.env.VITE_ENABLE_SYSTEM_OCR_PROVIDER_CONFIG === 'true';
 
 function createProviderEnabledState(
   initial?: Partial<Record<OcrProvider, boolean>>,
@@ -263,7 +264,7 @@ export function OcrSettings() {
   }, [settings]);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!SYSTEM_OCR_PROVIDER_CONFIG_VISIBLE || !isAdmin) return;
     setSystemLoading(true);
     ocrApi.getSystemSettings()
       .then((s) => {
@@ -284,7 +285,7 @@ export function OcrSettings() {
   const isMultimodalProvider = provider === 'multimodal_model';
 
   useEffect(() => {
-    if (provider === 'multimodal_model') {
+    if (!SYSTEM_OCR_PROVIDER_CONFIG_VISIBLE || provider === 'multimodal_model') {
       setShowSystemProviderConfig(false);
     }
     setSystemEditingProvider(provider === 'multimodal_model' ? 'paddle' : provider);
@@ -749,7 +750,7 @@ export function OcrSettings() {
                     <p className="text-xs text-slate-500 light:text-slate-600">
                       {t('providerParamsTitle', { defaultValue: 'Provider Parameters' })}
                     </p>
-                    {isAdmin && !isMultimodalProvider && (
+                    {SYSTEM_OCR_PROVIDER_CONFIG_VISIBLE && isAdmin && !isMultimodalProvider && (
                       <Button
                         variant="secondary"
                         onClick={() => setShowSystemProviderConfig((prev) => !prev)}
@@ -1420,7 +1421,7 @@ export function OcrSettings() {
           </div>
         )}
 
-        {isAdmin && !isMultimodalProvider && showSystemProviderConfig && (
+        {SYSTEM_OCR_PROVIDER_CONFIG_VISIBLE && isAdmin && !isMultimodalProvider && showSystemProviderConfig && (
           <div className="rounded-lg border border-slate-700 light:border-slate-200 bg-slate-900/30 light:bg-white/60 p-4 space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-slate-200 light:text-slate-800">

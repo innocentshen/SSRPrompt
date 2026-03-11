@@ -1,0 +1,1 @@
+import{a as t}from"./index-DRt_WmVS.js";const e={list:()=>t.get("/prompt-groups"),create:p=>t.post("/prompt-groups",p),update:(p,o)=>t.put(`/prompt-groups/${p}`,o),delete:p=>t.delete(`/prompt-groups/${p}`)};export{e as p};

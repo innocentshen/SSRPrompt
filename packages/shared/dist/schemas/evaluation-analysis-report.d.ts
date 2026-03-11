@@ -10,19 +10,19 @@ export declare const CreateEvaluationAnalysisReportSchema: z.ZodObject<{
     title: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     locale: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
+    prompt: string;
     scope: "single" | "multi";
     runIds: string[];
     analysisModelId: string;
-    prompt: string;
     analysisData: Record<string, unknown>;
     summaryMarkdown: string;
     title?: string | null | undefined;
     locale?: string | null | undefined;
 }, {
+    prompt: string;
     scope: "single" | "multi";
     runIds: string[];
     analysisModelId: string;
-    prompt: string;
     analysisData: Record<string, unknown>;
     summaryMarkdown: string;
     title?: string | null | undefined;

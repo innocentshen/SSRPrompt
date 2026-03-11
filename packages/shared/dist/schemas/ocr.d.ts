@@ -126,6 +126,7 @@ export declare const PaddleVlOcrParamsSchema: z.ZodObject<{
     prettifyMarkdown: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
     visualize: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
 }, "strip", z.ZodTypeAny, {
+    temperature?: number | null | undefined;
     useDocOrientationClassify?: boolean | null | undefined;
     useDocUnwarping?: boolean | null | undefined;
     visualize?: boolean | null | undefined;
@@ -137,13 +138,13 @@ export declare const PaddleVlOcrParamsSchema: z.ZodObject<{
     layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
     promptLabel?: string | null | undefined;
     repetitionPenalty?: number | null | undefined;
-    temperature?: number | null | undefined;
     topP?: number | null | undefined;
     minPixels?: number | null | undefined;
     maxPixels?: number | null | undefined;
     showFormulaNumber?: boolean | null | undefined;
     prettifyMarkdown?: boolean | null | undefined;
 }, {
+    temperature?: number | null | undefined;
     useDocOrientationClassify?: boolean | null | undefined;
     useDocUnwarping?: boolean | null | undefined;
     visualize?: boolean | null | undefined;
@@ -155,7 +156,6 @@ export declare const PaddleVlOcrParamsSchema: z.ZodObject<{
     layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
     promptLabel?: string | null | undefined;
     repetitionPenalty?: number | null | undefined;
-    temperature?: number | null | undefined;
     topP?: number | null | undefined;
     minPixels?: number | null | undefined;
     maxPixels?: number | null | undefined;
@@ -172,19 +172,19 @@ export declare const MultimodalOcrParamsSchema: z.ZodObject<{
     presencePenalty: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     pdfToImages: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
+    prompt?: string | null | undefined;
+    modelId?: string | null | undefined;
     temperature?: number | null | undefined;
     topP?: number | null | undefined;
-    modelId?: string | null | undefined;
-    prompt?: string | null | undefined;
     maxTokens?: number | null | undefined;
     frequencyPenalty?: number | null | undefined;
     presencePenalty?: number | null | undefined;
     pdfToImages?: boolean | undefined;
 }, {
+    prompt?: string | null | undefined;
+    modelId?: string | null | undefined;
     temperature?: number | null | undefined;
     topP?: number | null | undefined;
-    modelId?: string | null | undefined;
-    prompt?: string | null | undefined;
     maxTokens?: number | null | undefined;
     frequencyPenalty?: number | null | undefined;
     presencePenalty?: number | null | undefined;
@@ -333,6 +333,7 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         prettifyMarkdown: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodBoolean>>>;
         visualize: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodBoolean>>>;
     }, "strip", z.ZodTypeAny, {
+        temperature?: number | null | undefined;
         useDocOrientationClassify?: boolean | null | undefined;
         useDocUnwarping?: boolean | null | undefined;
         visualize?: boolean | null | undefined;
@@ -344,13 +345,13 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
         promptLabel?: string | null | undefined;
         repetitionPenalty?: number | null | undefined;
-        temperature?: number | null | undefined;
         topP?: number | null | undefined;
         minPixels?: number | null | undefined;
         maxPixels?: number | null | undefined;
         showFormulaNumber?: boolean | null | undefined;
         prettifyMarkdown?: boolean | null | undefined;
     }, {
+        temperature?: number | null | undefined;
         useDocOrientationClassify?: boolean | null | undefined;
         useDocUnwarping?: boolean | null | undefined;
         visualize?: boolean | null | undefined;
@@ -362,7 +363,6 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
         promptLabel?: string | null | undefined;
         repetitionPenalty?: number | null | undefined;
-        temperature?: number | null | undefined;
         topP?: number | null | undefined;
         minPixels?: number | null | undefined;
         maxPixels?: number | null | undefined;
@@ -407,19 +407,19 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         presencePenalty: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodNumber>>>;
         pdfToImages: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
     }, "strip", z.ZodTypeAny, {
+        prompt?: string | null | undefined;
+        modelId?: string | null | undefined;
         temperature?: number | null | undefined;
         topP?: number | null | undefined;
-        modelId?: string | null | undefined;
-        prompt?: string | null | undefined;
         maxTokens?: number | null | undefined;
         frequencyPenalty?: number | null | undefined;
         presencePenalty?: number | null | undefined;
         pdfToImages?: boolean | undefined;
     }, {
+        prompt?: string | null | undefined;
+        modelId?: string | null | undefined;
         temperature?: number | null | undefined;
         topP?: number | null | undefined;
-        modelId?: string | null | undefined;
-        prompt?: string | null | undefined;
         maxTokens?: number | null | undefined;
         frequencyPenalty?: number | null | undefined;
         presencePenalty?: number | null | undefined;
@@ -439,6 +439,7 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         visualize?: boolean | null | undefined;
     } | undefined;
     paddle_vl?: {
+        temperature?: number | null | undefined;
         useDocOrientationClassify?: boolean | null | undefined;
         useDocUnwarping?: boolean | null | undefined;
         visualize?: boolean | null | undefined;
@@ -450,7 +451,6 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
         promptLabel?: string | null | undefined;
         repetitionPenalty?: number | null | undefined;
-        temperature?: number | null | undefined;
         topP?: number | null | undefined;
         minPixels?: number | null | undefined;
         maxPixels?: number | null | undefined;
@@ -481,6 +481,8 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         extraFormats?: ("docx" | "html" | "latex")[] | undefined;
         pageRanges?: string | null | undefined;
     } | undefined;
+    apiKey?: string | null | undefined;
+    baseUrl?: string | null | undefined;
     enabled?: boolean | undefined;
     providerEnabled?: {
         paddle?: boolean | undefined;
@@ -491,14 +493,12 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         multimodal_model?: boolean | undefined;
     } | undefined;
     provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
-    credentialSource?: "system" | "custom" | undefined;
-    baseUrl?: string | null | undefined;
-    apiKey?: string | null | undefined;
+    credentialSource?: "custom" | "system" | undefined;
     multimodal?: {
+        prompt?: string | null | undefined;
+        modelId?: string | null | undefined;
         temperature?: number | null | undefined;
         topP?: number | null | undefined;
-        modelId?: string | null | undefined;
-        prompt?: string | null | undefined;
         maxTokens?: number | null | undefined;
         frequencyPenalty?: number | null | undefined;
         presencePenalty?: number | null | undefined;
@@ -518,6 +518,7 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         visualize?: boolean | null | undefined;
     } | undefined;
     paddle_vl?: {
+        temperature?: number | null | undefined;
         useDocOrientationClassify?: boolean | null | undefined;
         useDocUnwarping?: boolean | null | undefined;
         visualize?: boolean | null | undefined;
@@ -529,7 +530,6 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         layoutMergeBboxesMode?: "large" | "small" | "union" | null | undefined;
         promptLabel?: string | null | undefined;
         repetitionPenalty?: number | null | undefined;
-        temperature?: number | null | undefined;
         topP?: number | null | undefined;
         minPixels?: number | null | undefined;
         maxPixels?: number | null | undefined;
@@ -560,6 +560,8 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         extraFormats?: ("docx" | "html" | "latex")[] | undefined;
         pageRanges?: string | null | undefined;
     } | undefined;
+    apiKey?: string | null | undefined;
+    baseUrl?: string | null | undefined;
     enabled?: boolean | undefined;
     providerEnabled?: {
         paddle?: boolean | undefined;
@@ -570,14 +572,12 @@ export declare const UpdateOcrProviderSettingsSchema: z.ZodObject<{
         multimodal_model?: boolean | undefined;
     } | undefined;
     provider?: "paddle" | "paddle_vl" | "paddle_vl_1_5" | "datalab" | "mineru" | "multimodal_model" | undefined;
-    credentialSource?: "system" | "custom" | undefined;
-    baseUrl?: string | null | undefined;
-    apiKey?: string | null | undefined;
+    credentialSource?: "custom" | "system" | undefined;
     multimodal?: {
+        prompt?: string | null | undefined;
+        modelId?: string | null | undefined;
         temperature?: number | null | undefined;
         topP?: number | null | undefined;
-        modelId?: string | null | undefined;
-        prompt?: string | null | undefined;
         maxTokens?: number | null | undefined;
         frequencyPenalty?: number | null | undefined;
         presencePenalty?: number | null | undefined;
@@ -590,93 +590,93 @@ export declare const UpdateOcrSystemProviderSettingsSchema: z.ZodObject<{
         baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         apiKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }>>;
     paddle_vl: z.ZodOptional<z.ZodObject<{
         baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         apiKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }>>;
     paddle_vl_1_5: z.ZodOptional<z.ZodObject<{
         baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         apiKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }>>;
     datalab: z.ZodOptional<z.ZodObject<{
         baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         apiKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }>>;
     mineru: z.ZodOptional<z.ZodObject<{
         baseUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         apiKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, "strip", z.ZodTypeAny, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }, {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     }>>;
 }, "strip", z.ZodTypeAny, {
     paddle?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     paddle_vl?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     paddle_vl_1_5?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     datalab?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     mineru?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
 }, {
     paddle?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     paddle_vl?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     paddle_vl_1_5?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     datalab?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
     mineru?: {
-        baseUrl?: string | null | undefined;
         apiKey?: string | null | undefined;
+        baseUrl?: string | null | undefined;
     } | undefined;
 }>;
 export type UpdateOcrSystemProviderSettingsInput = z.infer<typeof UpdateOcrSystemProviderSettingsSchema>;

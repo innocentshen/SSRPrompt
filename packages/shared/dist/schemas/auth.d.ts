@@ -20,11 +20,11 @@ export declare const SendCodeSchema: z.ZodObject<{
     email: z.ZodString;
     type: z.ZodEnum<["register", "reset_password"]>;
 }, "strip", z.ZodTypeAny, {
-    email: string;
     type: "register" | "reset_password";
+    email: string;
 }, {
-    email: string;
     type: "register" | "reset_password";
+    email: string;
 }>;
 export type SendCodeInput = z.infer<typeof SendCodeSchema>;
 export declare const LoginSchema: z.ZodObject<{
@@ -62,12 +62,12 @@ export declare const ResetPasswordSchema: z.ZodObject<{
     code: z.ZodString;
     newPassword: z.ZodString;
 }, "strip", z.ZodTypeAny, {
-    email: string;
     code: string;
+    email: string;
     newPassword: string;
 }, {
-    email: string;
     code: string;
+    email: string;
     newPassword: string;
 }>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;

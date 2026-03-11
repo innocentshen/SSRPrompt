@@ -9,14 +9,14 @@ export declare const CreateShareLinkSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     resourceType: "prompt" | "evaluation";
     resourceId: string;
-    password?: string | null | undefined;
     expiresAt?: string | null | undefined;
+    password?: string | null | undefined;
     allowCopy?: boolean | undefined;
 }, {
     resourceType: "prompt" | "evaluation";
     resourceId: string;
-    password?: string | null | undefined;
     expiresAt?: string | null | undefined;
+    password?: string | null | undefined;
     allowCopy?: boolean | undefined;
 }>;
 export declare const UpdateShareLinkSchema: z.ZodObject<{
@@ -25,13 +25,13 @@ export declare const UpdateShareLinkSchema: z.ZodObject<{
     expiresAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     allowCopy: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
-    password?: string | null | undefined;
     expiresAt?: string | null | undefined;
+    password?: string | null | undefined;
     allowCopy?: boolean | undefined;
     clearPassword?: boolean | undefined;
 }, {
-    password?: string | null | undefined;
     expiresAt?: string | null | undefined;
+    password?: string | null | undefined;
     allowCopy?: boolean | undefined;
     clearPassword?: boolean | undefined;
 }>;
@@ -42,16 +42,16 @@ export declare const ListShareLinksQuerySchema: z.ZodObject<{
     page: z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>;
     pageSize: z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>;
 }, "strip", z.ZodTypeAny, {
-    includeRevoked: boolean;
     page: number;
+    includeRevoked: boolean;
     pageSize: number;
     resourceType?: "prompt" | "evaluation" | undefined;
     resourceId?: string | undefined;
 }, {
+    page?: string | undefined;
     resourceType?: "prompt" | "evaluation" | undefined;
     resourceId?: string | undefined;
     includeRevoked?: string | undefined;
-    page?: string | undefined;
     pageSize?: string | undefined;
 }>;
 export declare const VerifySharePasswordSchema: z.ZodObject<{
