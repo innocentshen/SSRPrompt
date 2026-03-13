@@ -26,6 +26,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma client
+        run: pnpm --filter @ssrprompt/server prisma:generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ssrprompt_ci
+
       - name: Typecheck
         run: pnpm -r typecheck
 
