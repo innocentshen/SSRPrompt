@@ -285,9 +285,9 @@ pnpm typecheck
 
 <a href="https://www.star-history.com/?repos=innocentshen%2FSSRPrompt&type=date&legend=bottom-right">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&theme=dark&legend=bottom-right&sealed_token=FwFyLgeijN5VvP7l_knUakmV6U1Vgr8YtU-4gcLa0S3oGSLcO5UPlHgp7epiVe7R_74Qlthtif1-eRJwfh52r02thPSX_gL8-P3bAnPmq4hy8ALT9OjWsg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&legend=bottom-right&sealed_token=FwFyLgeijN5VvP7l_knUakmV6U1Vgr8YtU-4gcLa0S3oGSLcO5UPlHgp7epiVe7R_74Qlthtif1-eRJwfh52r02thPSX_gL8-P3bAnPmq4hy8ALT9OjWsg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=innocentshen/SSRPrompt&type=date&legend=bottom-right&sealed_token=FwFyLgeijN5VvP7l_knUakmV6U1Vgr8YtU-4gcLa0S3oGSLcO5UPlHgp7epiVe7R_74Qlthtif1-eRJwfh52r02thPSX_gL8-P3bAnPmq4hy8ALT9OjWsg" />
  </picture>
 </a>
 
